@@ -458,4 +458,53 @@
       k_position="15"
       k_velocity="10" />
   </joint>
+    <!-- End Effector -->
+  <link name="ee_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <!-- Small sphere to visualize TCP -->
+        <sphere radius="0.015"/>
+      </geometry>
+      <material name="tcp_red">
+        <color rgba="1.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <!-- Optional: Add coordinate frame axes for better visualization -->
+    <visual>
+      <origin xyz="0.025 0 0" rpy="0 1.5708 0"/>
+      <geometry>
+        <cylinder radius="0.003" length="0.05"/>
+      </geometry>
+      <material name="axis_x">
+        <color rgba="1.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0 0.025 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.003" length="0.05"/>
+      </geometry>
+      <material name="axis_y">
+        <color rgba="0.0 1.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.003" length="0.05"/>
+      </geometry>
+      <material name="axis_z">
+        <color rgba="0.0 0.0 1.0 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="wrist3_to_ee" type="fixed">
+    <parent link="wrist3_link"/>
+    <child link="ee_link"/>
+    <!-- adjust this to match the flange face -->
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
 </robot>
