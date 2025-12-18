@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.github/copilot-instructions.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.agent.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask2agent.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.edit.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/copilotDiffState.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/ros2_ws.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/BUILD_SCRIPTS_README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ISSUES_FIXED_AND_REMAINING.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/SUCCESS_SUMMARY.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/TOTG_INTEGRATION_SUMMARY.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/clean_build.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/launch_robot.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/quick_build.sh" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ethercat_driver_ros2_backup.zip" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/CMakeLists.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/tool_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/uppperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/base_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/forearm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/shoulder_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/upperarm_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist1_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist2_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist3_link.STL" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/package.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/rviz/.setup_assistant" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino10_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino16_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino20_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino30_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino3_mt_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino3_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino5_v6.urdf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/CMakeLists.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/include/srv_test_client.hpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/src/main.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/src/srv_test_client.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/fairino_hardware.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/fairino_remotecmdinterface_para.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/command_server.hpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/data_type_def.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/fairino_hardware_interface.hpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/version_control.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/visibility_control.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot_error.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot_types.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so.2" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so.2.1.4" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/monitor_ui.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/package.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/command_server.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/command_server_node.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/fairino_hardware_interface.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/CMakeLists.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/msg/RobotNonrtState.msg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/package.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/srv/RemoteCmdInterface.srv" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/srv/RemoteScriptContent.srv" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="CopilotPersistence">
+    <persistenceIdMap>
+      <entry key="_/home/ilv/ros2_ws" value="34jMNMzbIqKGuB1TM65HyiLWu31" />
+    </persistenceIdMap>
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="3810" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="FlaskConsoleOptions" custom-start-script="import sys; print('Python %s on %s' % (sys.version, sys.platform)); sys.path.extend([WORKING_DIR_AND_PYTHON_PATHS])&#10;from flask.cli import ScriptInfo, NoAppException&#10;for module in [&quot;main.py&quot;, &quot;wsgi.py&quot;, &quot;app.py&quot;]:&#10;    try: locals().update(ScriptInfo(app_import_path=module, create_app=None).load_app().make_shell_context()); print(&quot;\nFlask App: %s&quot; % app.import_name); break&#10;    except NoAppException: pass">
+    <envs>
+      <env key="FLASK_APP" value="app" />
+    </envs>
+    <option name="myCustomStartScript" value="import sys; print('Python %s on %s' % (sys.version, sys.platform)); sys.path.extend([WORKING_DIR_AND_PYTHON_PATHS])&#10;from flask.cli import ScriptInfo, NoAppException&#10;for module in [&quot;main.py&quot;, &quot;wsgi.py&quot;, &quot;app.py&quot;]:&#10;    try: locals().update(ScriptInfo(app_import_path=module, create_app=None).load_app().make_shell_context()); print(&quot;\nFlask App: %s&quot; % app.import_name); break&#10;    except NoAppException: pass" />
+    <option name="myEnvs">
+      <map>
+        <entry key="FLASK_APP" value="app" />
+      </map>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6
+}</component>
+  <component name="ProjectId" id="34jMNMzbIqKGuB1TM65HyiLWu31" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="1" id="Add" />
+  </component>
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "master",
+    "last_opened_file_path": "/home/ilv/ros2_ws",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "com.github.copilot.settings.chat.ChatConfigurable",
+    "two.files.diff.last.used.file": "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/package.xml",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-c7e53b3be11b-JavaScript-PY-253.28294.336" />
+        <option value="bundled-python-sdk-0978a7220b69-9867c7d4c0a4-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.28294.336" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration>$PROJECT_DIR$/../.subversion</configuration>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment="" />
+      <created>1761722490052</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1761722490052</updated>
+      <workItem from="1761722491161" duration="820000" />
+      <workItem from="1761723331740" duration="378000" />
+      <workItem from="1761723778987" duration="2766000" />
+      <workItem from="1761735273756" duration="3425000" />
+      <workItem from="1761738709300" duration="21641000" />
+      <workItem from="1761811753388" duration="21599000" />
+      <workItem from="1761836233125" duration="114000" />
+      <workItem from="1761836348863" duration="908000" />
+      <workItem from="1761845975158" duration="625000" />
+      <workItem from="1761846743867" duration="305000" />
+      <workItem from="1761847763313" duration="295000" />
+      <workItem from="1761850143314" duration="95000" />
+      <workItem from="1761852666889" duration="207000" />
+      <workItem from="1761852933035" duration="739000" />
+      <workItem from="1761889715154" duration="15436000" />
+      <workItem from="1761905253055" duration="2228000" />
+      <workItem from="1761908209766" duration="1834000" />
+      <workItem from="1761910209908" duration="91000" />
+      <workItem from="1761910346555" duration="137000" />
+      <workItem from="1761910500807" duration="9940000" />
+      <workItem from="1761920456451" duration="35000" />
+      <workItem from="1761920530127" duration="3935000" />
+      <workItem from="1762153178999" duration="3211000" />
+      <workItem from="1762156601053" duration="27028000" />
+      <workItem from="1762235823255" duration="1427000" />
+      <workItem from="1762241048002" duration="87000" />
+      <workItem from="1762241151188" duration="2243000" />
+      <workItem from="1762243996768" duration="784000" />
+      <workItem from="1762244800663" duration="1521000" />
+      <workItem from="1762250438421" duration="494000" />
+      <workItem from="1762250986978" duration="33000" />
+      <workItem from="1762251042651" duration="243000" />
+      <workItem from="1764578000495" duration="324000" />
+      <workItem from="1764578372361" duration="18072000" />
+      <workItem from="1764946835677" duration="41000" />
+      <workItem from="1765787276352" duration="18715000" />
+      <workItem from="1765864058144" duration="584000" />
+      <workItem from="1765871285848" duration="25247000" />
+      <workItem from="1765951020427" duration="32010000" />
+      <workItem from="1766037329499" duration="1472000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
+  </component>
+</project>
