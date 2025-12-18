@@ -1,0 +1,52 @@
+# This config file is used by ros2_control
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+
+    fairino5_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+fairino5_controller:
+  ros__parameters:
+    joints:
+      - j1
+      - j2
+      - j3
+      - j4
+      - j5
+      - j6
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+
+    # Spline interpolation for smooth trajectory execution
+    interpolation_method: "splines"
+
+    # Allow integration in goal trajectories for smooth execution
+    allow_integration_in_goal_trajectories: true
+
+    # Ensure robot comes to complete stop at trajectory end
+    allow_nonzero_velocity_at_trajectory_end: false
+
+    # Constraints for smooth motion
+    constraints:
+      goal_time: 0.0                      # No time constraint for goal
+      stopped_velocity_tolerance: 0.15    # 0.15 rad/s tolerance when stopped
+      j1: {trajectory: 0.0, goal: 0.3}
+      j2: {trajectory: 0.0, goal: 0.3}
+      j3: {trajectory: 0.0, goal: 0.3}
+      j4: {trajectory: 0.0, goal: 0.3}
+      j5: {trajectory: 0.0, goal: 0.3}
+      j6: {trajectory: 0.0, goal: 0.3}
+
+    # Open-loop control for smoother execution
+    open_loop_control: false
+
+    # State publishing for monitoring
+    state_publish_rate: 100.0             # 100 Hz state updates

@@ -1,0 +1,8 @@
+collision_monitor:
+  ros__parameters:
+    effort_threshold: [0.2, 0.2, 0.2, 0.15, 0.15, 0.1]
+    detection_window: 0.02
+    retract_distance: 0.05
+    recovery_enabled: false
+    startup_delay: 30.0
+

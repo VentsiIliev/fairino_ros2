@@ -1,0 +1,10 @@
+cartesian_limits:
+  max_trans_vel: 2.5
+  max_trans_acc: 0.5
+  max_trans_dec: -0.5
+  max_rot_vel: 2.5
+  max_rot_acc: 0.5
+  max_rot_dec: -0.5
+  check_collisions: true
+  check_path_constraints: true
+  max_deviation: 0.01

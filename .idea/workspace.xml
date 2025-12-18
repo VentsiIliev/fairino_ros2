@@ -4,115 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.github/copilot-instructions.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.agent.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask2agent.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.edit.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/copilotDiffState.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/ros2_ws.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/BUILD_SCRIPTS_README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/ISSUES_FIXED_AND_REMAINING.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/SUCCESS_SUMMARY.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/TOTG_INTEGRATION_SUMMARY.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/clean_build.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/launch_robot.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/quick_build.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/ethercat_driver_ros2_backup.zip" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/CMakeLists.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino10_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino16_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino20_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/tool_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/uppperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino30_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_mt_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino3_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/base_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/forearm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/shoulder_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/upperarm_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist1_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist2_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/meshes/fairino5_v6/wrist3_link.STL" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/package.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/rviz/.setup_assistant" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino10_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino16_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino20_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino30_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino3_mt_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino3_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino5_v6.urdf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/CMakeLists.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/include/srv_test_client.hpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/src/main.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/examples/src/srv_test_client.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/fairino_hardware.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/fairino_remotecmdinterface_para.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/command_server.hpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/data_type_def.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/fairino_hardware_interface.hpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/version_control.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/include/fairino_hardware/visibility_control.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot_error.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/include/robot_types.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so.2" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/libfairino/lib/libfairino.so.2.1.4" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/monitor_ui.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/package.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/command_server.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/command_server_node.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_hardware/src/fairino_hardware_interface.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/CMakeLists.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/msg/RobotNonrtState.msg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/package.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/srv/RemoteCmdInterface.srv" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/fairino_msgs/srv/RemoteScriptContent.srv" afterDir="false" />
+    <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment="first commit">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fairino_description/urdf/fairino5_v6.urdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/fairino_description/urdf/fairino5_v6.urdf" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -149,6 +43,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "VentsiIliev"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/VentsiIliev/fairino_ros2",
+    "accountId": "0e3e2e61-8331-4adf-8072-41b5cb03a088"
+  }
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 6
 }</component>
@@ -163,6 +69,8 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python tests.pytest in test_rviz.py.executor": "Run",
+    "Python.ttest_rviz.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
@@ -183,6 +91,57 @@
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config" />
     </key>
+  </component>
+  <component name="RunManager" selected="Python.ttest_rviz">
+    <configuration name="ttest_rviz" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="ros2_ws" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/ttest_rviz.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="pytest in ttest_rviz.py" type="tests" factoryName="py.test" temporary="true" nameIsGenerated="true">
+      <module name="ros2_ws" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="_new_keywords" value="&quot;&quot;" />
+      <option name="_new_parameters" value="&quot;&quot;" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/ttest_rviz.py&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.ttest_rviz" />
+        <item itemvalue="Python tests.pytest in ttest_rviz.py" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -241,12 +200,29 @@
       <workItem from="1765864058144" duration="584000" />
       <workItem from="1765871285848" duration="25247000" />
       <workItem from="1765951020427" duration="32010000" />
-      <workItem from="1766037329499" duration="1472000" />
+      <workItem from="1766037329499" duration="29481000" />
     </task>
+    <task id="LOCAL-00001" summary="first commit">
+      <option name="closed" value="true" />
+      <created>1766038842210</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1766038842210</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="first commit" />
+    <option name="LAST_COMMIT_MESSAGE" value="first commit" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/ros2_ws$ttest_rviz.coverage" NAME="ttest_rviz Coverage Results" MODIFIED="1766044293950" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts" />
+    <SUITE FILE_PATH="coverage/ros2_ws$pytest_in_test_rviz_py.coverage" NAME="pytest in test_rviz.py Coverage Results" MODIFIED="1766044227907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

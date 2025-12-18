@@ -1,0 +1,12 @@
+# Limits for the Pilz planner
+# Lower acceleration values create smoother S-curve trajectories
+cartesian_limits:
+  max_trans_vel: 1.5                # 1.5 m/s translational velocity
+  max_trans_acc: 0.5                # 0.5 m/s² - smooth acceleration ramps
+  max_trans_dec: -0.5               # Symmetric deceleration for smooth stops
+  max_rot_vel: 1.57                 # ~90 deg/s rotational velocity
+  max_rot_acc: 0.5                  # 0.5 rad/s² - smooth rotational acceleration
+  max_rot_dec: -0.5                 # Symmetric rotational deceleration
+  check_collisions: true            # Enable collision checking
+  check_path_constraints: true      # Enable path constraint checking
+  max_deviation: 0.01               # 10mm maximum deviation tolerance

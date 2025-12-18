@@ -1,0 +1,7 @@
+# ApplyIPP.srv
+
+# Request: input trajectory
+trajectory_msgs/JointTrajectory trajectory
+---
+# Response: smoothed trajectory
+trajectory_msgs/JointTrajectory trajectory
