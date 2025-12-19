@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGroupBox, QGridLayout, QLineEdit, QHBoxLayout, QPushButton, \
     QListWidget, QComboBox
-
+from enums import RobotAxis,Direction
 
 class MonitorWindow(QWidget):
     def __init__(self, ros_node, robot):
@@ -182,11 +182,11 @@ class MonitorWindow(QWidget):
         # X axis buttons
         btn_x_minus = QPushButton('-X')
         btn_x_plus = QPushButton('+X')
-        btn_x_minus.clicked.connect(lambda: self.robot.start_jog(axis=0, direction=-1,
+        btn_x_minus.clicked.connect(lambda: self.robot.start_jog(axis=RobotAxis.X, direction=Direction.MINUS,
                                                                  step=float(self.jog_step_input.text()),
                                                                  vel=float(self.path_vel_input.text()) * 100,
                                                                  acc=float(self.path_acc_input.text()) * 100))
-        btn_x_plus.clicked.connect(lambda: self.robot.start_jog(axis=0, direction=+1,
+        btn_x_plus.clicked.connect(lambda: self.robot.start_jog(RobotAxis.X, direction=Direction.PLUS,
                                                                 step=float(self.jog_step_input.text()),
                                                                 vel=float(self.path_vel_input.text()) * 100,
                                                                 acc=float(self.path_acc_input.text()) * 100))
@@ -198,11 +198,11 @@ class MonitorWindow(QWidget):
         # Y axis buttons
         btn_y_minus = QPushButton('-Y')
         btn_y_plus = QPushButton('+Y')
-        btn_y_minus.clicked.connect(lambda: self.robot.start_jog(axis=1, direction=-1,
+        btn_y_minus.clicked.connect(lambda: self.robot.start_jog(axis=RobotAxis.Y, direction=Direction.MINUS,
                                                                  step=float(self.jog_step_input.text()),
                                                                  vel=float(self.path_vel_input.text()) * 100,
                                                                  acc=float(self.path_acc_input.text()) * 100))
-        btn_y_plus.clicked.connect(lambda: self.robot.start_jog(axis=1, direction=+1,
+        btn_y_plus.clicked.connect(lambda: self.robot.start_jog(axis=RobotAxis.Y, direction=Direction.PLUS,
                                                                 step=float(self.jog_step_input.text()),
                                                                 vel=float(self.path_vel_input.text()) * 100,
                                                                 acc=float(self.path_acc_input.text()) * 100))
@@ -214,11 +214,11 @@ class MonitorWindow(QWidget):
         # Z axis buttons
         btn_z_minus = QPushButton('-Z')
         btn_z_plus = QPushButton('+Z')
-        btn_z_minus.clicked.connect(lambda: self.robot.start_jog(axis=2, direction=-1,
+        btn_z_minus.clicked.connect(lambda: self.robot.start_jog(axis=RobotAxis.Z, direction=Direction.MINUS,
                                                                  step=float(self.jog_step_input.text()),
                                                                  vel=float(self.path_vel_input.text()) * 100,
                                                                  acc=float(self.path_acc_input.text()) * 100))
-        btn_z_plus.clicked.connect(lambda: self.robot.start_jog(axis=2, direction=+1,
+        btn_z_plus.clicked.connect(lambda: self.robot.start_jog(axis=RobotAxis.Z, direction=Direction.PLUS,
                                                                 step=float(self.jog_step_input.text()),
                                                                 vel=float(self.path_vel_input.text()) * 100,
                                                                 acc=float(self.path_acc_input.text()) * 100))

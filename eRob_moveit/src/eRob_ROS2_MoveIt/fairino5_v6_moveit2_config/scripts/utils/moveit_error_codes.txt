@@ -1,0 +1,21 @@
+1	SUCCESS	Motion plan was successful.
+-1	FAILURE	Generic failure.
+-2	INVALID_MOTION_PLAN	Trajectory is invalid (e.g., collisions, joint limits, unreachable states).
+-3	MOTION_PLAN_INVALIDATED	Plan was invalidated after generation (e.g., environment changed).
+-4	CONTROL_FAILED	Execution failed at controller level.
+-5	UNABLE_TO_AQUIRE_SENSOR_DATA	Sensors failed, e.g., missing collision info.
+-6	TIMED_OUT	Planning or execution timed out.
+-7	PREEMPTED	Goal was preempted/canceled.
+-8	START_STATE_IN_COLLISION	Robot start state is in collision.
+-9	START_STATE_VIOLATES_PATH_CONSTRAINTS	Start state violates constraints.
+-10	GOAL_IN_COLLISION	Goal state is in collision.
+-11	GOAL_VIOLATES_PATH_CONSTRAINTS	Goal state violates constraints.
+-12	GOAL_CONSTRAINTS_VIOLATED	Constraints cannot be satisfied along trajectory.
+-13	INVALID_GROUP_NAME	Move group does not exist.
+-14	INVALID_GOAL_CONSTRAINTS	Goal constraints malformed.
+-15	INVALID_ROBOT_STATE	Robot state is invalid (bad joint values, NaNs).
+-16	INVALID_LINK_NAME	A link name in constraints is invalid.
+-17	INVALID_OBJECT_NAME	An object in collision/world is invalid.
+-18	FRAME_TRANSFORM_FAILURE	TF transform failed.
+-19	COLLISION_CHECKING_UNAVAILABLE	Collision checking plugin unavailable.
+-20	ROBOT_STATE_STALE	Robot state in MoveIt is outdated.

@@ -30,6 +30,7 @@ from scipy.spatial.transform import Rotation
 from utils.transformation_utils import TransformationUtils
 from utils.work_object import WorkObject
 from safety_wall_manager import SafetyWallManager
+from enums import RobotAxis,Direction
 
 # ============ Safety Workspace Boundaries ============
 # Define safe workspace limits to prevent robot from hitting walls/obstacles
@@ -40,7 +41,7 @@ SAFETY_WORKSPACE = {
     'y_min': -0.8,   # -800mm
     'y_max': 0.6,    # 800mm
     'z_min': 0.0,    # 0mm (table level)
-    'z_max': 1.2,    # 1200mm
+    'z_max': 1.1,    # 1100mm
 }
 
 # Safety margin before workspace boundary triggers warning (meters)
@@ -366,7 +367,7 @@ class RobotController(Node):
             self.get_logger().error('Move group action server not available')
             return
 
-        # Use provided tool transform or default to current active tool
+        # Use provided tool transform or default to the current active tool
         T_tool = tool_transform if tool_transform is not None else self.T_tool
 
         # Build desired TCP pose as homogeneous transform
@@ -374,7 +375,7 @@ class RobotController(Node):
         T_tcp_desired = TransformationUtils.pose_to_transform(tcp_pose)
 
         # Apply inverse tool transform to get ee_link pose
-        # TCP_pose = ee_link_pose * T_tool  =>  ee_link_pose = TCP_pose * inv(T_tool)
+        # TCP_pose = ee_link_pose * T_tool => ee_link_pose = TCP_pose * inv(T_tool)
         # MoveIt now plans for ee_link (per SRDF), so we only remove tool offset
         T_ee_link = TransformationUtils.remove_tcp_offset(T_tcp_desired, T_tool)
 
@@ -868,6 +869,16 @@ class RobotController(Node):
 
         return stopped
 
+    def is_motion_active(self):
+        """Return True if any motion goal is active."""
+        return any([
+            self.active_move_goal is not None,
+            self.active_execute_goal is not None,
+            self.active_controller_goal is not None,
+            self.active_execute_send_future is not None
+        ])
+
+
 class FairinoRos2Robot:
     """
     ROS2-based robot controller with interface compatible with FairinoRobot.
@@ -945,6 +956,7 @@ class FairinoRos2Robot:
         Returns:
             int: 0 on success, error code otherwise
         """
+        self.node.get_logger().info(f"[MOVE_CARTESIAN] Target position: {position} with tool={tool}, user={user}, vel={vel}, acc={acc}, blendR={blendR}")
         if len(position) != 6:
             return -1  # Invalid position format
 
@@ -1146,28 +1158,26 @@ class FairinoRos2Robot:
             time.sleep(check_interval)
 
     # ---------------- Jog / Control / Misc ----------------
-    def start_jog(self, axis, direction, step, vel, acc):
+    def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc):
         """
         Starts jogging the robot in a specified axis and direction.
-
-        Args:
-            axis (Axis or int): Axis to jog (0=X, 1=Y, 2=Z or Axis enum)
-            direction (Direction or int): Jog direction (1=PLUS, -1=MINUS or Direction enum)
-            step (float): Distance to move (mm)
-            vel (float): Velocity of jog (percentage 0-100)
-            acc (float): Acceleration of jog (percentage 0-100)
-
-        Returns:
-            int: 0 on success, -1 on error
         """
+        if self.node.is_motion_active():
+            self.node.get_logger().warn("Cannot start new jog: previous motion still active")
+            return 0
+
+        self.node.get_logger().info(
+            f"Starting jog: axis={axis}, direction={direction}, step={step}mm, vel={vel}%, acc={acc}%"
+        )
+
         if self.node is None or self.node.prev_cartesian is None:
             return -1
 
-        # Handle enum types (extract .value if present)
+        # Handle enum types
         axis_val = axis.value if hasattr(axis, 'value') else axis
         dir_val = direction.value if hasattr(direction, 'value') else direction
 
-        if axis_val not in [0, 1, 2] or dir_val not in [1, -1]:
+        if axis_val not in [1, 2, 3, 4, 5, 6] or dir_val not in [1, -1]:
             return -1
 
         # Get current position in workobject frame
@@ -1175,12 +1185,24 @@ class FairinoRos2Robot:
         if current_pos_wobj is None or len(current_pos_wobj) < 6:
             return -1
 
-        # Apply delta in workobject frame
         x, y, z, rx, ry, rz = current_pos_wobj
-        deltas = [0.0, 0.0, 0.0]
-        deltas[axis_val] = step * dir_val
 
-        new_pos_wobj = [x + deltas[0], y + deltas[1], z + deltas[2], rx, ry, rz]
+        # Map enum value to 0-based index for deltas
+        axis_index = axis_val - 1  # X=0, Y=1, Z=2, RX=3, etc.
+
+        # Initialize full 6-element delta array
+        deltas = [0.0] * 6
+        deltas[axis_index] = step * dir_val
+
+        # Apply delta to current position
+        new_pos_wobj = [
+            x + deltas[0],
+            y + deltas[1],
+            z + deltas[2],
+            rx + deltas[3],
+            ry + deltas[4],
+            rz + deltas[5]
+        ]
 
         # Transform to base frame
         new_pos_base = self.apply_workobject(new_pos_wobj)
@@ -1191,11 +1213,15 @@ class FairinoRos2Robot:
 
         try:
             x_base, y_base, z_base, rx_base, ry_base, rz_base = new_pos_base
-            self.node.send_cartesian_goal(x_base, y_base, z_base, rx_base, ry_base, rz_base,
-                                         vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN')
+            self.node.send_cartesian_goal(
+                x_base, y_base, z_base,
+                rx_base, ry_base, rz_base,
+                vel_scale=vel_scale, acc_scale=acc_scale,
+                planner_id='LIN'
+            )
             return 0
         except Exception as e:
-            print(f"Jog error: {e}")
+            self.node.get_logger().error(f"Jog error: {e}")
             return -1
 
     def enable(self):
