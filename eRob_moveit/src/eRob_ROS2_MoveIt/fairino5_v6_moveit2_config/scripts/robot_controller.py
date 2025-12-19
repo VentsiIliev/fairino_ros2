@@ -11,8 +11,11 @@ from fairino5_v6_moveit2_config.srv import ApplyIPP
 from geometry_msgs.msg import Pose, PoseStamped
 from moveit_msgs.action import MoveGroup, ExecuteTrajectory
 from moveit_msgs.msg import MotionPlanRequest, Constraints, PositionConstraint, OrientationConstraint, BoundingVolume, \
-    RobotTrajectory, RobotState
-from moveit_msgs.srv import GetCartesianPath
+    RobotTrajectory, RobotState, CollisionObject, PlanningScene
+from moveit_msgs.srv import GetCartesianPath, ApplyPlanningScene
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
+from control_msgs.action import FollowJointTrajectory  # For direct controller cancellation
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
@@ -24,12 +27,36 @@ import tf2_ros
 import tf2_geometry_msgs
 import numpy as np
 from scipy.spatial.transform import Rotation
+from utils.transformation_utils import TransformationUtils
+from utils.work_object import WorkObject
+from safety_wall_manager import SafetyWallManager
+
+# ============ Safety Workspace Boundaries ============
+# Define safe workspace limits to prevent robot from hitting walls/obstacles
+# All values in meter (base_link frame)
+SAFETY_WORKSPACE = {
+    'x_min': -0.37,   # -800mm
+    'x_max': 0.5,    # 800mm
+    'y_min': -0.8,   # -800mm
+    'y_max': 0.6,    # 800mm
+    'z_min': 0.0,    # 0mm (table level)
+    'z_max': 1.2,    # 1200mm
+}
+
+# Safety margin before workspace boundary triggers warning (meters)
+SAFETY_MARGIN = 0.01  # 50mm
 
 tool_registry = {
     # Format: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
     # Position in millimeters, orientation in degrees
     "TOOL_0": [0, 0, 0, 0, 0, 0],
     "TOOL_1": [0.081, -7.250, 0, 0, 0, 0],
+}
+
+# Tool ID to name mapping for move commands
+tool_id_map = {
+    0: "TOOL_0",
+    1: "TOOL_1",
 }
 
 class RobotMonitor:
@@ -157,40 +184,18 @@ class RobotMonitor:
         Returns:
             np.ndarray: [x, y, z, rx, ry, rz] (position in meters, orientation in degrees)
         """
-        from scipy.spatial.transform import Rotation
-
-        def rotZ(angle):
-            c, s = np.cos(angle), np.sin(angle)
-            return np.array([[c, -s, 0, 0],
-                             [s, c, 0, 0],
-                             [0, 0, 1, 0],
-                             [0, 0, 0, 1]])
-
-        def rotX(angle):
-            c, s = np.cos(angle), np.sin(angle)
-            return np.array([[1, 0, 0, 0],
-                             [0, c, -s, 0],
-                             [0, s, c, 0],
-                             [0, 0, 0, 1]])
-
-        def trans(x, y, z):
-            return np.array([[1, 0, 0, x],
-                             [0, 1, 0, y],
-                             [0, 0, 1, z],
-                             [0, 0, 0, 1]])
-
         # ----- Wrist3 FK -----
         T = np.eye(4)
-        T = T @ rotZ(q[0])
-        T = T @ trans(0, 0, 0.152) @ rotX(np.pi / 2) @ rotZ(q[1])
-        T = T @ trans(-0.425, 0, 0) @ rotZ(q[2])
-        T = T @ trans(-0.39501, 0, 0) @ rotZ(q[3])
-        T = T @ trans(0, 0, 0.1021) @ rotX(np.pi / 2) @ rotZ(q[4])
-        T = T @ trans(0, 0, 0.102) @ rotX(-np.pi / 2) @ rotZ(q[5])
+        T = T @ TransformationUtils.rot_z(q[0])
+        T = T @ TransformationUtils.trans(0, 0, 0.152) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
+        T = T @ TransformationUtils.trans(-0.425, 0, 0) @ TransformationUtils.rot_z(q[2])
+        T = T @ TransformationUtils.trans(-0.39501, 0, 0) @ TransformationUtils.rot_z(q[3])
+        T = T @ TransformationUtils.trans(0, 0, 0.1021) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
+        T = T @ TransformationUtils.trans(0, 0, 0.102) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
 
         # Position and orientation BEFORE TCP
         pos_before = T[:3, 3]
-        rot_before = Rotation.from_matrix(T[:3, :3]).as_euler('xyz', degrees=True)
+        rot_before = TransformationUtils.matrix_to_euler(T[:3, :3])
         # print(f"[RobotMonitor] BEFORE TCP -> Position: {pos_before}, Orientation: {rot_before}")
 
         # ----- Apply TCP offset if provided -----
@@ -198,68 +203,15 @@ class RobotMonitor:
             T = T @ tcp_transform
         # Position and orientation AFTER TCP
         pos_after = T[:3, 3]
-        rot_after = Rotation.from_matrix(T[:3, :3]).as_euler('xyz', degrees=True)
+        rot_after = TransformationUtils.matrix_to_euler(T[:3, :3])
         # print(f"[RobotMonitor] AFTER TCP  -> Position: {pos_after}, Orientation: {rot_after}")
 
-        # Position
+        # Extract final position and orientation
         pos = T[:3, 3]
-
-        # Orientation (rotation matrix -> Euler angles in degrees)
-        rot_matrix = T[:3, :3]
-        r = Rotation.from_matrix(rot_matrix)
-        euler_deg = r.as_euler('xyz', degrees=True)
+        euler_deg = TransformationUtils.matrix_to_euler(T[:3, :3])
 
         return np.concatenate([pos, euler_deg])
 
-
-class WorkObject:
-    """
-    Represents a work object (coordinate frame) relative to the robot base.
-    """
-    def __init__(self, x=0, y=0, z=0, rx=0, ry=0, rz=0):
-        # Position in mm
-        self.position = np.array([x, y, z], dtype=float)
-        # Orientation in degrees
-        self.orientation = np.array([rx, ry, rz], dtype=float)
-        # Precompute homogeneous transform
-        self._compute_transform()
-
-    def _compute_transform(self):
-        """
-        Compute 4x4 homogeneous transform from base to work object.
-        """
-        rot = Rotation.from_euler('xyz', self.orientation, degrees=True)
-        T = np.eye(4)
-        T[:3, :3] = rot.as_matrix()
-        T[:3, 3] = self.position / 1000.0  # convert mm to meters
-        self.transform = T
-
-    def apply(self, pose, inverse=False):
-        """
-        Apply work object transform to a Cartesian pose.
-        pose: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
-        inverse: if True, transform from base frame to workobject frame
-        Returns new pose
-        """
-        # Convert pose to homogeneous matrix
-        rot = Rotation.from_euler('xyz', pose[3:], degrees=True)
-        T_pose = np.eye(4)
-        T_pose[:3, :3] = rot.as_matrix()
-        T_pose[:3, 3] = np.array(pose[:3]) / 1000.0  # mm -> m
-
-        if inverse:
-            T_result = np.linalg.inv(self.transform) @ T_pose
-        else:
-            T_result = self.transform @ T_pose
-
-        # Extract position
-        pos = T_result[:3, 3] * 1000.0  # back to mm
-
-        # Extract orientation
-        r = Rotation.from_matrix(T_result[:3, :3])
-        euler = r.as_euler('xyz', degrees=True)
-
-        return [pos[0], pos[1], pos[2], euler[0], euler[1], euler[2]]
 
 
 class RobotController(Node):
@@ -276,16 +228,36 @@ class RobotController(Node):
         # Timer to attempt loading TCP transform every 0.5 seconds
         self.create_timer(0.5, self.load_tcp_transform)
 
+        # Safety wall manager - handles workspace boundaries, collision objects, markers, and validation
+        self.safety_manager = SafetyWallManager(
+            node=self,
+            workspace=SAFETY_WORKSPACE.copy(),
+            margin=SAFETY_MARGIN,
+            enabled=True,
+            marker_publish_interval=2.0
+        )
+
         # ROS clients
         self.move_group_client = ActionClient(self, MoveGroup, '/move_action')
         self.execute_trajectory_client = ActionClient(self, ExecuteTrajectory, '/execute_trajectory')
+        self.controller_client = ActionClient(self, FollowJointTrajectory, '/fairino5_controller/follow_joint_trajectory')
         self.cart_path_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
         self.ipp_client = self.create_client(ApplyIPP, '/apply_ipp')
 
         self.prev_cartesian = None
 
+        # Track active goal handles for motion cancellation
+        self.active_move_goal = None
+        self.active_execute_goal = None
+        self.active_execute_send_future = None  # Track the send operation itself
+        self.active_controller_goal = None  # Track the actual controller goal
+
         self.get_logger().info('Waiting for move_group action server...')
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
+        # Subscribe to controller action status to track active goals
+        from action_msgs.msg import GoalStatusArray
+        self.create_subscription(GoalStatusArray, '/fairino5_controller/follow_joint_trajectory/_action/status',
+                               self._controller_status_callback, 10)
 
     def wait_for_monitor(self, timeout_sec=5.0):
         """Wait until RobotMonitor (TCP) is initialized."""
@@ -297,6 +269,32 @@ class RobotController(Node):
                 return False
             time.sleep(0.1)
         return True
+
+    def get_tool_transform(self, tool_id):
+        """
+        Get tool transform matrix from tool ID.
+
+        Args:
+            tool_id (int): Tool ID (0, 1, etc.)
+
+        Returns:
+            4x4 tool transform matrix (ee_link → TCP)
+        """
+        tool_name = tool_id_map.get(tool_id, "TOOL_0")
+        if tool_name not in tool_registry:
+            self.get_logger().warning(f"Tool {tool_name} not found in registry, using TOOL_0")
+            tool_name = "TOOL_0"
+
+        offset = tool_registry[tool_name]
+        xyz = offset[:3]
+        rpy = offset[3:]
+
+        # Build tool offset transform (ee_link → TCP)
+        T_tool = np.eye(4)
+        T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
+        T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
+
+        return T_tool
 
     def set_tool(self, tool_name):
         """
@@ -313,7 +311,7 @@ class RobotController(Node):
 
         # Build tool offset transform (ee_link → TCP)
         self.T_tool = np.eye(4)
-        self.T_tool[:3, :3] = Rotation.from_euler('xyz', rpy, degrees=True).as_matrix()
+        self.T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
         self.T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
 
         # Compose: wrist3 → ee_link → TCP
@@ -353,51 +351,46 @@ class RobotController(Node):
                 rclpy.time.Time(),  # latest
                 timeout=rclpy.duration.Duration(seconds=1.0)
             )
-            # Build 4x4 homogeneous matrix
-            t = trans.transform.translation
-            q = trans.transform.rotation
-            T = np.eye(4)
-            T[:3, 3] = [t.x, t.y, t.z]
-            T[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+            # Convert TF2 TransformStamped to 4x4 homogeneous matrix
+            T = TransformationUtils.tf2_to_transform(trans)
             print(f"[RobotController] Loaded TCP transform:\n{T}")
-
             return T
         except Exception as e:
             self.get_logger().warning(f"Could not get TCP transform from tf: {e}")
             return np.eye(4)
 
-    def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN'):
-        """Send a single Cartesian goal to the robot via MoveGroup action.
-
-        Args:
-            x_mm, y_mm, z_mm: Desired TCP position in millimeters
-            rx, ry, rz: Desired TCP orientation in degrees
-            planner_id: 'LIN' for linear motion (Cartesian straight line),
-                       'PTP' for point-to-point motion (joint space)
-        """
-
-        # Wait for MoveGroup action server to be available
+    def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN', tool_transform=None):
+        self.safety_manager.force_update()
+        # Wait for the MoveGroup action server to be available
         if not self.move_group_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().error('Move group action server not available')
             return
 
-        # Convert millimeters to meters, as MoveIt works in meters
-        x, y, z = x_mm / 1000.0, y_mm / 1000.0, z_mm / 1000.0
+        # Use provided tool transform or default to current active tool
+        T_tool = tool_transform if tool_transform is not None else self.T_tool
 
         # Build desired TCP pose as homogeneous transform
-        T_tcp_desired = np.eye(4)
-        T_tcp_desired[:3, :3] = Rotation.from_euler('xyz', [rx, ry, rz], degrees=True).as_matrix()
-        T_tcp_desired[:3, 3] = [x, y, z]
+        tcp_pose = [x_mm, y_mm, z_mm, rx, ry, rz]
+        T_tcp_desired = TransformationUtils.pose_to_transform(tcp_pose)
 
         # Apply inverse tool transform to get ee_link pose
         # TCP_pose = ee_link_pose * T_tool  =>  ee_link_pose = TCP_pose * inv(T_tool)
         # MoveIt now plans for ee_link (per SRDF), so we only remove tool offset
-        T_ee_link = T_tcp_desired @ np.linalg.inv(self.T_tool)
+        T_ee_link = TransformationUtils.remove_tcp_offset(T_tcp_desired, T_tool)
 
         # Extract position and orientation for ee_link
         ee_position = T_ee_link[:3, 3]
-        ee_rotation = Rotation.from_matrix(T_ee_link[:3, :3])
-        ee_quat = ee_rotation.as_quat(canonical=False)
+        ee_quat = TransformationUtils.matrix_to_quaternion(T_ee_link[:3, :3])
+
+        # Pre-validate position safety
+        is_safe, msg = self.safety_manager.check_position_safety(
+            ee_position[0], ee_position[1], ee_position[2]
+        )
+        if not is_safe:
+            self.get_logger().error(f'[SAFETY] Target position rejected: {msg}')
+            return  # Early exit
+        if "Warning" in msg:
+            self.get_logger().warning(f'[SAFETY] {msg}')
 
         # Create a new MoveGroup goal
         goal = MoveGroup.Goal()
@@ -417,13 +410,16 @@ class RobotController(Node):
         goal.request.max_acceleration_scaling_factor = acc_scale
 
         # Workspace bounds (defines the volume where the robot is allowed to plan)
+        ws = self.safety_manager.get_workspace_bounds()
+        margin = SAFETY_MARGIN  # optional, to give a small buffer
+
         goal.request.workspace_parameters.header.frame_id = 'base_link'
-        goal.request.workspace_parameters.min_corner.x = -1.0
-        goal.request.workspace_parameters.min_corner.y = -1.0
-        goal.request.workspace_parameters.min_corner.z = 0.01
-        goal.request.workspace_parameters.max_corner.x = 1.0
-        goal.request.workspace_parameters.max_corner.y = 1.0
-        goal.request.workspace_parameters.max_corner.z = 1.0
+        goal.request.workspace_parameters.min_corner.x = ws['x_min'] + margin
+        goal.request.workspace_parameters.min_corner.y = ws['y_min'] + margin
+        goal.request.workspace_parameters.min_corner.z = ws['z_min'] + margin
+        goal.request.workspace_parameters.max_corner.x = ws['x_max'] - margin
+        goal.request.workspace_parameters.max_corner.y = ws['y_max'] - margin
+        goal.request.workspace_parameters.max_corner.z = ws['z_max'] - margin
 
         # Define target pose for ee_link
         pose = Pose()
@@ -491,8 +487,11 @@ class RobotController(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error('Goal rejected')
+            self.active_move_goal = None
             return
         self.get_logger().info('Goal accepted, executing...')
+        # Track the active goal for cancellation
+        self.active_move_goal = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._get_result)
 
@@ -502,12 +501,15 @@ class RobotController(Node):
             self.get_logger().info('Goal succeeded!')
         else:
             self.get_logger().error(f'Goal failed with error code: {result.error_code.val}')
+        # Clear active goal when done
+        self.active_move_goal = None
 
     def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
         """
         Jog the robot by a small step in BASE frame.
         dx_mm, dy_mm, dz_mm are relative increments.
         """
+        self.safety_manager.force_update()
 
         # We need a valid current Cartesian position
         if self.prev_cartesian is None:
@@ -527,6 +529,14 @@ class RobotController(Node):
         y += dy_mm
         z += dz_mm
 
+        # Pre-validate jog target safety
+        is_safe, msg = self.safety_manager.check_position_safety(
+            x/1000.0, y/1000.0, z/1000.0  # Convert mm to m
+        )
+        if not is_safe:
+            self.get_logger().error(f'[SAFETY] Jog target rejected: {msg}')
+            return
+
         # Send new TCP position (maintaining current orientation)
         self.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale, acc_scale)
 
@@ -537,6 +547,7 @@ class RobotController(Node):
             waypoints_mm: List of TCP waypoints [x_mm, y_mm, z_mm] in millimeters
             rx, ry, rz: TCP orientation in degrees (same for all waypoints)
         """
+        self.safety_manager.force_update()
         num_waypoints = len(waypoints_mm)
         self.get_logger().info(f'[Cartesian Path] Computing smooth path through {num_waypoints} waypoints')
         self.get_logger().info(f'[Cartesian Path] vel= {vel_scaling}, acc= {acc_scaling}')
@@ -551,27 +562,32 @@ class RobotController(Node):
             self.get_logger().error('[Cartesian Path] compute_cartesian_path service not available')
             return
 
-        # Build TCP orientation as rotation matrix
-        tcp_rotation = Rotation.from_euler('xyz', [rx, ry, rz], degrees=True)
-
         # Create waypoint poses for ee_link (applying inverse of tool transform only)
         # Since MoveIt now plans for ee_link, we only need to remove the tool offset
         waypoints = []
         for i, wp in enumerate(waypoints_mm):
             # Build the desired TCP pose
-            T_tcp_desired = np.eye(4)
-            T_tcp_desired[:3, :3] = tcp_rotation.as_matrix()
-            T_tcp_desired[:3, 3] = [wp[0] / 1000.0, wp[1] / 1000.0, wp[2] / 1000.0]
+            tcp_pose = [wp[0], wp[1], wp[2], rx, ry, rz]
+            T_tcp_desired = TransformationUtils.pose_to_transform(tcp_pose)
 
             # Apply inverse of tool transform (ee_link → TCP)
             # to get ee_link pose, which MoveIt will plan for
             # Input: TCP coordinates → Output: ee_link coordinates
-            T_ee_link = T_tcp_desired @ np.linalg.inv(self.T_tool)
+            T_ee_link = TransformationUtils.remove_tcp_offset(T_tcp_desired, self.T_tool)
 
             # Extract ee_link pose
             ee_position = T_ee_link[:3, 3]
-            ee_rotation = Rotation.from_matrix(T_ee_link[:3, :3])
-            ee_quat = ee_rotation.as_quat(canonical=False)
+            ee_quat = TransformationUtils.matrix_to_quaternion(T_ee_link[:3, :3])
+
+            # Pre-validate waypoint safety
+            is_safe, msg = self.safety_manager.check_position_safety(
+                ee_position[0], ee_position[1], ee_position[2]
+            )
+            if not is_safe:
+                self.get_logger().error(f'[SAFETY] Waypoint {i+1} rejected: {msg}')
+                return  # Reject entire path if any waypoint unsafe
+            if "Warning" in msg and i == 0:  # Only warn once
+                self.get_logger().warning(f'[SAFETY] {msg}')
 
             # Debug: Log first waypoint transformation
             if i == 0:
@@ -590,11 +606,11 @@ class RobotController(Node):
         # Adaptive step size based on path complexity
         # Finer steps for larger paths ensure smoother trajectories
         if num_waypoints > 10:
-            max_step = 0.003  # 3mm for complex paths
+            max_step = 0.0015  # 1.5 mm
         elif num_waypoints > 5:
-            max_step = 0.002  # 2mm for medium paths
+            max_step = 0.001  # 1 mm
         else:
-            max_step = 0.001  # 1mm for simple paths - best quality
+            max_step = 0.0008  # 0.8 mm
 
         self.get_logger().info(f'[Cartesian Path] Waypoints prepared {waypoints}')
 
@@ -642,6 +658,7 @@ class RobotController(Node):
             return trajectory
 
     def _cartesian_path_response(self, future, vel_scaling, acc_scaling):
+        self.safety_manager.force_update()
         try:
             response = future.result()
             fraction = response.fraction
@@ -667,22 +684,72 @@ class RobotController(Node):
             self.get_logger().info(
                 f'[Cartesian Path] Final trajectory has {len(trajectory.joint_trajectory.points)} points')
 
-            # Execute the time-optimized trajectory
-            execute_goal = ExecuteTrajectory.Goal()
-            execute_goal.trajectory = trajectory
-
-            future = self.execute_trajectory_client.send_goal_async(execute_goal)
-            future.add_done_callback(self._execute_trajectory_response)
+            # Send trajectory directly to the controller instead of via ExecuteTrajectory
+            # This gives us the goal handle to cancel
+            self._send_trajectory_to_controller(trajectory.joint_trajectory)
 
         except Exception as e:
             self.get_logger().error(f'[Cartesian Path] Service call failed: {e}')
 
+    def _send_trajectory_to_controller(self, joint_trajectory):
+        """Send trajectory directly to joint trajectory controller for proper cancellation control."""
+        if not self.controller_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().error('[Controller] fairino5_controller not available')
+            return
+
+        # Create FollowJointTrajectory goal
+        controller_goal = FollowJointTrajectory.Goal()
+        controller_goal.trajectory = joint_trajectory
+
+        self.get_logger().info('[Controller] Sending trajectory directly to fairino5_controller...')
+        future = self.controller_client.send_goal_async(controller_goal)
+        # Store the future immediately
+        self.active_execute_send_future = future
+        future.add_done_callback(self._controller_goal_response)
+
+    def _controller_goal_response(self, future):
+        """Handle controller goal acceptance."""
+        self.active_execute_send_future = None
+        try:
+            goal_handle = future.result()
+            if not goal_handle.accepted:
+                self.get_logger().error('[Controller] Trajectory execution rejected by fairino5_controller')
+                self.active_controller_goal = None
+                return
+
+            self.get_logger().info('[Controller] Trajectory accepted by fairino5_controller')
+            # Track the goal handle for cancellation
+            self.active_controller_goal = goal_handle
+            result_future = goal_handle.get_result_async()
+            result_future.add_done_callback(self._controller_goal_result)
+        except Exception as e:
+            self.get_logger().error(f'[Controller] Goal response error: {e}')
+
+    def _controller_goal_result(self, future):
+        """Handle controller goal completion."""
+        try:
+            result = future.result().result
+            if result.error_code == 0:
+                self.get_logger().info('[Controller] Trajectory execution succeeded!')
+            else:
+                self.get_logger().error(f'[Controller] Trajectory execution failed with error: {result.error_code}')
+        except Exception as e:
+            self.get_logger().error(f'[Controller] Result error: {e}')
+        finally:
+            # Clear active goals
+            self.active_controller_goal = None
+            self.active_execute_goal = None
+
     def _execute_trajectory_response(self, future):
+        self.active_execute_send_future = None  # Clear send future now that we have response
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error('[Cartesian Path] Trajectory execution rejected')
+            self.active_execute_goal = None
             return
         self.get_logger().info('[Cartesian Path] Trajectory execution accepted')
+        # Track the active goal for cancellation
+        self.active_execute_goal = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._execute_trajectory_result)
 
@@ -693,6 +760,26 @@ class RobotController(Node):
         else:
             self.get_logger().error(
                 f'[Cartesian Path] Trajectory execution failed with error code: {result.error_code.val}')
+        # Clear active goal when done
+        self.active_execute_goal = None
+        self.active_controller_goal = None  # Also clear controller goal
+
+    def _controller_status_callback(self, msg):
+        """Monitor controller action status and track active goals."""
+        from action_msgs.msg import GoalStatus
+
+        # Check if there's an active/executing goal
+        for status in msg.status_list:
+            if status.status in [GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING]:
+                # We have an active controller goal - but we need the goal handle
+                # This is tricky because we need to intercept it from ExecuteTrajectory
+                # The better approach is to directly send to the controller ourselves
+                pass
+            elif status.status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
+                                   GoalStatus.STATUS_CANCELED]:
+                # Clear when goal completes
+                if self.active_controller_goal is not None:
+                    self.active_controller_goal = None
 
     def joint_state_callback(self, msg):
         """Process joint states via RobotMonitor and update UI."""
@@ -725,57 +812,191 @@ class RobotController(Node):
 
                 return None
 
+    def stop_motion(self):
+        """
+        Cancel all active motion goals (MoveGroup, ExecuteTrajectory, and Controller).
+
+        Returns:
+            bool: True if motion was stopped, False if no active goals
+        """
+        stopped = False
+
+        # Cancel MoveGroup goal
+        if self.active_move_goal is not None:
+            self.get_logger().info('[STOP] Cancelling active MoveGroup goal...')
+            try:
+                future = self.active_move_goal.cancel_goal_async()
+                self.active_move_goal = None
+                stopped = True
+            except Exception as e:
+                self.get_logger().error(f'[STOP] Failed to cancel MoveGroup goal: {e}')
+
+        # Cancel ExecuteTrajectory goal
+        if self.active_execute_goal is not None:
+            self.get_logger().info('[STOP] Cancelling active ExecuteTrajectory goal...')
+            try:
+                future = self.active_execute_goal.cancel_goal_async()
+                self.active_execute_goal = None
+                stopped = True
+            except Exception as e:
+                self.get_logger().error(f'[STOP] Failed to cancel ExecuteTrajectory goal: {e}')
+
+        # Cancel pending execute trajectory send operation
+        if self.active_execute_send_future is not None:
+            self.get_logger().info('[STOP] Cancelling pending ExecuteTrajectory send operation...')
+            try:
+                self.active_execute_send_future.cancel()
+                self.active_execute_send_future = None
+                stopped = True
+            except Exception as e:
+                self.get_logger().error(f'[STOP] Failed to cancel send future: {e}')
+
+        # Cancel the actual hardware controller goal (fairino5_controller)
+        if self.active_controller_goal is not None:
+            self.get_logger().info('[STOP] Cancelling active Controller goal (fairino5_controller)...')
+            try:
+                future = self.active_controller_goal.cancel_goal_async()
+                self.active_controller_goal = None
+                stopped = True
+            except Exception as e:
+                self.get_logger().error(f'[STOP] Failed to cancel controller goal: {e}')
+
+        if stopped:
+            self.get_logger().warning('[STOP] Robot motion cancelled!')
+        else:
+            self.get_logger().info('[STOP] No active goals to cancel')
+
+        return stopped
+
 class FairinoRos2Robot:
-    def __init__(self, ip, node=None,workobject=None):
+    """
+    ROS2-based robot controller with interface compatible with FairinoRobot.
+    Provides motion control, I/O operations, and coordinate frame management.
+    """
+
+    def __init__(self, ip, node=None, workobject=None):
+        """
+        Initializes the ROS2 robot wrapper.
+
+        Args:
+            ip (str): IP address of the robot controller (for compatibility, not used in ROS2)
+            node (RobotController): ROS2 node for robot control (optional)
+            workobject (WorkObject): Default work object frame (optional)
+        """
         self.ip = ip
         self.node = node  # embeds the RobotController node
-        self.workobject = workobject  # WorkObject frame (optional)
+        self.workobject = workobject  # Default WorkObject frame (user=0)
+        self.workobject_registry = {0: workobject}  # Registry of work objects by user ID
 
     # ---------------- WorkObject Methods ----------------
-    def set_workobject(self, workobject):
-        """Set a WorkObject for the robot (coordinate frame)."""
-        self.workobject = workobject
+    def set_workobject(self, workobject, user_id=0):
+        """
+        Set a WorkObject for the robot (coordinate frame).
 
-    def apply_workobject(self, pose):
+        Args:
+            workobject (WorkObject): Work object to set
+            user_id (int): User frame ID (default 0)
         """
-        Apply the current workobject transform to a pose.
-        pose: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
+        self.workobject_registry[user_id] = workobject
+        if user_id == 0:
+            self.workobject = workobject
+
+    def get_workobject(self, user_id=0):
         """
-        if self.workobject is None:
+        Get a WorkObject by user ID.
+
+        Args:
+            user_id (int): User frame ID
+
+        Returns:
+            WorkObject or None
+        """
+        return self.workobject_registry.get(user_id)
+
+    def apply_workobject(self, pose, user_id=0):
+        """
+        Apply workobject transform to a pose (from user frame to base frame).
+
+        Args:
+            pose: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
+            user_id (int): User frame ID (0 = default workobject)
+
+        Returns:
+            Transformed pose in base frame
+        """
+        workobject = self.get_workobject(user_id)
+        if workobject is None:
             return pose
-        return self.workobject.apply(pose)
+        return workobject.apply(pose)
 
     # ---------------- Movement Methods ----------------
-    def move_cartesian(self, position, tool=0, user=0, vel=100, acc=100, blendR=0, blocking=False):
+    def move_cartesian(self, position, tool=0, user=0, vel=30, acc=30, blendR=0):
+        """
+        Moves the robot in Cartesian space (point-to-point motion).
+
+        Args:
+            position (list): Target Cartesian position [x, y, z, rx, ry, rz] in tool frame
+            tool (int): Tool frame ID (position is relative to this tool frame)
+            user (int): User frame ID (0 = default workobject)
+            vel (float): Velocity (percentage 0-100)
+            acc (float): Acceleration (percentage 0-100)
+            blendR (float): Blend radius (not used in ROS2 implementation)
+
+        Returns:
+            int: 0 on success, error code otherwise
+        """
         if len(position) != 6:
-            raise ValueError("Position must be a list of 6 values: [x, y, z, rx, ry, rz]")
+            return -1  # Invalid position format
 
-        # Apply workobject if exists
-        position = self.apply_workobject(position)
+        try:
+            # Transform position from user frame to base frame
+            position_base = self.apply_workobject(position, user_id=user)
 
-        vel_scale = max(0.0, min(1.0, vel / 100.0))
-        acc_scale = max(0.0, min(1.0, acc / 100.0))
-        x, y, z, rx, ry, rz = position
-        self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='PTP')
+            # Get tool transform for the specified tool ID
+            tool_transform = self.node.get_tool_transform(tool)
 
-        if blocking:
-            return self.wait_for_position(position, threshold=1.0, timeout=30.0)
-        return True
+            vel_scale = max(0.0, min(1.0, vel / 100.0))
+            acc_scale = max(0.0, min(1.0, acc / 100.0))
+            x, y, z, rx, ry, rz = position_base
+            self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='PTP', tool_transform=tool_transform)
+            return 0  # Success
+        except Exception as e:
+            print(f"move_cartesian error: {e}")
+            return -1  # Error
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=False):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0):
+        """
+        Executes a linear movement with blending.
+
+        Args:
+            position (list): Target position [x, y, z, rx, ry, rz] in tool frame
+            tool (int): Tool frame ID (position is relative to this tool frame)
+            user (int): User frame ID (0 = default workobject)
+            vel (float): Velocity (percentage 0-100)
+            acc (float): Acceleration (percentage 0-100)
+            blendR (float): Blend radius (not used in ROS2 implementation)
+
+        Returns:
+            int: 0 on success, error code otherwise
+        """
         if len(position) != 6:
-            raise ValueError("Position must be a list of 6 values: [x, y, z, rx, ry, rz]")
+            return -1  # Invalid position format
 
-        position = self.apply_workobject(position)
+        try:
+            # Transform position from user frame to base frame
+            position_base = self.apply_workobject(position, user_id=user)
 
-        vel_scale = max(0.0, min(1.0, vel / 100.0))
-        acc_scale = max(0.0, min(1.0, acc / 100.0))
-        x, y, z, rx, ry, rz = position
-        self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN')
+            # Get tool transform for the specified tool ID
+            tool_transform = self.node.get_tool_transform(tool)
 
-        if blocking:
-            return self.wait_for_position(position, threshold=1.0, timeout=30.0)
-        return True
+            vel_scale = max(0.0, min(1.0, vel / 100.0))
+            acc_scale = max(0.0, min(1.0, acc / 100.0))
+            x, y, z, rx, ry, rz = position_base
+            self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN', tool_transform=tool_transform)
+            return 0  # Success
+        except Exception as e:
+            print(f"move_liner error: {e}")
+            return -1  # Error
 
     def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=False):
         if not path or self.node is None:
@@ -789,9 +1010,8 @@ class FairinoRos2Robot:
                 waypoints_xyz.append([wp[0], wp[1], wp[2]])
                 # Get current TCP orientation if not provided
                 if rx is None or ry is None or rz is None:
-                    result = self.get_current_position()
-                    if result[0] == 0 and result[1] is not None:
-                        current_pose = result[1]
+                    current_pose = self.get_current_position()
+                    if current_pose is not None:
                         rx, ry, rz = current_pose[3], current_pose[4], current_pose[5]
                     else:
                         # Fallback if current position unavailable
@@ -811,20 +1031,20 @@ class FairinoRos2Robot:
         if not waypoints_xyz:
             return -1
 
-        # Transform waypoints from workobject frame to base frame if workobject is set
+        # Transform waypoints from workobject frame to base frame if the workobject is set
         if self.workobject is not None:
-            self.node.get_logger().info(f"[EXECUTE_PATH] Transforming waypoints from workobject to base frame")
+            self.node.get_logger().info(f"[EXECUTE_PATH] Transforming waypoints from work object to base frame")
             waypoints_base = []
             for wp_xyz in waypoints_xyz:
                 # Combine XYZ with orientation for transformation
                 wp_full = [wp_xyz[0], wp_xyz[1], wp_xyz[2], rx, ry, rz]
-                # Transform from workobject to base frame
-                wp_base = self.apply_workobject(wp_full)
+                # Transform from workobject to base frame using WorkObject.apply()
+                wp_base = self.workobject.apply(wp_full)
                 waypoints_base.append([wp_base[0], wp_base[1], wp_base[2]])
             waypoints_xyz = waypoints_base
             # Also transform orientation to base frame
             orientation_full = [0, 0, 0, rx, ry, rz]  # dummy position, only orientation matters
-            orientation_base = self.apply_workobject(orientation_full)
+            orientation_base = self.workobject.apply(orientation_full)
             rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Extracted {len(waypoints_xyz)} XYZ waypoints")
@@ -846,48 +1066,65 @@ class FairinoRos2Robot:
         return 0
 
     # ---------------- Status Methods ----------------
-    def get_current_position(self, frame="base_link"):
+    def get_current_position(self):
         """
-        Return the current Cartesian position, optionally transformed to the work object frame.
+        Retrieves the current TCP (tool center point) position.
 
-        Output: (success_code, [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg])
+        Returns:
+            list: Current robot TCP pose [x, y, z, rx, ry, rz] or None on error
         """
         if self.node is None:
-            return -1, None
+            return None
 
         data = self.node.get_latest_data()
         if data is None or 'positions' not in data:
-            return -1, None
+            return None
 
-        q = data['positions']
-        fk = self.node.monitor.compute_fk(q, tcp_transform=self.node.monitor.T_tcp)
-        fk[:3] *= 1000.0  # meters -> mm
+        try:
+            q = data['positions']
+            fk = self.node.monitor.compute_fk(q, tcp_transform=self.node.monitor.T_tcp)
+            fk[:3] *= 1000.0  # meters -> mm
+            pose = fk.tolist()
 
-        pose = fk.tolist()
+            # Transform from base to workobject frame if a workobject exists
+            if self.workobject is not None:
+                pose = self.workobject.apply(pose, inverse=True)
 
-        # Apply workobject if it exists
-        if self.workobject is not None:
-            pose = self.workobject.apply(pose, inverse=True)  # transform from base to workobject frame
-
-        return 0, pose
+            return pose
+        except Exception as e:
+            print(f"get_current_position error: {e}")
+            return None
 
     def get_current_velocity(self):
+        """
+        Retrieves the current Cartesian velocity.
+
+        Returns:
+            tuple: Current velocity (vx, vy, vz) or None on error
+        """
         if self.node is None:
-            return -1, (0.0, 0.0, 0.0)
+            return None
         data = self.node.get_latest_data()
         if data is None or 'cart_velocity' not in data:
-            return -1, (0.0, 0.0, 0.0)
-        return 0, tuple(data['cart_velocity'].tolist())
+            return None
+        return tuple(data['cart_velocity'].tolist())
 
     def get_current_acceleration(self):
+        """
+        Retrieves the current Cartesian acceleration.
+
+        Returns:
+            tuple: Current acceleration (ax, ay, az) or None on error
+        """
         if self.node is None:
-            return -1, (0.0, 0.0, 0.0)
+            return None
         data = self.node.get_latest_data()
         if data is None or 'cart_acceleration' not in data:
-            return -1, (0.0, 0.0, 0.0)
-        return 0, tuple(data['cart_acceleration'].tolist())
+            return None
+        return tuple(data['cart_acceleration'].tolist())
 
     def wait_for_position(self, target_position, threshold=1.0, timeout=30.0, check_interval=0.01):
+        """Internal helper to wait for robot to reach target position."""
         import time, math
         start_time = time.time()
         if len(target_position) >= 3:
@@ -898,11 +1135,7 @@ class FairinoRos2Robot:
         while True:
             if time.time() - start_time > timeout:
                 return False
-            result = self.get_current_position()
-            if result is None or result[0] != 0:
-                time.sleep(check_interval)
-                continue
-            _, current_position = result
+            current_position = self.get_current_position()
             if current_position is None:
                 time.sleep(check_interval)
                 continue
@@ -915,32 +1148,41 @@ class FairinoRos2Robot:
     # ---------------- Jog / Control / Misc ----------------
     def start_jog(self, axis, direction, step, vel, acc):
         """
-        Jog the robot in the workobject frame.
-        axis: 0=X, 1=Y, 2=Z (in workobject frame)
-        direction: +1 or -1
-        step: distance in mm
+        Starts jogging the robot in a specified axis and direction.
+
+        Args:
+            axis (Axis or int): Axis to jog (0=X, 1=Y, 2=Z or Axis enum)
+            direction (Direction or int): Jog direction (1=PLUS, -1=MINUS or Direction enum)
+            step (float): Distance to move (mm)
+            vel (float): Velocity of jog (percentage 0-100)
+            acc (float): Acceleration of jog (percentage 0-100)
+
+        Returns:
+            int: 0 on success, -1 on error
         """
         if self.node is None or self.node.prev_cartesian is None:
             return -1
-        if axis not in [0, 1, 2] or direction not in [1, -1]:
+
+        # Handle enum types (extract .value if present)
+        axis_val = axis.value if hasattr(axis, 'value') else axis
+        dir_val = direction.value if hasattr(direction, 'value') else direction
+
+        if axis_val not in [0, 1, 2] or dir_val not in [1, -1]:
             return -1
 
-        # Get current position in workobject frame (with tool offset applied)
-        result = self.get_current_position()
-        if result is None or result[0] != 0:
-            return -1
-        _, current_pos_wobj = result
+        # Get current position in workobject frame
+        current_pos_wobj = self.get_current_position()
         if current_pos_wobj is None or len(current_pos_wobj) < 6:
             return -1
 
         # Apply delta in workobject frame
         x, y, z, rx, ry, rz = current_pos_wobj
         deltas = [0.0, 0.0, 0.0]
-        deltas[axis] = step * direction
+        deltas[axis_val] = step * dir_val
 
         new_pos_wobj = [x + deltas[0], y + deltas[1], z + deltas[2], rx, ry, rz]
 
-        # Transform to base frame (workobject.apply() does this)
+        # Transform to base frame
         new_pos_base = self.apply_workobject(new_pos_wobj)
 
         # Send command
@@ -956,10 +1198,72 @@ class FairinoRos2Robot:
             print(f"Jog error: {e}")
             return -1
 
-    def enable(self): pass
-    def disable(self): pass
-    def printSdkVersion(self): pass
-    def setDigitalOutput(self, portId, value): pass
-    def stop_motion(self): pass
-    def resetAllErrors(self): pass
+    def enable(self):
+        """
+        Enables the robot, allowing motion.
+        Note: In ROS2 implementation, robot is always enabled when node is active.
+        """
+        if self.node is not None:
+            self.node.get_logger().info("Robot enable called (ROS2 robot is always enabled)")
+        return 0
+
+    def disable(self):
+        """
+        Disables the robot, preventing motion.
+        Note: In ROS2 implementation, use stop_motion() instead.
+        """
+        if self.node is not None:
+            self.node.get_logger().info("Robot disable called (use stop_motion for ROS2)")
+        return 0
+
+    def printSdkVersion(self):
+        """
+        Prints the current SDK version.
+        Note: ROS2 implementation uses ROS2 version info.
+        """
+        version = "ROS2 Fairino Robot Controller v1.0"
+        print(version)
+        return version
+
+    def setDigitalOutput(self, portId, value):
+        """
+        Sets a digital output pin on the robot.
+
+        Args:
+            portId (int): Output port number
+            value (int): Value to set (0 or 1)
+
+        Returns:
+            int: 0 on success, -1 on error
+
+        Note: Not implemented in the ROS2 version - requires hardware interface
+        """
+        print(f"setDigitalOutput: port {portId} -> {value} (not implemented in ROS2)")
+        return -1
+
+    def stop_motion(self):
+        """
+        Stops all current robot motion by cancelling active action goals.
+
+        Returns:
+            int: 0 on success, -1 on error
+        """
+        if self.node is None:
+            return -1
+
+        # Cancel all active motion goals
+        stopped = self.node.stop_motion()
+        return 0 if stopped else -1
+
+    def resetAllErrors(self):
+        """
+        Resets all current error states on the robot.
+
+        Returns:
+            int: 0 on success, -1 on error
+
+        Note: Not applicable in ROS2 version
+        """
+        print("resetAllErrors called (not applicable in ROS2)")
+        return 0
 

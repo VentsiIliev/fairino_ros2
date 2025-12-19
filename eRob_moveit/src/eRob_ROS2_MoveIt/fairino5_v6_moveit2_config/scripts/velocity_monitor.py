@@ -8,8 +8,9 @@ from PyQt6.QtWidgets import QApplication
 
 from rclpy.node import Node
 
+from utils.work_object import WorkObject
 from monitor_window import MonitorWindow
-from robot_controller import RobotController, FairinoRos2Robot, WorkObject
+from robot_controller import RobotController, FairinoRos2Robot
 
 
 def ros_spin_thread(node):

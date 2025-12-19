@@ -21,7 +21,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 # Python scripts
 install(PROGRAMS
-  scripts/monitor_ui.py
   scripts/velocity_monitor.py
   scripts/gui_bridge.py
   DESTINATION lib/${PROJECT_NAME}

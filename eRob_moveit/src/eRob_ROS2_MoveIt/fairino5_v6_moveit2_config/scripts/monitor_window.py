@@ -342,7 +342,14 @@ class MonitorWindow(QWidget):
         self.execute_path_btn.setStyleSheet(
             'QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 10px; }')
         self.execute_path_btn.clicked.connect(self.execute_path)
-        path_layout.addWidget(self.execute_path_btn, 7, 4, 1, 2)
+        path_layout.addWidget(self.execute_path_btn, 7, 4, 1, 1)
+
+        # Stop motion button
+        self.stop_motion_btn = QPushButton('STOP')
+        self.stop_motion_btn.setStyleSheet(
+            'QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+        self.stop_motion_btn.clicked.connect(self.stop_motion)
+        path_layout.addWidget(self.stop_motion_btn, 7, 5, 1, 1)
 
         path_group.setLayout(path_layout)
         main_layout.addWidget(path_group)
@@ -540,12 +547,8 @@ class MonitorWindow(QWidget):
 
     def add_current_waypoint(self):
         """Add current robot position as a waypoint"""
-        result = self.robot.get_current_position()
-        if result is None:
-            return
-
-        success, pose = result
-        if success != 0 or pose is None:
+        pose = self.robot.get_current_position()
+        if pose is None:
             return
 
         x, y, z, rx, ry, rz = pose
@@ -584,11 +587,10 @@ class MonitorWindow(QWidget):
             radius_mm = float(self.circle_radius_input.text())
 
             # Get current TCP position and orientation
-            result = self.robot.get_current_position()
-            if result[0] != 0 or result[1] is None:
+            cart = self.robot.get_current_position()
+            if cart is None:
                 raise ValueError("Could not get current robot position")
 
-            cart = result[1]
             center_x = cart[0]
             center_y = cart[1]
             center_z = cart[2]
@@ -644,11 +646,10 @@ class MonitorWindow(QWidget):
             height_mm = float(self.rect_height_input.text())
 
             # Get current TCP position and orientation
-            result = self.robot.get_current_position()
-            if result[0] != 0 or result[1] is None:
+            cart = self.robot.get_current_position()
+            if cart is None:
                 raise ValueError("Could not get current robot position")
 
-            cart = result[1]
             center_x = cart[0]
             center_y = cart[1]
             center_z = cart[2]
@@ -783,17 +784,15 @@ class MonitorWindow(QWidget):
         if (hasattr(self, 'auto_update_position') and self.auto_update_position and
             not (self.x_input.hasFocus() or self.y_input.hasFocus() or self.z_input.hasFocus() or
                  self.rx_input.hasFocus() or self.ry_input.hasFocus() or self.rz_input.hasFocus())):
-            result = self.robot.get_current_position(frame=self.selected_frame)
-            if result is not None:
-                success, pose = result
-                if success == 0 and pose is not None:
-                    x, y, z, rx, ry, rz = pose
-                    self.x_input.setText(f'{x:.1f}')
-                    self.y_input.setText(f'{y:.1f}')
-                    self.z_input.setText(f'{z:.1f}')
-                    self.rx_input.setText(f'{rx:.1f}')
-                    self.ry_input.setText(f'{ry:.1f}')
-                    self.rz_input.setText(f'{rz:.1f}')
+            pose = self.robot.get_current_position()
+            if pose is not None:
+                x, y, z, rx, ry, rz = pose
+                self.x_input.setText(f'{x:.1f}')
+                self.y_input.setText(f'{y:.1f}')
+                self.z_input.setText(f'{z:.1f}')
+                self.rx_input.setText(f'{rx:.1f}')
+                self.ry_input.setText(f'{ry:.1f}')
+                self.rz_input.setText(f'{rz:.1f}')
 
     def update_joint_state(self, joint_state):
         self.joint_state = joint_state
@@ -852,7 +851,7 @@ class MonitorWindow(QWidget):
             print(f"Error applying tool: {e}")
 
     def reset_tool_button(self):
-        """Reset the apply tool button to default state"""
+        """Reset the apply tool button to the default state"""
         self.apply_tool_btn.setStyleSheet(
             'QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 8px; }')
         self.apply_tool_btn.setText('Apply Tool')
@@ -893,16 +892,16 @@ class MonitorWindow(QWidget):
                 'QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 8px; }')
             self.apply_wo_btn.setText('Failed!')
             QTimer.singleShot(1000, self.reset_wo_apply_button)
-            print(f"Error applying workobject: {e}")
+            print(f"Error applying work object: {e}")
 
     def reset_wo_apply_button(self):
-        """Reset the apply workobject button to default state"""
+        """Reset the apply work object button to the default state"""
         self.apply_wo_btn.setStyleSheet(
             'QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }')
         self.apply_wo_btn.setText('Apply WorkObject')
 
     def update_workobject_display(self):
-        """Update the UI to show the current active workobject"""
+        """Update the UI to show the current active work object"""
         try:
             # Get current workobject from robot
             if hasattr(self.robot, 'work_object') and self.robot.work_object is not None:
@@ -923,7 +922,7 @@ class MonitorWindow(QWidget):
                 self.wo_status_label.setText('Active WorkObject: [0, 0, 0, 0, 0, 0] (Identity)')
         except Exception as e:
             self.wo_status_label.setText(f'Active WorkObject: Error reading - {str(e)[:30]}')
-            print(f"Error reading workobject: {e}")
+            print(f"Error reading work object: {e}")
 
     def clear_workobject(self):
         """Clear the workobject (set to identity/zero)"""
@@ -957,10 +956,44 @@ class MonitorWindow(QWidget):
                 'QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 8px; }')
             self.clear_wo_btn.setText('Failed!')
             QTimer.singleShot(1000, self.reset_wo_clear_button)
-            print(f"Error clearing workobject: {e}")
+            print(f"Error clearing work object: {e}")
+
+    def stop_motion(self):
+        """Stop all robot motion by cancelling active goals."""
+        try:
+            result = self.robot.stop_motion()
+
+            if result == 0:
+                # Motion was stopped successfully
+                self.stop_motion_btn.setStyleSheet(
+                    'QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+                self.stop_motion_btn.setText('STOPPED!')
+                print("Robot motion stopped successfully")
+            else:
+                # No active goals to stop
+                self.stop_motion_btn.setStyleSheet(
+                    'QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+                self.stop_motion_btn.setText('NO MOTION')
+                print("No active motion to stop")
+
+            # Reset button after 1.5 seconds
+            QTimer.singleShot(1500, self.reset_stop_button)
+
+        except Exception as e:
+            self.stop_motion_btn.setStyleSheet(
+                'QPushButton { background-color: #9E9E9E; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+            self.stop_motion_btn.setText('ERROR')
+            QTimer.singleShot(1000, self.reset_stop_button)
+            print(f"Error stopping motion: {e}")
+
+    def reset_stop_button(self):
+        """Reset the stop button to its original state."""
+        self.stop_motion_btn.setStyleSheet(
+            'QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+        self.stop_motion_btn.setText('STOP')
 
     def reset_wo_clear_button(self):
-        """Reset the clear workobject button to default state"""
+        """Reset the clear work object button to the default state"""
         self.clear_wo_btn.setStyleSheet(
             'QPushButton { background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px; }')
         self.clear_wo_btn.setText('Clear WorkObject')
