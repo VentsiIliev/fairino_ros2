@@ -410,6 +410,13 @@ class RobotController(Node):
         goal.request.max_velocity_scaling_factor = vel_scale
         goal.request.max_acceleration_scaling_factor = acc_scale
 
+        # For PTP: Optionally use current robot state as start to find closest IK solution
+        # This helps Pilz find the shortest joint-space path
+        # However, leave start_state empty to let MoveIt use actual current state
+        # if planner_id == 'PTP' and self.current_joint_state is not None:
+        #     goal.request.start_state.joint_state = self.current_joint_state
+        #     goal.request.start_state.is_diff = False
+
         # Workspace bounds (defines the volume where the robot is allowed to plan)
         ws = self.safety_manager.get_workspace_bounds()
         margin = SAFETY_MARGIN  # optional, to give a small buffer

@@ -1,0 +1,14 @@
+# Requirements for Fairino ROS2 Bridge
+
+# Server-side (requires ROS2 environment)
+Flask==3.0.0
+Flask-CORS==4.0.0  # If you need cross-origin requests
+
+# Client-side (NO ROS2 required!)
+requests==2.31.0
+
+# Optional: For ZeroMQ option
+# pyzmq==25.1.0
+
+# Optional: For async support
+# aiohttp==3.9.0

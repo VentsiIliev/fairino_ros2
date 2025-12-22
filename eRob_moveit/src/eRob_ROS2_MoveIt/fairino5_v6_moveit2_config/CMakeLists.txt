@@ -19,11 +19,20 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES trajectory_msgs
 )
 
-# Python scripts
+# Python scripts - install to share for launch file access
 install(PROGRAMS
   scripts/velocity_monitor.py
   scripts/gui_bridge.py
-  DESTINATION lib/${PROJECT_NAME}
+  scripts/monitor_window.py
+  scripts/robot_controller.py
+  scripts/rest_server.py
+  DESTINATION share/${PROJECT_NAME}/scripts
+)
+
+# Also install Python module files
+install(DIRECTORY scripts/utils
+  DESTINATION share/${PROJECT_NAME}/scripts
+  FILES_MATCHING PATTERN "*.py"
 )
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
