@@ -19,24 +19,27 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES trajectory_msgs
 )
 
-# Python scripts - install to share for launch file access
+# Python scripts - install to lib for executable access
 install(PROGRAMS
   scripts/velocity_monitor.py
   scripts/gui_bridge.py
   scripts/monitor_window.py
   scripts/robot_controller.py
+  scripts/safety_wall_manager.py
   scripts/rest_server.py
-  DESTINATION share/${PROJECT_NAME}/scripts
+  scripts/enums.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
-# Also install Python module files
+# Install Python modules to lib so they can be imported
 install(DIRECTORY scripts/utils
-  DESTINATION share/${PROJECT_NAME}/scripts
+  DESTINATION lib/${PROJECT_NAME}
   FILES_MATCHING PATTERN "*.py"
 )
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY meshes DESTINATION share/${PROJECT_NAME})
 
 # C++ IPP helper node
 add_executable(ipp_helper src_cpp/ipp_helper_node.cpp)

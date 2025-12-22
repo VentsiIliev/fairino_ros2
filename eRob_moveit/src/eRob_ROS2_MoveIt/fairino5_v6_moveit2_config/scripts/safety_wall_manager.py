@@ -49,7 +49,7 @@ class SafetyWallManager:
         self.safety_workspace = workspace.copy() if workspace is not None else {}
         self.safety_margin = margin
         self.safety_enabled = enabled
-        self.walls_marker_array = None  # Cached marker array (created on first use)
+        self.walls_marker_array = None
 
         # Create ROS2 publishers
         self.planning_scene_pub = self.node.create_publisher(
@@ -143,8 +143,9 @@ class SafetyWallManager:
             return
 
         ps = PlanningScene()
-        ps.is_diff = True  # Only update these objects
+        ps.is_diff = True
         ps.world.collision_objects.extend(self._create_collision_objects())
+
         self.planning_scene_pub.publish(ps)
         self.node.get_logger().info('[SafetyWallManager] Published safety walls as collision objects')
 
@@ -255,6 +256,7 @@ class SafetyWallManager:
 
         return collision_objects
 
+
     def _create_markers(self) -> MarkerArray:
         """
         Create RViz visualization markers for safety walls.
@@ -341,15 +343,13 @@ class SafetyWallManager:
     def _publish_markers_callback(self):
         """Timer callback for periodic marker publishing to keep them visible in RViz."""
         if not self.safety_workspace:
-            return  # Skip if no workspace configured
+            return
 
         if self.walls_marker_array is None:
             self.walls_marker_array = self._create_markers()
 
-        # Update timestamp for all markers
         current_time = self.node.get_clock().now().to_msg()
         for marker in self.walls_marker_array.markers:
             marker.header.stamp = current_time
 
-        # Publish the markers
         self.safety_walls_pub.publish(self.walls_marker_array)

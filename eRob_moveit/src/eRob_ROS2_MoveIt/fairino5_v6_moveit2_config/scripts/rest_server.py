@@ -88,11 +88,20 @@ def start_rest_server(
         if not position or len(position) != 6:
             return jsonify({"error": "Invalid position format"}), 400
 
-        result = robot.move_cartesian(
+        # result = robot.move_cartesian(
+        #     position,
+        #     tool=data.get("tool", 0),
+        #     # user=data.get("user", 0),
+        #     user=0,# TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
+        #     vel=data.get("vel", 30),
+        #     acc=data.get("acc", 30),
+        # )
+
+        result = robot.move_liner(
             position,
             tool=data.get("tool", 0),
             # user=data.get("user", 0),
-            user=0,# TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
+            user=0,  # TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
             vel=data.get("vel", 30),
             acc=data.get("acc", 30),
         )
