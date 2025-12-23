@@ -5,12 +5,36 @@
 <robot
   name="fairino5_v6_robot">
 
-  <!-- Mounting surface link -->
   <link name="world">
 
   </link>
 
+    <!-- Mounting surface link -->
+    <link name="mounting_surface">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fairino_description/meshes/Cobot - Plot.stl"/>
+        </geometry>
+        <material name="mount_surface">
+          <color rgba="1 1 1 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fairino_description/meshes/Cobot - Plot.stl"/>
+        </geometry>
+      </collision>
+    </link>
 
+
+  <!-- Attach mounting surface to world -->
+  <joint name="world_to_mount" type="fixed">
+    <parent link="world" />
+    <child link="mounting_surface" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
 
   <!-- Fixed joint connecting world to robot base -->
   <joint name="world_to_base" type="fixed">

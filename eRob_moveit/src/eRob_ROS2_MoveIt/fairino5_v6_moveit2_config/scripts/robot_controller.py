@@ -33,19 +33,18 @@ from safety_wall_manager import SafetyWallManager
 from enums import RobotAxis,Direction
 
 # ============ Safety Workspace Boundaries ============
-# Define safe workspace limits to prevent robot from hitting walls/obstacles
-# All values in meter (base_link frame)
-SAFETY_WORKSPACE = {
-    'x_min': -0.37,   # -800mm
-    'x_max': 0.5,    # 800mm
-    'y_min': -0.8,   # -800mm
-    'y_max': 0.6,    # 800mm
-    'z_min': 0.0,    # 0mm (table level)
-    'z_max': 1.1,    # 1100mm
+# Safety workspace will be extracted from mounting_surface link mesh geometry
+# Fallback values if mesh extraction fails
+SAFETY_WORKSPACE_FALLBACK = {
+    'x_min': -0.37,
+    'x_max': 0.5,
+    'y_min': -0.8,
+    'y_max': 0.6,
+    'z_min': 0.0,
+    'z_max': 1.1,
 }
 
-# Safety margin before workspace boundary triggers warning (meters)
-SAFETY_MARGIN = 0.01  # 50mm
+SAFETY_MARGIN = 0.01
 
 tool_registry = {
     # Format: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
@@ -221,18 +220,19 @@ class RobotController(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.lock = Lock()
+        self.execution_lock = Lock()
 
         self.monitor = None
         self.tcp_loaded = False
-        self.T_ee_link = None  # wrist3 → ee_link (from URDF/TF, static)
-        self.T_tool = np.eye(4)  # ee_link → TCP (from tool registry, switchable)
-        # Timer to attempt loading TCP transform every 0.5 seconds
+        self.T_ee_link = None
+        self.T_tool = np.eye(4)
         self.create_timer(0.5, self.load_tcp_transform)
 
-        # Safety wall manager - handles workspace boundaries, collision objects, markers, and validation
+        workspace = self._extract_workspace_from_urdf()
+
         self.safety_manager = SafetyWallManager(
             node=self,
-            workspace=SAFETY_WORKSPACE.copy(),
+            workspace=workspace,
             margin=SAFETY_MARGIN,
             enabled=True,
             marker_publish_interval=2.0
@@ -250,15 +250,110 @@ class RobotController(Node):
         # Track active goal handles for motion cancellation
         self.active_move_goal = None
         self.active_execute_goal = None
-        self.active_execute_send_future = None  # Track the send operation itself
-        self.active_controller_goal = None  # Track the actual controller goal
+        self.active_execute_send_future = None
+        self.active_controller_goal = None
+        self.is_executing = False
 
         self.get_logger().info('Waiting for move_group action server...')
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
-        # Subscribe to controller action status to track active goals
         from action_msgs.msg import GoalStatusArray
         self.create_subscription(GoalStatusArray, '/fairino5_controller/follow_joint_trajectory/_action/status',
                                self._controller_status_callback, 10)
+
+    def _extract_workspace_from_urdf(self, max_retries=10, retry_delay=0.5):
+        """Extract workspace boundaries from mounting_surface collision mesh in URDF."""
+        import xml.etree.ElementTree as ET
+        import os
+        from ament_index_python.packages import get_package_share_directory
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                robot_description = None
+
+                try:
+                    from rclpy.parameter import Parameter
+                    params = self.get_parameters_by_prefix('')
+                    if 'robot_description' in params:
+                        robot_description = params['robot_description']
+                except:
+                    pass
+
+                if not robot_description:
+                    try:
+                        from rcl_interfaces.srv import GetParameters
+                        client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
+                        if client.wait_for_service(timeout_sec=1.0):
+                            request = GetParameters.Request()
+                            request.names = ['robot_description']
+                            future = client.call_async(request)
+                            import rclpy
+                            rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
+                            if future.done():
+                                response = future.result()
+                                if response and len(response.values) > 0:
+                                    robot_description = response.values[0].string_value
+                    except Exception as e:
+                        self.get_logger().debug(f"Could not fetch from robot_state_publisher: {e}")
+
+                if not robot_description:
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        self.get_logger().warning("robot_description parameter not available after retries, using fallback workspace")
+                        return SAFETY_WORKSPACE_FALLBACK.copy()
+
+                root = ET.fromstring(robot_description)
+
+                for link in root.findall('.//link[@name="mounting_surface"]'):
+                    collision = link.find('collision')
+                    if collision is not None:
+                        mesh_elem = collision.find('.//mesh')
+                        if mesh_elem is not None:
+                            mesh_filename = mesh_elem.get('filename', '')
+
+                            if mesh_filename.startswith('package://'):
+                                package_path = mesh_filename.replace('package://', '')
+                                parts = package_path.split('/', 1)
+                                if len(parts) == 2:
+                                    package_name, relative_path = parts
+                                    try:
+                                        package_dir = get_package_share_directory(package_name)
+                                        mesh_path = os.path.join(package_dir, relative_path)
+
+                                        if os.path.exists(mesh_path):
+                                            import trimesh
+                                            mesh = trimesh.load(mesh_path)
+                                            bounds = mesh.bounds
+
+                                            workspace = {
+                                                'x_min': float(bounds[0][0]),
+                                                'x_max': float(bounds[1][0]),
+                                                'y_min': float(bounds[0][1]),
+                                                'y_max': float(bounds[1][1]),
+                                                'z_min': float(bounds[0][2]),
+                                                'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
+                                            }
+
+                                            self.get_logger().info(f"✓ Extracted workspace from mounting_surface mesh (X,Y,Z_min): {workspace}")
+                                            return workspace
+                                        else:
+                                            self.get_logger().warning(f"Mesh file not found: {mesh_path}")
+                                    except Exception as e:
+                                        self.get_logger().warning(f"Failed to load mesh: {e}")
+
+                self.get_logger().warning("mounting_surface link not found in URDF, using fallback workspace")
+                return SAFETY_WORKSPACE_FALLBACK.copy()
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    self.get_logger().warning(f"Failed to extract workspace from URDF after {max_retries} attempts: {e}")
+
+        return SAFETY_WORKSPACE_FALLBACK.copy()
 
     def wait_for_monitor(self, timeout_sec=5.0):
         """Wait until RobotMonitor (TCP) is initialized."""
@@ -362,7 +457,11 @@ class RobotController(Node):
 
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN', tool_transform=None):
         self.safety_manager.force_update()
-        # Wait for the MoveGroup action server to be available
+
+        if self.is_executing:
+            self.get_logger().warning('[MOVE] Previous trajectory still executing, ignoring new goal')
+            return
+
         if not self.move_group_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().error('Move group action server not available')
             return
@@ -496,10 +595,11 @@ class RobotController(Node):
         if not goal_handle.accepted:
             self.get_logger().error('Goal rejected')
             self.active_move_goal = None
+            self.is_executing = False
             return
         self.get_logger().info('Goal accepted, executing...')
-        # Track the active goal for cancellation
         self.active_move_goal = goal_handle
+        self.is_executing = True
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._get_result)
 
@@ -509,7 +609,8 @@ class RobotController(Node):
             self.get_logger().info('Goal succeeded!')
         else:
             self.get_logger().error(f'Goal failed with error code: {result.error_code.val}')
-        # Clear active goal when done
+        self.active_move_goal = None
+        self.is_executing = False
         self.active_move_goal = None
 
     def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
@@ -648,9 +749,9 @@ class RobotController(Node):
             return trajectory
 
         request = ApplyIPP.Request()
-        request.trajectory = trajectory
-        request.max_velocity_scaling = vel_scaling
-        request.max_acceleration_scaling = acc_scaling
+        request.trajectory = trajectory.joint_trajectory
+        request.max_velocity_scaling = float(vel_scaling)
+        request.max_acceleration_scaling = float(acc_scaling)
 
         self.get_logger().info(
             f'[TOTG] Applying time-optimal parameterization with vel={vel_scaling}, acc={acc_scaling}')
@@ -660,7 +761,8 @@ class RobotController(Node):
 
         if future.result() is not None:
             self.get_logger().info('[TOTG] Time-optimal trajectory generated successfully')
-            return future.result().trajectory
+            trajectory.joint_trajectory = future.result().trajectory
+            return trajectory
         else:
             self.get_logger().error('[TOTG] IPP service call failed, using original trajectory')
             return trajectory
@@ -701,17 +803,27 @@ class RobotController(Node):
 
     def _send_trajectory_to_controller(self, joint_trajectory):
         """Send trajectory directly to joint trajectory controller for proper cancellation control."""
-        if not self.controller_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().error('[Controller] fairino5_controller not available')
+        if not self.execution_lock.acquire(blocking=False):
+            self.get_logger().warning('[Controller] Trajectory already executing, ignoring new request')
             return
 
-        # Create FollowJointTrajectory goal
+        if self.is_executing:
+            self.get_logger().warning('[Controller] Previous trajectory still executing, ignoring new request')
+            self.execution_lock.release()
+            return
+
+        if not self.controller_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().error('[Controller] fairino5_controller not available')
+            self.execution_lock.release()
+            return
+
+        self.is_executing = True
+
         controller_goal = FollowJointTrajectory.Goal()
         controller_goal.trajectory = joint_trajectory
 
         self.get_logger().info('[Controller] Sending trajectory directly to fairino5_controller...')
         future = self.controller_client.send_goal_async(controller_goal)
-        # Store the future immediately
         self.active_execute_send_future = future
         future.add_done_callback(self._controller_goal_response)
 
@@ -723,15 +835,18 @@ class RobotController(Node):
             if not goal_handle.accepted:
                 self.get_logger().error('[Controller] Trajectory execution rejected by fairino5_controller')
                 self.active_controller_goal = None
+                self.is_executing = False
+                self.execution_lock.release()
                 return
 
             self.get_logger().info('[Controller] Trajectory accepted by fairino5_controller')
-            # Track the goal handle for cancellation
             self.active_controller_goal = goal_handle
             result_future = goal_handle.get_result_async()
             result_future.add_done_callback(self._controller_goal_result)
         except Exception as e:
             self.get_logger().error(f'[Controller] Goal response error: {e}')
+            self.is_executing = False
+            self.execution_lock.release()
 
     def _controller_goal_result(self, future):
         """Handle controller goal completion."""
@@ -744,9 +859,10 @@ class RobotController(Node):
         except Exception as e:
             self.get_logger().error(f'[Controller] Result error: {e}')
         finally:
-            # Clear active goals
             self.active_controller_goal = None
             self.active_execute_goal = None
+            if self.execution_lock.locked():
+                self.execution_lock.release()
 
     def _execute_trajectory_response(self, future):
         self.active_execute_send_future = None  # Clear send future now that we have response
@@ -776,18 +892,14 @@ class RobotController(Node):
         """Monitor controller action status and track active goals."""
         from action_msgs.msg import GoalStatus
 
-        # Check if there's an active/executing goal
         for status in msg.status_list:
             if status.status in [GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING]:
-                # We have an active controller goal - but we need the goal handle
-                # This is tricky because we need to intercept it from ExecuteTrajectory
-                # The better approach is to directly send to the controller ourselves
                 pass
             elif status.status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
                                    GoalStatus.STATUS_CANCELED]:
-                # Clear when goal completes
                 if self.active_controller_goal is not None:
                     self.active_controller_goal = None
+                self.is_executing = False
 
     def joint_state_callback(self, msg):
         """Process joint states via RobotMonitor and update UI."""
@@ -948,7 +1060,7 @@ class FairinoRos2Robot:
         return workobject.apply(pose)
 
     # ---------------- Movement Methods ----------------
-    def move_cartesian(self, position, tool=0, user=0, vel=30, acc=30, blendR=0):
+    def move_cartesian(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=False):
         """
         Moves the robot in Cartesian space (point-to-point motion).
 
@@ -959,6 +1071,7 @@ class FairinoRos2Robot:
             vel (float): Velocity (percentage 0-100)
             acc (float): Acceleration (percentage 0-100)
             blendR (float): Blend radius (not used in ROS2 implementation)
+            blocking (bool): Wait for motion to complete (not used in ROS2 async implementation)
 
         Returns:
             int: 0 on success, error code otherwise
@@ -978,12 +1091,15 @@ class FairinoRos2Robot:
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
             self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='PTP', tool_transform=tool_transform)
+            if blocking:
+                self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
+                self.wait_for_position(position, threshold=1.0, timeout=60.0)
             return 0  # Success
         except Exception as e:
             print(f"move_cartesian error: {e}")
             return -1  # Error
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=False):
         """
         Executes a linear movement with blending.
 
@@ -994,6 +1110,7 @@ class FairinoRos2Robot:
             vel (float): Velocity (percentage 0-100)
             acc (float): Acceleration (percentage 0-100)
             blendR (float): Blend radius (not used in ROS2 implementation)
+            blocking (bool): Wait for motion to complete (not used in ROS2 async implementation)
 
         Returns:
             int: 0 on success, error code otherwise
@@ -1012,6 +1129,11 @@ class FairinoRos2Robot:
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
             self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN', tool_transform=tool_transform)
+
+            if blocking:
+                self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
+                return self.node.wait_for_position(position_base, threshold=1.0, timeout=60.0)
+
             return 0  # Success
         except Exception as e:
             print(f"move_liner error: {e}")
@@ -1081,6 +1203,7 @@ class FairinoRos2Robot:
 
         if blocking:
             last_waypoint = waypoints_xyz[-1] + [rx, ry, rz]
+            self.node.get_logger().info(f"[EXECUTE_PATH] Blocking until final position reached: {last_waypoint}")
             return self.wait_for_position(last_waypoint, threshold=1.0, timeout=60.0)
         return 0
 
@@ -1143,7 +1266,14 @@ class FairinoRos2Robot:
         return tuple(data['cart_acceleration'].tolist())
 
     def wait_for_position(self, target_position, threshold=1.0, timeout=30.0, check_interval=0.01):
-        """Internal helper to wait for robot to reach target position."""
+        """Internal helper to wait for robot to reach target position.
+
+        Args:
+            target_position: Target position in BASE frame [x, y, z, rx, ry, rz] (in mm)
+            threshold: Distance threshold in mm
+            timeout: Timeout in seconds
+            check_interval: Check interval in seconds
+        """
         import time, math
         start_time = time.time()
         if len(target_position) >= 3:
@@ -1154,14 +1284,33 @@ class FairinoRos2Robot:
         while True:
             if time.time() - start_time > timeout:
                 return False
-            current_position = self.get_current_position()
-            if current_position is None:
+
+            # Get current position in BASE frame (not workobject frame)
+            if self.node is None:
                 time.sleep(check_interval)
                 continue
-            current_xyz = current_position[:3]
-            distance = math.sqrt(sum((current_xyz[i] - target_xyz[i]) ** 2 for i in range(3)))
-            if distance < threshold:
-                return True
+
+            data = self.node.get_latest_data()
+            if data is None or 'positions' not in data:
+                time.sleep(check_interval)
+                continue
+
+            try:
+                # Get FK in BASE frame (do NOT apply workobject inverse transform)
+                q = data['positions']
+                fk = self.node.monitor.compute_fk(q, tcp_transform=self.node.monitor.T_tcp)
+                fk[:3] *= 1000.0  # meters -> mm
+                current_xyz = fk[:3].tolist()
+
+                distance = math.sqrt(sum((current_xyz[i] - target_xyz[i]) ** 2 for i in range(3)))
+                self.node.get_logger().info(f"Target position (base): {target_xyz}")
+                self.node.get_logger().info(f"Current position (base): {current_xyz}")
+                self.node.get_logger().info(f"Distance: {distance}")
+                if distance < threshold:
+                    return True
+            except Exception as e:
+                self.node.get_logger().warning(f"wait_for_position error: {e}")
+
             time.sleep(check_interval)
 
     # ---------------- Jog / Control / Misc ----------------

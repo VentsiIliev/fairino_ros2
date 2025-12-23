@@ -1,7 +1,9 @@
 # ApplyIPP.srv
 
-# Request: input trajectory
+# Request: input trajectory and scaling factors
 trajectory_msgs/JointTrajectory trajectory
+float64 max_velocity_scaling
+float64 max_acceleration_scaling
 ---
 # Response: smoothed trajectory
 trajectory_msgs/JointTrajectory trajectory

@@ -28,7 +28,6 @@ private:
     void applyIPP(const std::shared_ptr<ApplyIPP::Request> request,
                   std::shared_ptr<ApplyIPP::Response> response)
     {
-        // Pass a shared_ptr of this node to RobotModelLoader
         auto node_ptr = shared_from_this();
         robot_model_loader::RobotModelLoader loader(node_ptr);
         auto kinematic_model = loader.getModel();
@@ -39,9 +38,20 @@ private:
         robot_trajectory::RobotTrajectory rt(kinematic_model, "fairino5_v6_group");
         rt.setRobotTrajectoryMsg(robot_state, request->trajectory);
 
-        // TOTG time parameterization
+        // TOTG time parameterization with velocity and acceleration scaling
         trajectory_processing::TimeOptimalTrajectoryGeneration totg;
-        bool success = totg.computeTimeStamps(rt);
+
+        double max_vel_scaling = request->max_velocity_scaling;
+        double max_acc_scaling = request->max_acceleration_scaling;
+
+        // Clamp to valid range [0.0, 1.0]
+        max_vel_scaling = std::max(0.0, std::min(1.0, max_vel_scaling));
+        max_acc_scaling = std::max(0.0, std::min(1.0, max_acc_scaling));
+
+        RCLCPP_INFO(this->get_logger(), "Applying TOTG with vel_scale=%.2f, acc_scale=%.2f",
+                    max_vel_scaling, max_acc_scaling);
+
+        bool success = totg.computeTimeStamps(rt, max_vel_scaling, max_acc_scaling);
 
         if (!success)
         {

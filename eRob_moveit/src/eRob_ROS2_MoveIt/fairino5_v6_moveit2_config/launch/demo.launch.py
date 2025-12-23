@@ -19,7 +19,22 @@ def generate_launch_description():
     )
     demo_ld.add_action(set_display)
 
-    # Launch GUI as ROS2 node with delay to wait for controllers
+    # Launch IPP helper node for TOTG trajectory optimization
+    ipp_helper_node = Node(
+        package='fairino5_v6_moveit2_config',
+        executable='ipp_helper',
+        name='ipp_helper',
+        output='screen',
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+        ],
+    )
+    demo_ld.add_action(ipp_helper_node)
+
+    # Launch GUI as an ROS2 node with delay to wait for controllers
     velocity_monitor_gui = Node(
         package='fairino5_v6_moveit2_config',
         executable='velocity_monitor.py',

@@ -133,13 +133,30 @@ def start_rest_server(
         if not path:
             return jsonify({"error": "No path provided"}), 400
 
+        # Flatten path if it's nested (client sends [[[waypoints]]])
+        if path and isinstance(path, list) and len(path) > 0:
+            if isinstance(path[0], list) and len(path[0]) > 0 and isinstance(path[0][0], list):
+                # Path is nested: [[[wp1], [wp2], ...]] -> flatten to [[wp1], [wp2], ...]
+                path = path[0]
+                logger.info(f"Flattened nested path, now has {len(path)} waypoints")
+
+        # Ensure vel and acc are floats and normalize to 0.0-1.0 range
+        vel = float(data.get("vel", 0.6))
+        acc = float(data.get("acc", 0.4))
+
+        # If values are > 1.0, assume they're percentages (0-100) and convert to scaling factors (0.0-1.0)
+        if vel > 1.0:
+            vel = vel / 100.0
+        if acc > 1.0:
+            acc = acc / 100.0
+        robot.node.get_logger().info(f"Executing path with {len(path)} waypoints, vel={vel}, acc={acc}")
         result = robot.execute_path(
             path,
             rx=data.get("rx"),
             ry=data.get("ry"),
             rz=data.get("rz"),
-            vel=data.get("vel", 0.6),
-            acc=data.get("acc", 0.4),
+            vel=vel,
+            acc=acc,
             blocking=data.get("blocking", False),
         )
         return jsonify({"result": result, "success": result == 0})
