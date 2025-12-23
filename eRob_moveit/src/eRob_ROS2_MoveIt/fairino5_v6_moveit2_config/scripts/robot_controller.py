@@ -428,7 +428,7 @@ class RobotController(Node):
                 self.T_ee_link = self.get_tcp_transform('wrist3_link', 'ee_link')
                 print(f"[RobotController] Loaded ee_link transform:\n{self.T_ee_link}")
 
-                # Initialize with composed transform (wrist3 → ee_link → TCP)
+                # Initialize with a composed transform (wrist3 → ee_link → TCP)
                 T_tcp_total = self.T_ee_link @ self.T_tool
                 self.monitor = RobotMonitor(tcp_transform=T_tcp_total)
                 self.tcp_loaded = True
