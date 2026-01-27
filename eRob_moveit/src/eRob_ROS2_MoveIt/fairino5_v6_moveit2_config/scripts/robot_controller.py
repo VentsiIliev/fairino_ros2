@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import time
-from datetime import datetime
-from collections import deque
 from threading import Lock
 
 import numpy as np
@@ -21,6 +19,7 @@ import tf2_ros
 from utils.transformation_utils import TransformationUtils
 from utils.work_object import WorkObject
 from safety_wall_manager import SafetyWallManager
+from robot_monitor import RobotMonitor
 from enums import RobotAxis,Direction
 
 # ============ Safety Workspace Boundaries ============
@@ -49,159 +48,6 @@ tool_id_map = {
     0: "TOOL_0",
     1: "TOOL_1",
 }
-
-class RobotMonitor:
-    """Compute FK, joint/cartesian velocities and accelerations from joint states."""
-
-    def __init__(self, velocity_window_size=5, acceleration_window_size=5,tcp_transform=None):
-        self.prev_positions = None
-        self.prev_velocities = None
-        self.prev_cartesian = None
-        self.prev_cart_velocities = None
-        self.prev_time = None
-
-        self.velocity_window = deque(maxlen=velocity_window_size)
-        self.acceleration_window = deque(maxlen=acceleration_window_size)
-        self.cart_velocity_window = deque(maxlen=velocity_window_size)
-        self.cart_acceleration_window = deque(maxlen=acceleration_window_size)
-        self.latest_data = {
-            'positions': np.zeros(6),
-            'velocities': np.zeros(6),
-            'accelerations': np.zeros(6),
-            'vel_magnitude': 0.0,
-            'acc_magnitude': 0.0,
-            'cartesian': np.zeros(3),
-            'cart_velocity': np.zeros(3),
-            'cart_acceleration': np.zeros(3),
-            'cart_vel_magnitude': 0.0,
-            'cart_acc_magnitude': 0.0,
-            'efforts': np.zeros(6)
-        }
-        # TCP offset from wrist3 (4x4 homogeneous transform)
-        self.T_tcp = tcp_transform if tcp_transform is not None else np.eye(4)
-
-    def update_joint_state(self, joint_positions, timestamp):
-        joint_positions = np.array(joint_positions[:6])
-
-        # Compute delta time
-        dt = None
-        if self.prev_time is not None:
-            dt = (timestamp - self.prev_time).total_seconds()
-            if dt <= 0.0:
-                dt = None  # avoid division by zero
-
-        # -------------------
-        # Joint space updates
-        # -------------------
-        # Compute joint velocities
-        if self.prev_positions is not None and dt is not None:
-            velocities = (joint_positions - self.prev_positions) / dt
-        else:
-            velocities = np.zeros(6)
-        self.velocity_window.append(velocities)
-        avg_velocities = np.mean(self.velocity_window, axis=0)
-
-        # Compute joint accelerations
-        if self.prev_velocities is not None and dt is not None:
-            accelerations = (velocities - self.prev_velocities) / dt
-        else:
-            accelerations = np.zeros(6)
-        self.acceleration_window.append(accelerations)
-        avg_accelerations = np.mean(self.acceleration_window, axis=0)
-
-        vel_mag = np.linalg.norm(avg_velocities)
-        acc_mag = np.linalg.norm(avg_accelerations)
-
-        # -------------------
-        # Cartesian updates
-        # -------------------
-        cartesian = self.compute_fk(joint_positions, tcp_transform=self.T_tcp) # 6D [x, y, z, rx, ry, rz]
-        cart_vel = np.zeros(3)
-        cart_acc = np.zeros(3)
-        cart_vel_mag = 0.0
-        cart_acc_mag = 0.0
-
-        if cartesian is not None and self.prev_cartesian is not None and dt is not None:
-            # Linear velocities only
-            cart_vel_linear = (cartesian[:3] - self.prev_cartesian[:3]) / dt * 1000.0  # mm/s
-            self.cart_velocity_window.append(cart_vel_linear)
-            cart_vel = np.mean(self.cart_velocity_window, axis=0)
-
-            # Linear accelerations
-            if self.prev_cart_velocities is not None:
-                cart_acc = (cart_vel - self.prev_cart_velocities) / dt
-                self.cart_acceleration_window.append(cart_acc)
-                cart_acc = np.mean(self.cart_acceleration_window, axis=0)
-
-            cart_vel_mag = np.linalg.norm(cart_vel)
-            cart_acc_mag = np.linalg.norm(cart_acc)
-        # -------------------
-        # Save previous states
-        # -------------------
-        self.prev_positions = joint_positions
-        self.prev_velocities = velocities
-        self.prev_cartesian = cartesian
-        self.prev_cart_velocities = cart_vel  # linear only
-        self.prev_time = timestamp
-
-        # -------------------
-        # Store latest data
-        # -------------------
-        self.latest_data = {
-            'positions': joint_positions,
-            'velocities': avg_velocities,
-            'accelerations': avg_accelerations,
-            'vel_magnitude': vel_mag,
-            'acc_magnitude': acc_mag,
-            'cartesian': cartesian if cartesian is not None else np.zeros(3),
-            'cart_velocity': cart_vel,
-            'cart_acceleration': cart_acc,
-            'cart_vel_magnitude': cart_vel_mag,
-            'cart_acc_magnitude': cart_acc_mag,
-            'efforts': self.latest_data.get('efforts', np.zeros(6))  # preserve previous efforts safely
-        }
-
-        return self.latest_data.copy()
-
-    @staticmethod
-    def compute_fk(q, tcp_transform=None):
-        """
-        Forward Kinematics for 6-DOF robot with optional TCP offset.
-
-        Args:
-            q (array-like): 6 joint positions in radians [q1, q2, ..., q6]
-            tcp_transform (np.ndarray or None): 4x4 homogeneous matrix from wrist3 to tool center point (TCP)
-
-        Returns:
-            np.ndarray: [x, y, z, rx, ry, rz] (position in meters, orientation in degrees)
-        """
-        # ----- Wrist3 FK -----
-        T = np.eye(4)
-        T = T @ TransformationUtils.rot_z(q[0])
-        T = T @ TransformationUtils.trans(0, 0, 0.152) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
-        T = T @ TransformationUtils.trans(-0.425, 0, 0) @ TransformationUtils.rot_z(q[2])
-        T = T @ TransformationUtils.trans(-0.39501, 0, 0) @ TransformationUtils.rot_z(q[3])
-        T = T @ TransformationUtils.trans(0, 0, 0.1021) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
-        T = T @ TransformationUtils.trans(0, 0, 0.102) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
-
-        # Position and orientation BEFORE TCP
-        pos_before = T[:3, 3]
-        rot_before = TransformationUtils.matrix_to_euler(T[:3, :3])
-        # print(f"[RobotMonitor] BEFORE TCP -> Position: {pos_before}, Orientation: {rot_before}")
-
-        # ----- Apply TCP offset if provided -----
-        if tcp_transform is not None:
-            T = T @ tcp_transform
-        # Position and orientation AFTER TCP
-        pos_after = T[:3, 3]
-        rot_after = TransformationUtils.matrix_to_euler(T[:3, :3])
-        # print(f"[RobotMonitor] AFTER TCP -> Position: {pos_after}, Orientation: {rot_after}")
-
-        # Extract final position and orientation
-        pos = T[:3, 3]
-        euler_deg = TransformationUtils.matrix_to_euler(T[:3, :3])
-
-        return np.concatenate([pos, euler_deg])
 
 
 
@@ -443,7 +289,7 @@ class RobotController(Node):
 
                 # Initialize with a composed transform (wrist3 → ee_link → TCP)
                 T_tcp_total = self.T_ee_link @ self.T_tool
-                self.monitor = RobotMonitor(tcp_transform=T_tcp_total)
+                self.monitor = RobotMonitor(ros_node=self, tcp_transform=T_tcp_total)
                 self.tcp_loaded = True
 
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")
@@ -512,10 +358,10 @@ class RobotController(Node):
             self.get_logger().warning('No Cartesian position available for jog')
             return
 
-        # Current TCP position (from FK with full T_tcp)
-        x = self.prev_cartesian[0] * 1000.0
-        y = self.prev_cartesian[1] * 1000.0
-        z = self.prev_cartesian[2] * 1000.0
+        # Current TCP position (already in mm from robot_monitor.py)
+        x = self.prev_cartesian[0]
+        y = self.prev_cartesian[1]
+        z = self.prev_cartesian[2]
         rx = self.prev_cartesian[3]
         ry = self.prev_cartesian[4]
         rz = self.prev_cartesian[5]
@@ -1068,11 +914,11 @@ class RobotController(Node):
                 self.is_executing = False
 
     def joint_state_callback(self, msg):
-        """Process joint states via RobotMonitor and update UI."""
+        """Process joint states and store for trajectory planning."""
         with self.lock:
 
             if self.monitor is None:  # <-- guard added
-                return  # TCP transform not loaded yet
+                return  # RobotMonitor not initialized yet
 
             if len(msg.position) < 6:
                 return
@@ -1080,12 +926,13 @@ class RobotController(Node):
             # Store current joint state for trajectory planning
             self.current_joint_state = msg
 
-            timestamp = datetime.now()
-            data = self.monitor.update_joint_state(msg.position, timestamp)
+            # Get latest data from RobotMonitor (updated via topic subscriptions)
+            data = self.monitor.get_latest_data()
 
-            # Update previous Cartesian for jogging
-            self.prev_cartesian = data['cartesian']
-            self.latest_data = data  # Store latest data
+            if data is not None:
+                # Update previous Cartesian for jogging
+                self.prev_cartesian = data['cartesian']
+                self.latest_data = data  # Store latest data
 
 
             # Send data to UI
@@ -1384,20 +1231,18 @@ class FairinoRos2Robot:
         Retrieves the current TCP (tool center point) position.
 
         Returns:
-            list: Current robot TCP pose [x, y, z, rx, ry, rz] or None on error
+            list: Current robot TCP pose [x, y, z, rx, ry, rz] in mm/degrees or None on error
         """
         if self.node is None:
             return None
 
         data = self.node.get_latest_data()
-        if data is None or 'positions' not in data:
+        if data is None or 'cartesian' not in data:
             return None
 
         try:
-            q = data['positions']
-            fk = self.node.monitor.compute_fk(q, tcp_transform=self.node.monitor.T_tcp)
-            fk[:3] *= 1000.0  # meters -> mm
-            pose = fk.tolist()
+            # Use cartesian from robot_monitor.py (already in mm from C++ node)
+            pose = data['cartesian'].tolist()
 
             # Transform from base to workobject frame if a workobject exists
             if self.workobject is not None:
@@ -1462,16 +1307,13 @@ class FairinoRos2Robot:
                 continue
 
             data = self.node.get_latest_data()
-            if data is None or 'positions' not in data:
+            if data is None or 'cartesian' not in data:
                 time.sleep(check_interval)
                 continue
 
             try:
-                # Get FK in BASE frame (do NOT apply workobject inverse transform)
-                q = data['positions']
-                fk = self.node.monitor.compute_fk(q, tcp_transform=self.node.monitor.T_tcp)
-                fk[:3] *= 1000.0  # meters -> mm
-                current_xyz = fk[:3].tolist()
+                # Get current position in BASE frame from robot_monitor.py (already in mm)
+                current_xyz = data['cartesian'][:3].tolist()
 
                 distance = math.sqrt(sum((current_xyz[i] - target_xyz[i]) ** 2 for i in range(3)))
                 self.node.get_logger().info(f"Target position (base): {target_xyz}")

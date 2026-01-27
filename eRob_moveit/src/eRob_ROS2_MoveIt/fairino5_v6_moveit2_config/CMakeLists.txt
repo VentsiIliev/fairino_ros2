@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # Python scripts - install to lib for executable access
 install(PROGRAMS
   scripts/main.py
+  scripts/simple_monitor_gui.py
   scripts/gui_bridge.py
   scripts/monitor_window.py
   scripts/robot_controller.py
@@ -76,5 +77,31 @@ target_link_libraries(ipp_helper ${cpp_typesupport_target})
 
 # Install the executable
 install(TARGETS ipp_helper DESTINATION lib/${PROJECT_NAME})
+
+# C++ Robot State Publisher node
+find_package(tf2_ros REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(fairino_msgs REQUIRED)
+
+add_executable(robot_state_publisher src_cpp/robot_state_publisher.cpp)
+
+target_include_directories(robot_state_publisher PUBLIC
+  ${EIGEN3_INCLUDE_DIRS}
+)
+
+ament_target_dependencies(robot_state_publisher
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  std_msgs
+  tf2_ros
+  tf2
+  tf2_geometry_msgs
+  fairino_msgs
+)
+
+install(TARGETS robot_state_publisher DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

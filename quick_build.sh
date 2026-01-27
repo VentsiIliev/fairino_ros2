@@ -30,8 +30,15 @@ export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '
 
 # Check if specific packages are provided as arguments
 if [ $# -eq 0 ]; then
-    # No arguments - build all packages
+    # No arguments - build all packages with proper dependency order
     echo -e "${YELLOW}Building all packages...${NC}"
+
+    # Build fairino_msgs first (required by fairino5_v6_moveit2_config)
+    echo -e "${BLUE}Step 1/2: Building fairino_msgs...${NC}"
+    colcon build --symlink-install --packages-select fairino_msgs --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+    # Build remaining packages
+    echo -e "${BLUE}Step 2/2: Building remaining packages...${NC}"
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 else
     # Build specific packages

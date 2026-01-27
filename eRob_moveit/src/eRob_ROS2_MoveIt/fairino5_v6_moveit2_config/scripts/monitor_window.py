@@ -357,75 +357,6 @@ class MonitorWindow(QWidget):
         # Initialize waypoints storage
         self.waypoints = []
 
-        cartesian_group = QGroupBox('Cartesian End-Effector')
-        cartesian_layout = QGridLayout()
-
-        cartesian_layout.addWidget(QLabel('Axis'), 0, 0)
-        cartesian_layout.addWidget(QLabel('Position (mm)'), 0, 1)
-        cartesian_layout.addWidget(QLabel('Velocity (mm/s)'), 0, 2)
-        cartesian_layout.addWidget(QLabel('Acceleration (mm/s²)'), 0, 3)
-
-        self.cart_labels = []
-        for i, axis in enumerate(['X', 'Y', 'Z']):
-            label_axis = QLabel(axis)
-            label_pos = QLabel('0.000')
-            label_vel = QLabel('0.000')
-            label_acc = QLabel('0.000')
-
-            cartesian_layout.addWidget(label_axis, i + 1, 0)
-            cartesian_layout.addWidget(label_pos, i + 1, 1)
-            cartesian_layout.addWidget(label_vel, i + 1, 2)
-            cartesian_layout.addWidget(label_acc, i + 1, 3)
-
-            self.cart_labels.append((label_pos, label_vel, label_acc))
-
-        cartesian_layout.addWidget(QLabel(''), 4, 0)
-        cartesian_layout.addWidget(QLabel('Magnitude:'), 5, 0)
-        self.cart_vel_mag_label = QLabel('0.000 mm/s')
-        self.cart_acc_mag_label = QLabel('0.000 mm/s²')
-        cartesian_layout.addWidget(QLabel(''), 5, 1)
-        cartesian_layout.addWidget(self.cart_vel_mag_label, 5, 2)
-        cartesian_layout.addWidget(self.cart_acc_mag_label, 5, 3)
-
-        cartesian_group.setLayout(cartesian_layout)
-        main_layout.addWidget(cartesian_group)
-
-        magnitude_group = QGroupBox('Joint Space Magnitudes')
-        magnitude_layout = QGridLayout()
-        self.vel_mag_label = QLabel('Velocity: 0.000 rad/s')
-        self.acc_mag_label = QLabel('Acceleration: 0.000 rad/s²')
-        magnitude_layout.addWidget(self.vel_mag_label, 0, 0)
-        magnitude_layout.addWidget(self.acc_mag_label, 1, 0)
-        magnitude_group.setLayout(magnitude_layout)
-        main_layout.addWidget(magnitude_group)
-
-        joint_group = QGroupBox('Joint Details')
-        joint_layout = QGridLayout()
-
-        header_labels = ['Joint', 'Position (rad)', 'Velocity (rad/s)', 'Acceleration (rad/s²)']
-        for col, text in enumerate(header_labels):
-            label = QLabel(text)
-            label.setStyleSheet('font-weight: bold;')
-            joint_layout.addWidget(label, 0, col)
-
-        self.joint_labels = []
-        for i in range(6):
-            row_labels = []
-            label_joint = QLabel(f'J{i + 1}')
-            label_pos = QLabel('0.000')
-            label_vel = QLabel('0.000')
-            label_acc = QLabel('0.000')
-
-            joint_layout.addWidget(label_joint, i + 1, 0)
-            joint_layout.addWidget(label_pos, i + 1, 1)
-            joint_layout.addWidget(label_vel, i + 1, 2)
-            joint_layout.addWidget(label_acc, i + 1, 3)
-
-            row_labels.append((label_pos, label_vel, label_acc))
-            self.joint_labels.append(row_labels)
-
-        joint_group.setLayout(joint_layout)
-        main_layout.addWidget(joint_group)
 
         self.setLayout(main_layout)
 
@@ -749,35 +680,6 @@ class MonitorWindow(QWidget):
             return
         self.data = data
 
-
-        # Cartesian display
-        for i in range(3):
-            pos = data['cartesian'][i] * 1000.0
-            vel = data['cart_velocity'][i]
-            acc = data['cart_acceleration'][i]
-
-            labels = self.cart_labels[i]
-            labels[0].setText(f'{pos:.1f}')
-            labels[1].setText(f'{vel:.1f}')
-            labels[2].setText(f'{acc:.1f}')
-
-        self.cart_vel_mag_label.setText(f'{data["cart_vel_magnitude"]:.1f} mm/s')
-        self.cart_acc_mag_label.setText(f'{data["cart_acc_magnitude"]:.1f} mm/s²')
-
-        # Joint magnitudes
-        self.vel_mag_label.setText(f'Velocity: {data["vel_magnitude"]:.3f} rad/s')
-        self.acc_mag_label.setText(f'Acceleration: {data["acc_magnitude"]:.3f} rad/s²')
-
-        # Joint details
-        for i in range(6):
-            pos = data['positions'][i]
-            vel = data['velocities'][i]
-            acc = data['accelerations'][i]
-
-            labels = self.joint_labels[i][0]
-            labels[0].setText(f'{pos:.3f}')
-            labels[1].setText(f'{vel:.3f}')
-            labels[2].setText(f'{acc:.3f}')
 
         # Update Cartesian Position Control inputs with current robot position
         # Only update if user is not actively editing the fields AND auto-update is enabled

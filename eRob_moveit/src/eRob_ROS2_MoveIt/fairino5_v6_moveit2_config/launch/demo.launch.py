@@ -39,6 +39,15 @@ def generate_launch_description():
     )
     demo_ld.add_action(ipp_helper_node)
 
+    # Launch C++ robot state publisher for actual TCP position from robot
+    robot_state_publisher_node = Node(
+        package='fairino5_v6_moveit2_config',
+        executable='robot_state_publisher',
+        name='robot_state_publisher_cpp',
+        output='screen'
+    )
+    demo_ld.add_action(robot_state_publisher_node)
+
     # Launch GUI as an ROS2 node with delay to wait for controllers
     velocity_monitor_gui = Node(
         package='fairino5_v6_moveit2_config',
