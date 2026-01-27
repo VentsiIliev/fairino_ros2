@@ -8,7 +8,12 @@ import os
 
 
 def generate_launch_description():
-    moveit_config = MoveItConfigsBuilder("fairino5_v6_robot", package_name="fairino5_v6_moveit2_config").to_moveit_configs()
+    # Build MoveIt config with only Pilz planner (disable CHOMP, OMPL, STOMP for faster startup)
+    moveit_config = (
+        MoveItConfigsBuilder("fairino5_v6_robot", package_name="fairino5_v6_moveit2_config")
+        .planning_pipelines(pipelines=["pilz_industrial_motion_planner"])  # Only load Pilz (fast)
+        .to_moveit_configs()
+    )
 
     demo_ld = generate_demo_launch(moveit_config)
 
@@ -44,9 +49,9 @@ def generate_launch_description():
         additional_env={'DISPLAY': os.environ.get('DISPLAY', ':0')}
     )
 
-    # Delay GUI launch by 8 seconds to allow controllers to initialize
+    # Delay GUI launch by 3 seconds (reduced from 8s - faster planner loading)
     delayed_gui = TimerAction(
-        period=8.0,
+        period=3.0,
         actions=[velocity_monitor_gui]
     )
 

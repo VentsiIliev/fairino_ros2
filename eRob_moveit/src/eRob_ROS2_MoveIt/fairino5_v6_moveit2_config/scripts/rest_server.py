@@ -9,6 +9,9 @@ import os
 import threading
 import time
 from flask import Flask, request, jsonify
+import numpy as np
+from PIL import Image, ImageDraw
+from scipy.interpolate import interp1d
 
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
@@ -160,6 +163,8 @@ def start_rest_server(
             blocking=data.get("blocking", False),
         )
         return jsonify({"result": result, "success": result == 0})
+        # result = 0
+        # return jsonify({"result": result, "success": result == 0})
 
     @app.route("/position/current", methods=["GET"])
     def get_position():

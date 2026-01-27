@@ -6,27 +6,18 @@ from threading import Lock
 
 import numpy as np
 import rclpy
-# TOTG integration: import the ApplyIPP service
 from fairino5_v6_moveit2_config.srv import ApplyIPP
-from geometry_msgs.msg import Pose, PoseStamped
-from moveit_msgs.action import MoveGroup, ExecuteTrajectory
-from moveit_msgs.msg import MotionPlanRequest, Constraints, PositionConstraint, OrientationConstraint, BoundingVolume, \
-    RobotTrajectory, RobotState, CollisionObject, PlanningScene
-from moveit_msgs.srv import GetCartesianPath, ApplyPlanningScene
-from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA
-from control_msgs.action import FollowJointTrajectory  # For direct controller cancellation
+from geometry_msgs.msg import Pose
+from moveit_msgs.msg import MotionSequenceItem, MotionSequenceRequest
+from moveit_msgs.srv import GetCartesianPath, GetMotionSequence
+from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import JointState
-from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import Header
-from geometry_msgs.msg import TransformStamped
 import tf2_ros
-import tf2_geometry_msgs
-import numpy as np
-from scipy.spatial.transform import Rotation
+
+
 from utils.transformation_utils import TransformationUtils
 from utils.work_object import WorkObject
 from safety_wall_manager import SafetyWallManager
@@ -204,7 +195,7 @@ class RobotMonitor:
         # Position and orientation AFTER TCP
         pos_after = T[:3, 3]
         rot_after = TransformationUtils.matrix_to_euler(T[:3, :3])
-        # print(f"[RobotMonitor] AFTER TCP  -> Position: {pos_after}, Orientation: {rot_after}")
+        # print(f"[RobotMonitor] AFTER TCP -> Position: {pos_after}, Orientation: {rot_after}")
 
         # Extract final position and orientation
         pos = T[:3, 3]
@@ -216,7 +207,12 @@ class RobotMonitor:
 
 class RobotController(Node):
     def __init__(self):
+        import time
+        start_time = time.time()
+
         super().__init__('velocity_monitor')
+        self.get_logger().info('[Init] RobotController starting...')
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.lock = Lock()
@@ -226,9 +222,12 @@ class RobotController(Node):
         self.tcp_loaded = False
         self.T_ee_link = None
         self.T_tool = np.eye(4)
-        self.create_timer(0.5, self.load_tcp_transform)
+        # Reduced frequency - TCP transform typically available quickly
+        self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
+        t1 = time.time()
         workspace = self._extract_workspace_from_urdf()
+        self.get_logger().info(f'[Init] Workspace extraction took {time.time()-t1:.2f}s')
 
         self.safety_manager = SafetyWallManager(
             node=self,
@@ -238,29 +237,41 @@ class RobotController(Node):
             marker_publish_interval=2.0
         )
 
+        # Defer initial safety wall publishing to speed up initialization
+        # Will be published on first use or after 1 second
+        self._safety_init_timer = self.create_timer(1.0, self._delayed_safety_init)
+
         # ROS clients
-        self.move_group_client = ActionClient(self, MoveGroup, '/move_action')
-        self.execute_trajectory_client = ActionClient(self, ExecuteTrajectory, '/execute_trajectory')
         self.controller_client = ActionClient(self, FollowJointTrajectory, '/fairino5_controller/follow_joint_trajectory')
         self.cart_path_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
         self.ipp_client = self.create_client(ApplyIPP, '/apply_ipp')
 
         self.prev_cartesian = None
+        self.current_joint_state = None  # Store latest joint state for trajectory planning
 
         # Track active goal handles for motion cancellation
-        self.active_move_goal = None
-        self.active_execute_goal = None
         self.active_execute_send_future = None
         self.active_controller_goal = None
         self.is_executing = False
 
-        self.get_logger().info('Waiting for move_group action server...')
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
         from action_msgs.msg import GoalStatusArray
         self.create_subscription(GoalStatusArray, '/fairino5_controller/follow_joint_trajectory/_action/status',
                                self._controller_status_callback, 10)
 
-    def _extract_workspace_from_urdf(self, max_retries=10, retry_delay=0.5):
+        self.get_logger().info(f'[Init] RobotController ready ({time.time()-start_time:.2f}s total)')
+
+    def _delayed_safety_init(self):
+        """Publish safety walls after a short delay to speed up startup."""
+        self.safety_manager.force_update()
+        self.get_logger().info('[Init] Safety walls published')
+
+        # Cancel this timer after first execution (one-shot behavior)
+        if hasattr(self, '_safety_init_timer'):
+            self._safety_init_timer.cancel()
+            self.destroy_timer(self._safety_init_timer)
+
+    def _extract_workspace_from_urdf(self, max_retries=3, retry_delay=0.1):
         """Extract workspace boundaries from mounting_surface collision mesh in URDF."""
         import xml.etree.ElementTree as ET
         import os
@@ -283,12 +294,12 @@ class RobotController(Node):
                     try:
                         from rcl_interfaces.srv import GetParameters
                         client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
-                        if client.wait_for_service(timeout_sec=1.0):
+                        if client.wait_for_service(timeout_sec=0.3):
                             request = GetParameters.Request()
                             request.names = ['robot_description']
                             future = client.call_async(request)
                             import rclpy
-                            rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
+                            rclpy.spin_until_future_complete(self, future, timeout_sec=0.3)
                             if future.done():
                                 response = future.result()
                                 if response and len(response.values) > 0:
@@ -301,7 +312,7 @@ class RobotController(Node):
                         time.sleep(retry_delay)
                         continue
                     else:
-                        self.get_logger().warning("robot_description parameter not available after retries, using fallback workspace")
+                        self.get_logger().info("Using fallback workspace (robot_description not available yet)")
                         return SAFETY_WORKSPACE_FALLBACK.copy()
 
                 root = ET.fromstring(robot_description)
@@ -322,28 +333,31 @@ class RobotController(Node):
                                         package_dir = get_package_share_directory(package_name)
                                         mesh_path = os.path.join(package_dir, relative_path)
 
-                                        if os.path.exists(mesh_path):
-                                            import trimesh
-                                            mesh = trimesh.load(mesh_path)
-                                            bounds = mesh.bounds
+                                        # Quick file existence check before loading
+                                        if not os.path.exists(mesh_path):
+                                            self.get_logger().info(f"Mesh file not found, using fallback workspace")
+                                            return SAFETY_WORKSPACE_FALLBACK.copy()
 
-                                            workspace = {
-                                                'x_min': float(bounds[0][0]),
-                                                'x_max': float(bounds[1][0]),
-                                                'y_min': float(bounds[0][1]),
-                                                'y_max': float(bounds[1][1]),
-                                                'z_min': float(bounds[0][2]),
-                                                'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
-                                            }
+                                        # Load mesh (this can be slow)
+                                        import trimesh
+                                        mesh = trimesh.load(mesh_path)
+                                        bounds = mesh.bounds
 
-                                            self.get_logger().info(f"✓ Extracted workspace from mounting_surface mesh (X,Y,Z_min): {workspace}")
-                                            return workspace
-                                        else:
-                                            self.get_logger().warning(f"Mesh file not found: {mesh_path}")
+                                        workspace = {
+                                            'x_min': float(bounds[0][0]),
+                                            'x_max': float(bounds[1][0]),
+                                            'y_min': float(bounds[0][1]),
+                                            'y_max': float(bounds[1][1]),
+                                            'z_min': float(bounds[0][2]),
+                                            'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
+                                        }
+
+                                        self.get_logger().info(f"✓ Extracted workspace from mesh")
+                                        return workspace
                                     except Exception as e:
-                                        self.get_logger().warning(f"Failed to load mesh: {e}")
+                                        self.get_logger().debug(f"Mesh load failed: {e}")
 
-                self.get_logger().warning("mounting_surface link not found in URDF, using fallback workspace")
+                self.get_logger().info("Using fallback workspace (mounting_surface not in URDF)")
                 return SAFETY_WORKSPACE_FALLBACK.copy()
 
             except Exception as e:
@@ -351,7 +365,7 @@ class RobotController(Node):
                     time.sleep(retry_delay)
                     continue
                 else:
-                    self.get_logger().warning(f"Failed to extract workspace from URDF after {max_retries} attempts: {e}")
+                    self.get_logger().info(f"Using fallback workspace (URDF parsing failed)")
 
         return SAFETY_WORKSPACE_FALLBACK.copy()
 
@@ -417,7 +431,6 @@ class RobotController(Node):
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")
 
-
     def load_tcp_transform(self):
         if self.tcp_loaded:
             return  # Already loaded
@@ -434,9 +447,14 @@ class RobotController(Node):
                 self.tcp_loaded = True
 
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")
+
+                # Destroy timer to prevent further callbacks
+                if hasattr(self, 'tcp_load_timer'):
+                    self.tcp_load_timer.cancel()
+                    self.destroy_timer(self.tcp_load_timer)
+
             except Exception as e:
                 self.get_logger().warning(f"TCP transform lookup failed: {e}")
-
 
     def get_tcp_transform(self, from_frame='wrist3_link', to_frame='ee_link'):
         """Get 4x4 TCP transform from tf2 (base->tcp)."""
@@ -456,162 +474,31 @@ class RobotController(Node):
             return np.eye(4)
 
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN', tool_transform=None):
+        """
+        Send a single-point Cartesian goal using MoveIt's compute_cartesian_path service.
+        This provides smooth motion through Pilz planner without MoveGroup action.
+
+        Args:
+            x_mm, y_mm, z_mm: TCP target position in mm
+            rx, ry, rz: TCP target orientation in degrees
+            vel_scale: Velocity scaling (0.0-1.0)
+            acc_scale: Acceleration scaling (0.0-1.0)
+            planner_id: Ignored (kept for API compatibility, always uses cartesian path)
+            tool_transform: Tool offset transform (optional)
+        """
         self.safety_manager.force_update()
 
         if self.is_executing:
             self.get_logger().warning('[MOVE] Previous trajectory still executing, ignoring new goal')
             return
 
-        if not self.move_group_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().error('Move group action server not available')
-            return
-
-        # Use provided tool transform or default to the current active tool
-        T_tool = tool_transform if tool_transform is not None else self.T_tool
-
-        # Build desired TCP pose as homogeneous transform
-        tcp_pose = [x_mm, y_mm, z_mm, rx, ry, rz]
-        T_tcp_desired = TransformationUtils.pose_to_transform(tcp_pose)
-
-        # Apply inverse tool transform to get ee_link pose
-        # TCP_pose = ee_link_pose * T_tool => ee_link_pose = TCP_pose * inv(T_tool)
-        # MoveIt now plans for ee_link (per SRDF), so we only remove tool offset
-        T_ee_link = TransformationUtils.remove_tcp_offset(T_tcp_desired, T_tool)
-
-        # Extract position and orientation for ee_link
-        ee_position = T_ee_link[:3, 3]
-        ee_quat = TransformationUtils.matrix_to_quaternion(T_ee_link[:3, :3])
-
-        # Pre-validate position safety
-        is_safe, msg = self.safety_manager.check_position_safety(
-            ee_position[0], ee_position[1], ee_position[2]
+        # Use single-waypoint cartesian path (smoother than MoveGroup action)
+        self.send_path_cartesian(
+            waypoints_mm=[[x_mm, y_mm, z_mm]],
+            rx=rx, ry=ry, rz=rz,
+            vel_scaling=vel_scale,
+            acc_scaling=acc_scale
         )
-        if not is_safe:
-            self.get_logger().error(f'[SAFETY] Target position rejected: {msg}')
-            return  # Early exit
-        if "Warning" in msg:
-            self.get_logger().warning(f'[SAFETY] {msg}')
-
-        # Create a new MoveGroup goal
-        goal = MoveGroup.Goal()
-        goal.request = MotionPlanRequest()  # Request object holds all motion planning parameters
-
-        # Specify which MoveIt group (robot arm) to move
-        goal.request.group_name = 'fairino5_v6_group'
-
-        # Planner settings
-        goal.request.planner_id = planner_id  # 'LIN' for linear, 'PTP' for point-to-point
-        goal.request.pipeline_id = 'pilz_industrial_motion_planner'  # Planning pipeline
-        goal.request.num_planning_attempts = 1  # Number of attempts to plan
-        goal.request.allowed_planning_time = 5.0  # Max time allowed for planning (seconds)
-
-        # Scaling factors for velocity and acceleration
-        goal.request.max_velocity_scaling_factor = vel_scale
-        goal.request.max_acceleration_scaling_factor = acc_scale
-
-        # For PTP: Optionally use current robot state as start to find closest IK solution
-        # This helps Pilz find the shortest joint-space path
-        # However, leave start_state empty to let MoveIt use actual current state
-        # if planner_id == 'PTP' and self.current_joint_state is not None:
-        #     goal.request.start_state.joint_state = self.current_joint_state
-        #     goal.request.start_state.is_diff = False
-
-        # Workspace bounds (defines the volume where the robot is allowed to plan)
-        ws = self.safety_manager.get_workspace_bounds()
-        margin = SAFETY_MARGIN  # optional, to give a small buffer
-
-        goal.request.workspace_parameters.header.frame_id = 'base_link'
-        goal.request.workspace_parameters.min_corner.x = ws['x_min'] + margin
-        goal.request.workspace_parameters.min_corner.y = ws['y_min'] + margin
-        goal.request.workspace_parameters.min_corner.z = ws['z_min'] + margin
-        goal.request.workspace_parameters.max_corner.x = ws['x_max'] - margin
-        goal.request.workspace_parameters.max_corner.y = ws['y_max'] - margin
-        goal.request.workspace_parameters.max_corner.z = ws['z_max'] - margin
-
-        # Define target pose for ee_link
-        pose = Pose()
-        pose.position.x = ee_position[0]
-        pose.position.y = ee_position[1]
-        pose.position.z = ee_position[2]
-        pose.orientation.x = ee_quat[0]
-        pose.orientation.y = ee_quat[1]
-        pose.orientation.z = ee_quat[2]
-        pose.orientation.w = ee_quat[3]
-
-        # --- Position Constraints ---
-        pos_constraint = PositionConstraint()
-        pos_constraint.header.frame_id = 'base_link'  # reference frame for constraint
-        pos_constraint.link_name = 'ee_link'  # link that should satisfy the constraint
-
-        # Tolerance region: a small sphere around the target pose
-        sphere = SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.003])  # 3 mm radius
-        # This sphere tells MoveIt: the robot must reach any point inside this 3mm sphere.
-        # Smaller radius = more precise, larger radius = easier to plan.
-
-        bounding_volume = BoundingVolume()
-        bounding_volume.primitives.append(sphere)  # attach sphere shape
-        bounding_volume.primitive_poses.append(pose)  # attach sphere at the target pose
-        pos_constraint.constraint_region = bounding_volume
-        pos_constraint.weight = 1.0  # importance of this constraint
-
-        # --- Orientation Constraints ---
-        orient_constraint = OrientationConstraint()
-        orient_constraint.header.frame_id = 'base_link'  # reference frame
-        orient_constraint.link_name = 'ee_link'  # link to orient
-        orient_constraint.orientation = pose.orientation  # target orientation
-
-        # Allowed deviation from target orientation (radians)
-        orient_constraint.absolute_x_axis_tolerance = 0.1
-        orient_constraint.absolute_y_axis_tolerance = 0.1
-        orient_constraint.absolute_z_axis_tolerance = 0.1
-        orient_constraint.weight = 1.0  # importance of orientation constraint
-
-        # Combine position and orientation constraints
-        constraints = Constraints()
-        constraints.position_constraints.append(pos_constraint)
-        constraints.orientation_constraints.append(orient_constraint)
-        goal.request.goal_constraints.append(constraints)
-
-        # --- Planning options ---
-        goal.planning_options.plan_only = False  # execute path, not just plan
-        goal.planning_options.replan = False  # do not replan if failed
-        goal.planning_options.replan_attempts = 0  # number of replans
-        goal.request.max_cartesian_speed = 0.5  # max Cartesian speed (m/s)
-
-        # Log the goal for debugging
-        self.get_logger().info(
-            f'Sending Cartesian goal: X={x_mm}mm Y={y_mm}mm Z={z_mm}mm RX={rx}° RY={ry}° RZ={rz}°'
-        )
-        self.get_logger().info(f"[DEBUG] T_tcp_desired Z = {z_mm}")
-        self.get_logger().info(f"[DEBUG] T_tool offset Z = {self.T_tool[2, 3] * 1000:.1f} mm")
-        self.get_logger().info(f"[DEBUG] ee_link Z after inv(T_tool) = {T_ee_link[2, 3] * 1000:.1f} mm")
-
-        # Send the goal asynchronously
-        future = self.move_group_client.send_goal_async(goal)
-        future.add_done_callback(self._goal_response)  # handle response when done
-
-    def _goal_response(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error('Goal rejected')
-            self.active_move_goal = None
-            self.is_executing = False
-            return
-        self.get_logger().info('Goal accepted, executing...')
-        self.active_move_goal = goal_handle
-        self.is_executing = True
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._get_result)
-
-    def _get_result(self, future):
-        result = future.result().result
-        if result.error_code.val == 1:
-            self.get_logger().info('Goal succeeded!')
-        else:
-            self.get_logger().error(f'Goal failed with error code: {result.error_code.val}')
-        self.active_move_goal = None
-        self.is_executing = False
-        self.active_move_goal = None
 
     def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
         """
@@ -721,8 +608,6 @@ class RobotController(Node):
         else:
             max_step = 0.0008  # 0.8 mm
 
-        self.get_logger().info(f'[Cartesian Path] Waypoints prepared {waypoints}')
-
         # Create a service request
         request = GetCartesianPath.Request()
         request.header.frame_id = 'base_link'
@@ -736,17 +621,177 @@ class RobotController(Node):
         request.max_velocity_scaling_factor = vel_scaling
         request.max_acceleration_scaling_factor = acc_scaling
 
+        # ✅ CRITICAL FIX: Set start state to robot's CURRENT position
+        # Without this, MoveIt uses an empty/default state causing trajectory mismatch
+        if hasattr(self, 'current_joint_state') and self.current_joint_state is not None:
+            request.start_state.joint_state = self.current_joint_state
+            request.start_state.is_diff = False  # Use as absolute state, not differential
+        else:
+            self.get_logger().warning('[Cartesian Path] No current joint state available - trajectory may not execute correctly')
+
         self.get_logger().info(f'[Cartesian Path] Using max_step={max_step * 1000:.1f}mm for {num_waypoints} waypoints')
 
         self.get_logger().info('[Cartesian Path] Requesting cartesian path computation...')
         future = self.cart_path_client.call_async(request)
         future.add_done_callback(lambda f: self._cartesian_path_response(f, vel_scaling, acc_scaling))
 
-    def apply_ipp_totg(self, trajectory, vel_scaling=0.6, acc_scaling=0.4):
-        """Call the IPP service to apply TOTG (Time Optimal Trajectory Generation)."""
-        if not self.ipp_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().warning('[TOTG] IPP service not available, using original trajectory')
-            return trajectory
+    def send_path_pilz_sequence(self, waypoints_mm, rx, ry, rz, vel_scaling=0.6, acc_scaling=0.4, blend_radius=0.01):
+        """Execute smooth Cartesian path using Pilz sequence with blend radius.
+
+        This uses Pilz Industrial Motion Planner's sequence capability to create smooth
+        blended motion through waypoints without stopping at each point.
+
+        Args:
+            waypoints_mm: List of TCP waypoints [x_mm, y_mm, z_mm] in millimeters
+            rx, ry, rz: TCP orientation in degrees (same for all waypoints)
+            vel_scaling: Velocity scaling factor (0.0-1.0)
+            acc_scaling: Acceleration scaling factor (0.0-1.0)
+            blend_radius: Blend radius in meters (default 10mm) - radius for smoothing corners
+        """
+        from moveit_msgs.srv import GetMotionSequence
+
+        if not hasattr(self, 'sequence_client'):
+            self.sequence_client = self.create_client(GetMotionSequence, '/plan_sequence_path')
+
+        if not self.sequence_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().error('[Pilz Sequence] plan_sequence_path service not available')
+            return
+
+        num_waypoints = len(waypoints_mm)
+        self.get_logger().info(f'[Pilz Sequence] Planning smooth path through {num_waypoints} waypoints with adaptive blend radius')
+
+        # First pass: Convert all waypoints to ee_link poses and collect them
+        ee_poses = []
+        for i, wp in enumerate(waypoints_mm):
+            # Build the desired TCP pose
+            tcp_pose = [wp[0], wp[1], wp[2], rx, ry, rz]
+            T_tcp_desired = TransformationUtils.pose_to_transform(tcp_pose)
+
+            # Apply inverse tool transform to get ee_link pose
+            T_ee_link = TransformationUtils.remove_tcp_offset(T_tcp_desired, self.T_tool)
+            ee_position = T_ee_link[:3, 3]
+            ee_quat = TransformationUtils.matrix_to_quaternion(T_ee_link[:3, :3])
+
+            # Safety check
+            is_safe, msg = self.safety_manager.check_position_safety(
+                ee_position[0], ee_position[1], ee_position[2]
+            )
+            if not is_safe:
+                self.get_logger().error(f'[SAFETY] Waypoint {i+1} rejected: {msg}')
+                return
+
+            ee_poses.append((ee_position, ee_quat))
+
+        # Calculate adaptive blend radii based on distance between consecutive waypoints
+        blend_radii = []
+        for i in range(len(ee_poses) - 1):
+            # Distance to next waypoint
+            dx = ee_poses[i+1][0][0] - ee_poses[i][0][0]
+            dy = ee_poses[i+1][0][1] - ee_poses[i][0][1]
+            dz = ee_poses[i+1][0][2] - ee_poses[i][0][2]
+            dist = (dx**2 + dy**2 + dz**2) ** 0.5
+
+            # Blend radius = 30% of segment length, clamped to [0.0001m, 0.005m] (0.1mm to 5mm)
+            # This ensures no overlap while maintaining smoothness
+            adaptive_blend = max(0.0001, min(0.005, dist * 0.3))
+            blend_radii.append(adaptive_blend)
+
+        blend_radii.append(0.0)  # Last waypoint has zero blend radius
+
+        # Log blend radius statistics
+        if len(blend_radii) > 1:
+            valid_radii = [r for r in blend_radii[:-1] if r > 0]
+            if valid_radii:
+                self.get_logger().info(
+                    f'[Pilz Sequence] Adaptive blend radii: min={min(valid_radii)*1000:.2f}mm, '
+                    f'max={max(valid_radii)*1000:.2f}mm, avg={sum(valid_radii)/len(valid_radii)*1000:.2f}mm'
+                )
+
+        # Second pass: Create sequence items with adaptive blend radii
+        sequence_items = []
+        for i, (ee_position, ee_quat) in enumerate(ee_poses):
+            # Create pose goal
+            pose_goal = PoseStamped()
+            pose_goal.header.frame_id = 'base_link'
+            pose_goal.pose.position.x = ee_position[0]
+            pose_goal.pose.position.y = ee_position[1]
+            pose_goal.pose.position.z = ee_position[2]
+            pose_goal.pose.orientation.x = ee_quat[0]
+            pose_goal.pose.orientation.y = ee_quat[1]
+            pose_goal.pose.orientation.z = ee_quat[2]
+            pose_goal.pose.orientation.w = ee_quat[3]
+
+            # Create motion sequence item
+            item = MotionSequenceItem()
+            item.req.planner_id = 'LIN'  # Use linear motion
+            item.req.group_name = 'fairino5_v6_group'
+            item.req.max_velocity_scaling_factor = vel_scaling
+            item.req.max_acceleration_scaling_factor = acc_scaling
+            item.req.goal_constraints.append(self._create_pose_constraint(pose_goal))
+
+            # Use adaptive blend radius
+            item.blend_radius = blend_radii[i]
+
+            sequence_items.append(item)
+
+        # Create sequence request
+        request = GetMotionSequence.Request()
+        request.request.items = sequence_items
+
+        self.get_logger().info('[Pilz Sequence] Sending sequence request...')
+        future = self.sequence_client.call_async(request)
+        future.add_done_callback(lambda f: self._pilz_sequence_response(f))
+
+    def _create_pose_constraint(self, pose_stamped):
+        """Helper to create MoveIt constraints from PoseStamped"""
+        constraints = Constraints()
+
+        # Position constraint
+        pos_constraint = PositionConstraint()
+        pos_constraint.header = pose_stamped.header
+        pos_constraint.link_name = 'ee_link'
+
+        sphere = SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.001])  # 1mm tolerance
+        bounding_volume = BoundingVolume()
+        bounding_volume.primitives.append(sphere)
+        bounding_volume.primitive_poses.append(pose_stamped.pose)
+        pos_constraint.constraint_region = bounding_volume
+        pos_constraint.weight = 1.0
+
+        # Orientation constraint
+        orient_constraint = OrientationConstraint()
+        orient_constraint.header = pose_stamped.header
+        orient_constraint.link_name = 'ee_link'
+        orient_constraint.orientation = pose_stamped.pose.orientation
+        orient_constraint.absolute_x_axis_tolerance = 0.01
+        orient_constraint.absolute_y_axis_tolerance = 0.01
+        orient_constraint.absolute_z_axis_tolerance = 0.01
+        orient_constraint.weight = 1.0
+
+        constraints.position_constraints.append(pos_constraint)
+        constraints.orientation_constraints.append(orient_constraint)
+
+        return constraints
+
+    def apply_ipp_totg(self, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
+        """Call the IPP service to apply TOTG (ASYNC).
+
+        Args:
+            trajectory: RobotTrajectory to time-parameterize
+            vel_scaling: Velocity scaling factor [0.0-1.0]
+            acc_scaling: Acceleration scaling factor [0.0-1.0]
+            callback: Function to call with (trajectory_or_None) when done
+        """
+        self.get_logger().info('[TOTG] Checking if IPP service is available...')
+
+        if not self.ipp_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error('[TOTG] ✗ IPP service /apply_ipp NOT available after 5s!')
+            self.get_logger().error('[TOTG]    Is ipp_helper node running? Check: ros2 node list | grep ipp')
+            if callback:
+                callback(None)
+            return
+
+        self.get_logger().info('[TOTG] ✓ IPP service is available')
 
         request = ApplyIPP.Request()
         request.trajectory = trajectory.joint_trajectory
@@ -754,18 +799,74 @@ class RobotController(Node):
         request.max_acceleration_scaling = float(acc_scaling)
 
         self.get_logger().info(
-            f'[TOTG] Applying time-optimal parameterization with vel={vel_scaling}, acc={acc_scaling}')
+            f'[TOTG] Requesting time-optimal parameterization (vel={vel_scaling}, acc={acc_scaling})')
 
+        # Call ASYNC to avoid blocking the executor
         future = self.ipp_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
 
-        if future.result() is not None:
-            self.get_logger().info('[TOTG] Time-optimal trajectory generated successfully')
-            trajectory.joint_trajectory = future.result().trajectory
-            return trajectory
-        else:
-            self.get_logger().error('[TOTG] IPP service call failed, using original trajectory')
-            return trajectory
+        # Handle response when ready
+        def handle_ipp_response(fut):
+            try:
+                response = fut.result()
+
+                if response is None:
+                    self.get_logger().error('[TOTG] ✗ Response is None')
+                    if callback:
+                        callback(None)
+                    return
+
+                # ✅ FIX: Extract JointTrajectory from RobotTrajectory response
+                if not hasattr(response, 'trajectory'):
+                    self.get_logger().error('[TOTG] ✗ Response has no trajectory attribute')
+                    if callback:
+                        callback(None)
+                    return
+
+                # Response is RobotTrajectory, extract joint_trajectory
+                if not hasattr(response.trajectory, 'joint_trajectory'):
+                    self.get_logger().error('[TOTG] ✗ Response.trajectory has no joint_trajectory attribute')
+                    if callback:
+                        callback(None)
+                    return
+
+                joint_traj = response.trajectory.joint_trajectory
+                num_points = len(joint_traj.points)
+
+                if num_points == 0:
+                    self.get_logger().error('[TOTG] ✗ Empty trajectory - TOTG failed')
+                    if callback:
+                        callback(None)
+                    return
+
+                self.get_logger().info(
+                    f'[TOTG] ✓ Generated {num_points} time-parameterized points')
+
+                # Validate that timestamps are present
+                has_timestamps = False
+                for pt in joint_traj.points:
+                    if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
+                        has_timestamps = True
+                        break
+
+                if not has_timestamps:
+                    self.get_logger().error('[TOTG] ✗ Response has no timestamps - INVALID trajectory')
+                    if callback:
+                        callback(None)
+                    return
+
+                # ✅ Success: Update trajectory with time-parameterized result
+                trajectory.joint_trajectory = joint_traj
+                if callback:
+                    callback(trajectory)
+
+            except Exception as e:
+                self.get_logger().error(f'[TOTG] ✗ Service call failed: {e}')
+                import traceback
+                self.get_logger().error(f'[TOTG] Traceback: {traceback.format_exc()}')
+                if callback:
+                    callback(None)
+
+        future.add_done_callback(handle_ipp_response)
 
     def _cartesian_path_response(self, future, vel_scaling, acc_scaling):
         self.safety_manager.force_update()
@@ -778,37 +879,67 @@ class RobotController(Node):
                 self.get_logger().warning(f'[Cartesian Path] Only {fraction * 100:.1f}% of path could be computed')
                 return
 
-            if not self.execute_trajectory_client.wait_for_server(timeout_sec=1.0):
-                self.get_logger().error('[Cartesian Path] ExecuteTrajectory action server not available')
-                return
-
             # Get the computed trajectory
             trajectory = response.solution
 
             self.get_logger().info(
-                f'[Cartesian Path] Original trajectory has {len(trajectory.joint_trajectory.points)} points')
+                f'[Cartesian Path] Computed trajectory has {len(trajectory.joint_trajectory.points)} points')
 
-            # Apply TOTG via IPP service for time-optimal execution
-            trajectory = self.apply_ipp_totg(trajectory, vel_scaling, acc_scaling)
+            # ✅ CRITICAL: Apply TOTG for time-optimal velocity profile (ASYNC)
+            # This ensures smooth continuous motion without stops at waypoints
+            def on_totg_done(result_trajectory):
+                if result_trajectory is None:
+                    self.get_logger().error('[Cartesian Path] ✗ TOTG failed - aborting execution')
+                    self.get_logger().error('[Cartesian Path] Cannot execute trajectory without time parameterization')
+                    return
 
-            self.get_logger().info(
-                f'[Cartesian Path] Final trajectory has {len(trajectory.joint_trajectory.points)} points')
+                # Send trajectory directly to the controller
+                self._send_trajectory_to_controller(result_trajectory.joint_trajectory)
 
-            # Send trajectory directly to the controller instead of via ExecuteTrajectory
-            # This gives us the goal handle to cancel
-            self._send_trajectory_to_controller(trajectory.joint_trajectory)
+            self.apply_ipp_totg(trajectory, vel_scaling, acc_scaling, callback=on_totg_done)
 
         except Exception as e:
             self.get_logger().error(f'[Cartesian Path] Service call failed: {e}')
 
+    def _pilz_sequence_response(self, future):
+        """Handle Pilz sequence planning response and execute the blended trajectory."""
+        self.safety_manager.force_update()
+        try:
+            response = future.result()
+
+            if response.response.error_code.val != 1:
+                self.get_logger().error(f'[Pilz Sequence] Planning failed with error code: {response.response.error_code.val}')
+                return
+
+            # Get the planned trajectory
+            trajectory = response.response.planned_trajectories[0] if response.response.planned_trajectories else None
+
+            if trajectory is None or len(trajectory.joint_trajectory.points) == 0:
+                self.get_logger().error('[Pilz Sequence] No trajectory returned from planner')
+                return
+
+            self.get_logger().info(
+                f'[Pilz Sequence] Sequence planned successfully: {len(trajectory.joint_trajectory.points)} points')
+
+            # Send blended trajectory directly to controller
+            self._send_trajectory_to_controller(trajectory.joint_trajectory)
+
+        except Exception as e:
+            self.get_logger().error(f'[Pilz Sequence] Service call failed: {e}')
+
+
     def _send_trajectory_to_controller(self, joint_trajectory):
-        """Send trajectory directly to joint trajectory controller for proper cancellation control."""
+        """Send trajectory DIRECTLY to the low-level controller for maximum smoothness.
+
+        Bypasses MoveIt's ExecuteTrajectory action which can enforce unwanted path constraints.
+        The controller's spline interpolation will smoothly blend through all waypoints.
+        """
         if not self.execution_lock.acquire(blocking=False):
-            self.get_logger().warning('[Controller] Trajectory already executing, ignoring new request')
+            self.get_logger().warning('[Controller] Trajectory already executing, ignoring')
             return
 
         if self.is_executing:
-            self.get_logger().warning('[Controller] Previous trajectory still executing, ignoring new request')
+            self.get_logger().warning('[Controller] Previous trajectory still active')
             self.execution_lock.release()
             return
 
@@ -817,15 +948,73 @@ class RobotController(Node):
             self.execution_lock.release()
             return
 
+        # ✅ CRITICAL VALIDATION: Check for timestamps
+        if len(joint_trajectory.points) == 0:
+            self.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
+            self.execution_lock.release()
+            return
+
+        has_valid_timestamps = False
+        for pt in joint_trajectory.points:
+            if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
+                has_valid_timestamps = True
+                break
+
+        if not has_valid_timestamps:
+            self.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
+            self.get_logger().error('[Controller] TOTG must have failed. Cannot execute.')
+            self.execution_lock.release()
+            return
+
         self.is_executing = True
+
+        # Create controller goal with NO path tolerances
+        # Only enforce goal position (final point)
+        from control_msgs.msg import JointTolerance
+
+        goal_tolerance = []
+        for name in joint_trajectory.joint_names:
+            tol = JointTolerance()
+            tol.name = name
+            tol.position = 0.01  # 0.01 rad final position tolerance
+            tol.velocity = 0.0   # Must stop at end
+            tol.acceleration = 0.0
+            goal_tolerance.append(tol)
 
         controller_goal = FollowJointTrajectory.Goal()
         controller_goal.trajectory = joint_trajectory
+        controller_goal.path_tolerance = []  # EMPTY = smooth blending, no stops
+        controller_goal.goal_tolerance = goal_tolerance
 
-        self.get_logger().info('[Controller] Sending trajectory directly to fairino5_controller...')
+        # Calculate trajectory duration and set VERY generous time tolerance
+        # This prevents spurious aborts when controller is slightly behind schedule
+        if len(joint_trajectory.points) > 0:
+            last_point = joint_trajectory.points[-1]
+            traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
+            # Tolerance = 2x trajectory duration or 5s minimum
+            # This gives controller plenty of room for execution delays
+            time_tolerance_sec = max(5.0, traj_duration_sec * 2.0)
+
+            # DEBUG: Log trajectory details
+            self.get_logger().info(f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
+            self.get_logger().info(f'[Controller] First point positions: {[round(p, 3) for p in joint_trajectory.points[0].positions]}')
+            self.get_logger().info(f'[Controller] Last point positions: {[round(p, 3) for p in last_point.positions]}')
+            self.get_logger().info(f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec/1e9:.3f}s')
+            self.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+        else:
+            time_tolerance_sec = 5.0
+
+        controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
+        controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
+
+        self.get_logger().info(
+            f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
+            f'(spline interpolation, no path tolerance, goal_time_tolerance={time_tolerance_sec:.1f}s)')
+
         future = self.controller_client.send_goal_async(controller_goal)
         self.active_execute_send_future = future
         future.add_done_callback(self._controller_goal_response)
+
 
     def _controller_goal_response(self, future):
         """Handle controller goal acceptance."""
@@ -860,33 +1049,10 @@ class RobotController(Node):
             self.get_logger().error(f'[Controller] Result error: {e}')
         finally:
             self.active_controller_goal = None
-            self.active_execute_goal = None
             if self.execution_lock.locked():
                 self.execution_lock.release()
 
-    def _execute_trajectory_response(self, future):
-        self.active_execute_send_future = None  # Clear send future now that we have response
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error('[Cartesian Path] Trajectory execution rejected')
-            self.active_execute_goal = None
-            return
-        self.get_logger().info('[Cartesian Path] Trajectory execution accepted')
-        # Track the active goal for cancellation
-        self.active_execute_goal = goal_handle
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._execute_trajectory_result)
 
-    def _execute_trajectory_result(self, future):
-        result = future.result().result
-        if result.error_code.val == 1:
-            self.get_logger().info('[Cartesian Path] Trajectory execution succeeded!')
-        else:
-            self.get_logger().error(
-                f'[Cartesian Path] Trajectory execution failed with error code: {result.error_code.val}')
-        # Clear active goal when done
-        self.active_execute_goal = None
-        self.active_controller_goal = None  # Also clear controller goal
 
     def _controller_status_callback(self, msg):
         """Monitor controller action status and track active goals."""
@@ -911,6 +1077,9 @@ class RobotController(Node):
             if len(msg.position) < 6:
                 return
 
+            # Store current joint state for trajectory planning
+            self.current_joint_state = msg
+
             timestamp = datetime.now()
             data = self.monitor.update_joint_state(msg.position, timestamp)
 
@@ -934,36 +1103,16 @@ class RobotController(Node):
 
     def stop_motion(self):
         """
-        Cancel all active motion goals (MoveGroup, ExecuteTrajectory, and Controller).
+        Cancel all active motion goals (Controller only).
 
         Returns:
             bool: True if motion was stopped, False if no active goals
         """
         stopped = False
 
-        # Cancel MoveGroup goal
-        if self.active_move_goal is not None:
-            self.get_logger().info('[STOP] Cancelling active MoveGroup goal...')
-            try:
-                future = self.active_move_goal.cancel_goal_async()
-                self.active_move_goal = None
-                stopped = True
-            except Exception as e:
-                self.get_logger().error(f'[STOP] Failed to cancel MoveGroup goal: {e}')
-
-        # Cancel ExecuteTrajectory goal
-        if self.active_execute_goal is not None:
-            self.get_logger().info('[STOP] Cancelling active ExecuteTrajectory goal...')
-            try:
-                future = self.active_execute_goal.cancel_goal_async()
-                self.active_execute_goal = None
-                stopped = True
-            except Exception as e:
-                self.get_logger().error(f'[STOP] Failed to cancel ExecuteTrajectory goal: {e}')
-
-        # Cancel pending execute trajectory send operation
+        # Cancel pending send operation
         if self.active_execute_send_future is not None:
-            self.get_logger().info('[STOP] Cancelling pending ExecuteTrajectory send operation...')
+            self.get_logger().info('[STOP] Cancelling pending send operation...')
             try:
                 self.active_execute_send_future.cancel()
                 self.active_execute_send_future = None
@@ -991,8 +1140,6 @@ class RobotController(Node):
     def is_motion_active(self):
         """Return True if any motion goal is active."""
         return any([
-            self.active_move_goal is not None,
-            self.active_execute_goal is not None,
             self.active_controller_goal is not None,
             self.active_execute_send_future is not None
         ])
@@ -1099,7 +1246,7 @@ class FairinoRos2Robot:
             print(f"move_cartesian error: {e}")
             return -1  # Error
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=False):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True):
         """
         Executes a linear movement with blending.
 
@@ -1139,9 +1286,18 @@ class FairinoRos2Robot:
             print(f"move_liner error: {e}")
             return -1  # Error
 
-    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=False):
+    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True):
+        """Execute path with automatic selection of best execution strategy.
+
+        Strategy selection based on path density:
+        - Dense paths (avg spacing < 2mm): Use compute_cartesian_path (continuous contour)
+        - Sparse paths (avg spacing >= 2mm): Always use compute_cartesian_path for consistency
+
+        This ensures smooth motion without stops for all path types.
+        """
         if not path or self.node is None:
             return -1
+
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
 
         waypoints_xyz = []
@@ -1188,10 +1344,25 @@ class FairinoRos2Robot:
             orientation_base = self.workobject.apply(orientation_full)
             rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
 
-        self.node.get_logger().info(f"[EXECUTE_PATH] Extracted {len(waypoints_xyz)} XYZ waypoints")
+        # Calculate average distance between consecutive waypoints
+        if len(waypoints_xyz) > 1:
+            total_dist = 0.0
+            for i in range(len(waypoints_xyz) - 1):
+                dx = waypoints_xyz[i+1][0] - waypoints_xyz[i][0]
+                dy = waypoints_xyz[i+1][1] - waypoints_xyz[i][1]
+                dz = waypoints_xyz[i+1][2] - waypoints_xyz[i][2]
+                total_dist += (dx**2 + dy**2 + dz**2) ** 0.5
+            avg_spacing = total_dist / (len(waypoints_xyz) - 1)
+        else:
+            avg_spacing = 0.0
+
+        self.node.get_logger().info(f"[EXECUTE_PATH] {len(waypoints_xyz)} waypoints, avg spacing: {avg_spacing:.2f}mm")
         self.node.get_logger().info(f"[EXECUTE_PATH] First waypoint: {waypoints_xyz[0]}")
         self.node.get_logger().info(f"[EXECUTE_PATH] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
 
+        # ✅ ALWAYS use compute_cartesian_path for consistency
+        # Controller's spline interpolation + TOTG provides smooth continuous motion
+        self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
         self.node.send_path_cartesian(
             waypoints_mm=waypoints_xyz,
             rx=rx,

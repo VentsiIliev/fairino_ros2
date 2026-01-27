@@ -5,5 +5,5 @@ trajectory_msgs/JointTrajectory trajectory
 float64 max_velocity_scaling
 float64 max_acceleration_scaling
 ---
-# Response: smoothed trajectory
-trajectory_msgs/JointTrajectory trajectory
+# Response: smoothed trajectory (using RobotTrajectory for reliable deep-copy)
+moveit_msgs/RobotTrajectory trajectory

@@ -25,6 +25,9 @@ cd "$WS_DIR"
 echo -e "${YELLOW}Sourcing ROS2 Rolling...${NC}"
 source /opt/ros/rolling/setup.bash
 
+# CRITICAL: Remove ws_moveit2 from Python path to avoid incompatible moveit_msgs
+export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+
 # Check if specific packages are provided as arguments
 if [ $# -eq 0 ]; then
     # No arguments - build all packages

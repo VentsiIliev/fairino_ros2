@@ -65,12 +65,12 @@ class SafetyWallManager:
             self._publish_markers_callback
         )
 
-        # Publish initial collision objects to planning scene
+        # Don't publish immediately - wait for explicit force_update() call
+        # This speeds up initialization
         if self.safety_workspace:
-            self.publish_to_planning_scene()
-            self.node.get_logger().info('[SafetyWallManager] Initialized with workspace boundaries')
+            self.node.get_logger().info('[SafetyWallManager] Initialized (deferred publishing)')
         else:
-            self.node.get_logger().warning('[SafetyWallManager] Initialized without workspace (set bounds later)')
+            self.node.get_logger().info('[SafetyWallManager] Initialized without workspace')
 
     # ========== Public API Methods ==========
 

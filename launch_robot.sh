@@ -22,9 +22,25 @@ echo ""
 # Change to workspace directory
 cd "$WS_DIR"
 
-# Source ROS2 and workspace
+# CRITICAL: Unset ws_moveit2 paths BEFORE sourcing anything
+# This prevents incompatible moveit_msgs from loading
 echo -e "${YELLOW}Setting up environment...${NC}"
+
+# Clean any existing ROS environment to avoid ws_moveit2 contamination
+unset ROS_PACKAGE_PATH
+unset AMENT_PREFIX_PATH
+unset PYTHONPATH
+unset LD_LIBRARY_PATH
+unset CMAKE_PREFIX_PATH
+
+# Now source ROS2 with clean environment
 source /opt/ros/rolling/setup.bash
+
+# Additional safety: Strip any ws_moveit2 that might have leaked in
+export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+export AMENT_PREFIX_PATH=$(echo $AMENT_PREFIX_PATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+export CMAKE_PREFIX_PATH=$(echo $CMAKE_PREFIX_PATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+
 source install/setup.bash
 
 # Verify critical library exists

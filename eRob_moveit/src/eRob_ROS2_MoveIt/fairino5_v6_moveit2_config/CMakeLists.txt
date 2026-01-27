@@ -16,7 +16,7 @@ find_package(rosidl_default_generators REQUIRED)
 # Generate custom service
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ApplyIPP.srv"
-  DEPENDENCIES trajectory_msgs
+  DEPENDENCIES trajectory_msgs moveit_msgs
 )
 
 # Python scripts - install to lib for executable access
