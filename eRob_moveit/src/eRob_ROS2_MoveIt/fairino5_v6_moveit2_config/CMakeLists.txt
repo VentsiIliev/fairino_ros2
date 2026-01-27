@@ -21,7 +21,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 # Python scripts - install to lib for executable access
 install(PROGRAMS
-  scripts/velocity_monitor.py
+  scripts/main.py
   scripts/gui_bridge.py
   scripts/monitor_window.py
   scripts/robot_controller.py

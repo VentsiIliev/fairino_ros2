@@ -42,11 +42,10 @@ def generate_launch_description():
     # Launch GUI as an ROS2 node with delay to wait for controllers
     velocity_monitor_gui = Node(
         package='fairino5_v6_moveit2_config',
-        executable='velocity_monitor.py',
+        executable='main.py',
         name='velocity_monitor',
         output='screen',
-        emulate_tty=True,
-        additional_env={'DISPLAY': os.environ.get('DISPLAY', ':0')}
+        emulate_tty=True
     )
 
     # Delay GUI launch by 3 seconds (reduced from 8s - faster planner loading)

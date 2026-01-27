@@ -22,7 +22,7 @@ def generate_launch_description():
 
     velocity_monitor_node = Node(
         package='fairino5_v6_moveit2_config',
-        executable='velocity_monitor.py',
+        executable='main.py',
         name='velocity_monitor',
         output='screen'
     )
