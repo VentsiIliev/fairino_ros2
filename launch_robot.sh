@@ -66,4 +66,9 @@ fi
 # Launch
 echo -e "${YELLOW}Launching: ${LAUNCH_FILE} ${EXTRA_ARGS}${NC}"
 echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}  Initial startup may take ~40 seconds${NC}"
+echo -e "${BLUE}  (Processing collision geometry)${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
 ros2 launch fairino5_v6_moveit2_config "$LAUNCH_FILE" $EXTRA_ARGS

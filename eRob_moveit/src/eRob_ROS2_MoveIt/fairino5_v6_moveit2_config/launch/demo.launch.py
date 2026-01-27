@@ -2,7 +2,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_demo_launch
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import ExecuteProcess, SetEnvironmentVariable, RegisterEventHandler, TimerAction
+from launch.actions import ExecuteProcess, SetEnvironmentVariable, RegisterEventHandler, TimerAction, LogInfo
 from launch.event_handlers import OnProcessStart, OnProcessExit
 import os
 
@@ -16,6 +16,18 @@ def generate_launch_description():
     )
 
     demo_ld = generate_demo_launch(moveit_config)
+
+    # Add startup info message
+    startup_msg = LogInfo(
+        msg="\n"
+            "========================================\n"
+            "  MoveIt2 System Starting Up\n"
+            "========================================\n"
+            "Please wait ~40 seconds for collision geometry processing...\n"
+            "(This is normal - complex mounting surface mesh with magazines/tool changers)\n"
+            "========================================\n"
+    )
+    demo_ld.add_action(startup_msg)
 
     # Set DISPLAY environment variable for GUI
     set_display = SetEnvironmentVariable(

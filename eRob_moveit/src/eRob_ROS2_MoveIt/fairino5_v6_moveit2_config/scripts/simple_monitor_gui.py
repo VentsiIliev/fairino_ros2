@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import sys
+import time
 from threading import Thread
 import rclpy
 from rclpy.node import Node
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
-import numpy as np
-import time
-from robot_monitor import RobotMonitor
+from status.robot_monitor import RobotMonitor
 class SimpleMonitorGUI(QWidget):
     def __init__(self, ros_node, robot_monitor):
         super().__init__()

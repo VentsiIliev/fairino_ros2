@@ -1,9 +1,0 @@
-# Default initial positions for eRobo3's ros2_control fake system
-
-initial_positions:
-  j1: -1.57
-  j2: -0.35
-  j3: -0.7
-  j4: -0.52
-  j5: -1.57
-  j6: 0.0

@@ -23,7 +23,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 install(PROGRAMS
   scripts/main.py
   scripts/simple_monitor_gui.py
-  scripts/gui_bridge.py
   scripts/monitor_window.py
   scripts/robot_controller.py
   scripts/safety_wall_manager.py

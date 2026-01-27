@@ -11,7 +11,8 @@ from rclpy.node import Node
 
 from utils.work_object import WorkObject
 from monitor_window import MonitorWindow
-from robot_controller import RobotController, FairinoRos2Robot
+from robot_controller import RobotController
+from fairino_ros2_robot import FairinoRos2Robot
 from rest_server import start_rest_server
 def ros_spin_thread(node):
     rclpy.spin(node)

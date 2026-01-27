@@ -16,7 +16,8 @@ from scipy.interpolate import interp1d
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 
-from robot_controller import FairinoRos2Robot, RobotController
+from robot_controller import RobotController
+from fairino_ros2_robot import FairinoRos2Robot
 from utils.work_object import WorkObject
 from enums import RobotAxis, Direction
 
