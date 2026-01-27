@@ -16,6 +16,7 @@
   <build_depend>moveit_ros_planning_interface</build_depend>
   <build_depend>moveit_ros_planning</build_depend>
   <build_depend>moveit_msgs</build_depend>
+  <build_depend>fairino_msgs</build_depend>
   <build_depend>rosidl_default_generators</build_depend>
 
   <build_export_depend>rclcpp</build_export_depend>
@@ -23,10 +24,12 @@
   <build_export_depend>moveit_ros_planning_interface</build_export_depend>
   <build_export_depend>moveit_ros_planning</build_export_depend>
   <build_export_depend>moveit_msgs</build_export_depend>
+  <build_export_depend>fairino_msgs</build_export_depend>
 
   <!-- Runtime dependencies -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>fairino_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>

@@ -5,70 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment=".broken">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/CMakeLists.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/gui_bridge.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_monitor.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status/robot_monitor.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/.setup_assistant" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/CMakeLists.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/collision_monitor.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/eRobo3.ros2_control.xacro" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/eRobo3.srdf" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/eRobo3.urdf.xacro" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/erob_arm.urdf" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/gui_bridge_params.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/initial_positions.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/joint_limits.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/kinematics.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/move_group.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/moveit.rviz" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/moveit_controllers.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/pilz_cartesian_limits.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/ros2_controllers.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/zeroErr.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config/zeroErr1.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/cpu_isolation.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/demo.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/move_group.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/moveit_rviz.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/rsp.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/setup_assistant.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/spawn_controllers.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/static_virtual_joint_tfs.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/test.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/launch/warehouse_db.launch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_1.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_1.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_2.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_2.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_3.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_3.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_4.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_4.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_5.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_5.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_6.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/Link_6.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/ToolPointer.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/ToolPointer_BACKUP.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/base_link.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/base_link.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/finger.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/finger.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/hand.dae" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/meshes/hand.stl" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/package.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/scripts/cartesian_gui.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/scripts/collision_monitor.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/scripts/gui_bridge.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/scripts/test_collision.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/launch_robot.sh" beforeDir="false" afterPath="$PROJECT_DIR$/launch_robot.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/fairino_description/meshes/Cobot - Plot.stl" beforeDir="false" afterPath="$PROJECT_DIR$/src/fairino_description/meshes/Cobot - Plot.stl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety_wall_manager.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -358,7 +296,7 @@
       <workItem from="1766468628238" duration="29751000" />
       <workItem from="1768456877812" duration="28149000" />
       <workItem from="1769407421604" duration="516000" />
-      <workItem from="1769407955349" duration="53904000" />
+      <workItem from="1769407955349" duration="54384000" />
     </task>
     <task id="LOCAL-00001" summary="first commit">
       <option name="closed" value="true" />
@@ -480,7 +418,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769514858948</updated>
     </task>
-    <option name="localTasksCounter" value="16" />
+    <task id="LOCAL-00016" summary=".broken">
+      <option name="closed" value="true" />
+      <created>1769525417712</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1769525417712</updated>
+    </task>
+    <option name="localTasksCounter" value="17" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

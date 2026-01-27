@@ -25,7 +25,6 @@ install(PROGRAMS
   scripts/simple_monitor_gui.py
   scripts/monitor_window.py
   scripts/robot_controller.py
-  scripts/safety_wall_manager.py
   scripts/rest_server.py
   scripts/enums.py
   DESTINATION lib/${PROJECT_NAME}
@@ -33,6 +32,31 @@ install(PROGRAMS
 
 # Install Python modules to lib so they can be imported
 install(DIRECTORY scripts/utils
+  DESTINATION lib/${PROJECT_NAME}
+  FILES_MATCHING PATTERN "*.py"
+)
+
+install(DIRECTORY scripts/safety
+  DESTINATION lib/${PROJECT_NAME}
+  FILES_MATCHING PATTERN "*.py"
+)
+
+install(DIRECTORY scripts/status
+  DESTINATION lib/${PROJECT_NAME}
+  FILES_MATCHING PATTERN "*.py"
+)
+
+install(DIRECTORY scripts/motion
+  DESTINATION lib/${PROJECT_NAME}
+  FILES_MATCHING PATTERN "*.py"
+)
+
+install(DIRECTORY scripts/tools
+  DESTINATION lib/${PROJECT_NAME}
+  FILES_MATCHING PATTERN "*.py"
+)
+
+install(DIRECTORY scripts/workspace
   DESTINATION lib/${PROJECT_NAME}
   FILES_MATCHING PATTERN "*.py"
 )

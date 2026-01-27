@@ -17,7 +17,7 @@ from action_msgs.msg import GoalStatus
 from action_msgs.msg import GoalStatusArray
 
 from utils.transformation_utils import TransformationUtils
-from safety_wall_manager import SafetyWallManager
+from safety.safety_wall_manager import SafetyWallManager
 from status.robot_monitor import RobotMonitor
 
 # ============ Safety Workspace Boundaries ============
