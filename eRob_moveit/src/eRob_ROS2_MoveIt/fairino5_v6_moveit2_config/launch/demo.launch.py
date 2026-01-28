@@ -8,6 +8,10 @@ import os
 
 
 def generate_launch_description():
+    # CRITICAL: Set DISPLAY first before anything else
+    # Xorg runs on :1 on this Ubuntu system
+    os.environ['DISPLAY'] = os.environ.get('DISPLAY', ':1')
+
     # Build MoveIt config with only Pilz planner (disable CHOMP, OMPL, STOMP for faster startup)
     moveit_config = (
         MoveItConfigsBuilder("fairino5_v6_robot", package_name="fairino5_v6_moveit2_config")
@@ -30,9 +34,10 @@ def generate_launch_description():
     demo_ld.add_action(startup_msg)
 
     # Set DISPLAY environment variable for GUI
+    # Use :1 as default since Xorg typically runs on :1 on Ubuntu
     set_display = SetEnvironmentVariable(
         name='DISPLAY',
-        value=os.environ.get('DISPLAY', ':0')
+        value=os.environ.get('DISPLAY', ':1')
     )
     demo_ld.add_action(set_display)
 

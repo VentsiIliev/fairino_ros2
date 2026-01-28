@@ -132,11 +132,15 @@ class FairinoRos2Robot:
             vel_scale = max(0.0, min(1.0, vel / 100.0))
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
-            self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN', tool_transform=tool_transform)
+            result = self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN', tool_transform=tool_transform)
+
+            # Return error code if planning/submission failed
+            if result != 0:
+                return result
 
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
-                return self.node.wait_for_position(position_base, threshold=1.0, timeout=60.0)
+                return self.wait_for_position(position_base, threshold=1.0, timeout=60.0)
 
             return 0  # Success
         except Exception as e:
@@ -220,7 +224,7 @@ class FairinoRos2Robot:
         # ✅ ALWAYS use compute_cartesian_path for consistency
         # Controller's spline interpolation + TOTG provides smooth continuous motion
         self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
-        self.node.send_path_cartesian(
+        result = self.node.send_path_cartesian(
             waypoints_mm=waypoints_xyz,
             rx=rx,
             ry=ry,
@@ -229,10 +233,22 @@ class FairinoRos2Robot:
             acc_scaling=acc
         )
 
+        # Return error code if planning/submission failed
+        if result < 0:
+            # Error codes: -2, -3, -5 etc
+            return result
+
+        if result > 0:
+            # Positive = queued position (don't block on queued commands)
+            self.node.get_logger().info(f"[EXECUTE_PATH] Command queued at position {result}")
+            return result
+
+        # result == 0: executing immediately
         if blocking:
             last_waypoint = waypoints_xyz[-1] + [rx, ry, rz]
-            self.node.get_logger().info(f"[EXECUTE_PATH] Blocking until final position reached: {last_waypoint}")
+            self.node.get_logger().info(f"[EXECUTE_PATH] Blocking until final position reached")
             return self.wait_for_position(last_waypoint, threshold=1.0, timeout=60.0)
+
         return 0
 
     # ---------------- Status Methods ----------------
@@ -292,14 +308,6 @@ class FairinoRos2Robot:
         return tuple(data['cart_acceleration'].tolist())
 
     def wait_for_position(self, target_position, threshold=1.0, timeout=30.0, check_interval=0.01):
-        """Internal helper to wait for robot to reach target position.
-
-        Args:
-            target_position: Target position in BASE frame [x, y, z, rx, ry, rz] (in mm)
-            threshold: Distance threshold in mm
-            timeout: Timeout in seconds
-            check_interval: Check interval in seconds
-        """
         import time, math
         start_time = time.time()
         if len(target_position) >= 3:
@@ -311,7 +319,6 @@ class FairinoRos2Robot:
             if time.time() - start_time > timeout:
                 return False
 
-            # Get current position in BASE frame (not workobject frame)
             if self.node is None:
                 time.sleep(check_interval)
                 continue
@@ -322,17 +329,12 @@ class FairinoRos2Robot:
                 continue
 
             try:
-                # Get current position in BASE frame from robot_monitor.py (already in mm)
                 current_xyz = data['cartesian'][:3].tolist()
-
                 distance = math.sqrt(sum((current_xyz[i] - target_xyz[i]) ** 2 for i in range(3)))
-                self.node.get_logger().info(f"Target position (base): {target_xyz}")
-                self.node.get_logger().info(f"Current position (base): {current_xyz}")
-                self.node.get_logger().info(f"Distance: {distance}")
                 if distance < threshold:
                     return True
-            except Exception as e:
-                self.node.get_logger().warning(f"wait_for_position error: {e}")
+            except:
+                pass
 
             time.sleep(check_interval)
 
@@ -392,13 +394,13 @@ class FairinoRos2Robot:
 
         try:
             x_base, y_base, z_base, rx_base, ry_base, rz_base = new_pos_base
-            self.node.send_cartesian_goal(
+            result = self.node.send_cartesian_goal(
                 x_base, y_base, z_base,
                 rx_base, ry_base, rz_base,
                 vel_scale=vel_scale, acc_scale=acc_scale,
                 planner_id='LIN'
             )
-            return 0
+            return result
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
             return -1

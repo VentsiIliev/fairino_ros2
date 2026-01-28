@@ -92,24 +92,28 @@ def start_rest_server(
         if not position or len(position) != 6:
             return jsonify({"error": "Invalid position format"}), 400
 
-        # result = robot.move_cartesian(
-        #     position,
-        #     tool=data.get("tool", 0),
-        #     # user=data.get("user", 0),
-        #     user=0,# TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
-        #     vel=data.get("vel", 30),
-        #     acc=data.get("acc", 30),
-        # )
-
         result = robot.move_liner(
             position,
             tool=data.get("tool", 0),
-            # user=data.get("user", 0),
-            user=0,  # TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
+            user=0,
             vel=data.get("vel", 30),
             acc=data.get("acc", 30),
         )
-        return jsonify({"result": result, "success": result == 0})
+
+        # Handle queue and error responses
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+        elif result == 0:
+            return jsonify({"result": result, "success": True, "queued": False}), 200
+        elif result == -5:
+            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+        elif result == -2:
+            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+        elif result == -3:
+            return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+        else:
+            return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
+
 
     @app.route("/move/linear", methods=["POST"])
     def move_linear():
@@ -122,12 +126,25 @@ def start_rest_server(
         result = robot.move_liner(
             position,
             tool=data.get("tool", 0),
-            # user=data.get("user", 0),
-            user=0,  # TEMP USE USER 0 BECAUSE THE CALIB AND HOME POS IN COBOT SOFT ARE CAPTURED IN FRAME 0
+            user=0,
             vel=data.get("vel", 30),
             acc=data.get("acc", 30),
         )
-        return jsonify({"result": result, "success": result == 0})
+
+        # Handle queue and error responses
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+        elif result == 0:
+            return jsonify({"result": result, "success": True, "queued": False}), 200
+        elif result == -5:
+            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+        elif result == -2:
+            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+        elif result == -3:
+            return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+        else:
+            return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
+
 
     @app.route("/execute/path", methods=["POST"])
     def execute_path():
@@ -163,9 +180,29 @@ def start_rest_server(
             acc=acc,
             blocking=data.get("blocking", False),
         )
-        return jsonify({"result": result, "success": result == 0})
-        # result = 0
-        # return jsonify({"result": result, "success": result == 0})
+
+        # Handle queue responses
+        if result > 0:
+            # Queued successfully
+            return jsonify({
+                "result": result,
+                "success": True,
+                "queued": True,
+                "queue_position": result
+            }), 202  # 202 Accepted (queued for processing)
+        elif result == 0:
+            # Executing immediately
+            return jsonify({"result": result, "success": True, "queued": False}), 200
+        elif result == -5:
+            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+        # Handle other error codes
+        elif result == -2:
+            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+        elif result == -3:
+            return jsonify({"result": result, "success": False, "error": "Safety violation: waypoint outside workspace"}), 400
+        elif result != 0:
+            return jsonify({"result": result, "success": False, "error": f"Path execution failed with code {result}"}), 500
+
 
     @app.route("/position/current", methods=["GET"])
     def get_position():
@@ -184,7 +221,13 @@ def start_rest_server(
     @app.route("/stop", methods=["POST"])
     def stop_motion():
         result = robot.stop_motion()
-        return jsonify({"result": result, "success": result == 0})
+        # robot.stop_motion() returns 0 on success, -1 on error
+        success = (result == 0)
+        return jsonify({
+            "stopped": success,
+            "result": result,
+            "success": success
+        })
 
     @app.route("/workobject/set", methods=["POST"])
     def set_workobject():
@@ -197,6 +240,12 @@ def start_rest_server(
         workobject = WorkObject(origin=origin)
         robot.set_workobject(workobject, user_id=data.get("user_id", 0))
         return jsonify({"success": True})
+
+    @app.route("/status", methods=["GET"])
+    def get_status():
+        """Get robot execution status and queue size."""
+        status = robot.node.status_publisher.get_status_dict()
+        return jsonify(status)
 
     @app.route("/jog", methods=["POST"])
     def jog():

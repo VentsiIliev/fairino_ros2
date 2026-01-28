@@ -5,8 +5,15 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment=".broken">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/fairino_ros2_robot.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/fairino_ros2_robot.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/jog_controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/jog_controller.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/trajectory_planner.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/trajectory_planner.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety_wall_manager.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/launch_robot.sh" beforeDir="false" afterPath="$PROJECT_DIR$/launch_robot.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -20,14 +27,14 @@
   </component>
   <component name="CopilotUserSelectedModel">
     <selectedModels>
-      <entry key="chat-panel" value="Claude Sonnet 4.5" />
-      <entry key="agent-panel" value="Claude Sonnet 4.5" />
       <entry key="inline" value="GPT-5 mini" />
       <entry key="edit-panel" value="GPT-5 mini" />
+      <entry key="chat-panel" value="Claude Sonnet 4.5" />
+      <entry key="agent-panel" value="Claude Sonnet 4.5" />
     </selectedModels>
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="3554" />
+    <option name="cachedIndexableFilesCount" value="2043" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -79,38 +86,40 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python tests.pytest in test_rviz.py.executor": "Run",
-    "Python.fairino_bridge_server.executor": "Run",
-    "Python.rest_server.executor": "Run",
-    "Python.ttest_rviz.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "SHELLCHECK.PATH": "/home/ilv/.local/share/JetBrains/PyCharm2025.3/Shell Script/shellcheck",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "git-widget-placeholder": "master",
-    "last_opened_file_path": "/home/ilv/ros2_ws/src/fairino_description/meshes",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "project.propVCSSupport.DirectoryMappings",
-    "two.files.diff.last.used.file": "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/package.xml",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python tests.pytest in test_cam_feed_server.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.pytest in test_rviz.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python.fairino_bridge_server.executor&quot;: &quot;Run&quot;,
+    &quot;Python.rest_server.executor&quot;: &quot;Run&quot;,
+    &quot;Python.ttest_cam_feed_server.executor&quot;: &quot;Run&quot;,
+    &quot;Python.ttest_rviz.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;SHELLCHECK.PATH&quot;: &quot;/home/ilv/.local/share/JetBrains/PyCharm2025.3/Shell Script/shellcheck&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/ilv/ros2_ws/src/fairino_description/meshes&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;project.propVCSSupport.DirectoryMappings&quot;,
+    &quot;two.files.diff.last.used.file&quot;: &quot;/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/package.xml&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   },
-  "keyToStringList": {
-    "ChangesTree.GroupingKeys": [
-      "directory",
-      "repository"
+  &quot;keyToStringList&quot;: {
+    &quot;ChangesTree.GroupingKeys&quot;: [
+      &quot;directory&quot;,
+      &quot;repository&quot;
     ]
   }
-}]]></component>
+}</component>
   <component name="RecapSpentCounter">
     <option name="endsOfQuotaMs" value="1769598034368" />
     <option name="spentUsd" value="0.12900436" />
@@ -132,7 +141,7 @@
       <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.rest_server">
+  <component name="RunManager" selected="Python.ttest_cam_feed_server">
     <configuration name="fairino_bridge_server" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="ros2_ws" />
       <option name="ENV_FILES" value="" />
@@ -181,6 +190,30 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
+    <configuration name="ttest_cam_feed_server" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="ros2_ws" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/ttest_cam_feed_server.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <configuration name="ttest_rviz" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="ros2_ws" />
       <option name="ENV_FILES" value="" />
@@ -205,7 +238,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="pytest in /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/ttest_rviz.py" type="tests" factoryName="py.test" temporary="true" nameIsGenerated="true">
+    <configuration name="pytest in ttest_cam_feed_server.py" type="tests" factoryName="py.test" temporary="true" nameIsGenerated="true">
       <module name="ros2_ws" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -220,16 +253,17 @@
       <option name="_new_keywords" value="&quot;&quot;" />
       <option name="_new_parameters" value="&quot;&quot;" />
       <option name="_new_additionalArguments" value="&quot;&quot;" />
-      <option name="_new_target" value="&quot;$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/ttest_rviz.py&quot;" />
+      <option name="_new_target" value="&quot;$PROJECT_DIR$/ttest_cam_feed_server.py&quot;" />
       <option name="_new_targetType" value="&quot;PATH&quot;" />
       <method v="2" />
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.ttest_cam_feed_server" />
+        <item itemvalue="Python tests.pytest in ttest_cam_feed_server.py" />
         <item itemvalue="Python.rest_server" />
         <item itemvalue="Python.fairino_bridge_server" />
         <item itemvalue="Python.ttest_rviz" />
-        <item itemvalue="Python tests.pytest in /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/ttest_rviz.py" />
       </list>
     </recent_temporary>
   </component>
@@ -296,7 +330,8 @@
       <workItem from="1766468628238" duration="29751000" />
       <workItem from="1768456877812" duration="28149000" />
       <workItem from="1769407421604" duration="516000" />
-      <workItem from="1769407955349" duration="54384000" />
+      <workItem from="1769407955349" duration="56484000" />
+      <workItem from="1769580380329" duration="20006000" />
     </task>
     <task id="LOCAL-00001" summary="first commit">
       <option name="closed" value="true" />
@@ -426,7 +461,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769525417712</updated>
     </task>
-    <option name="localTasksCounter" value="17" />
+    <task id="LOCAL-00017" summary=".broken">
+      <option name="closed" value="true" />
+      <created>1769525905859</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1769525905859</updated>
+    </task>
+    <option name="localTasksCounter" value="18" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -504,20 +547,11 @@
     <MESSAGE value=".broken" />
     <option name="LAST_COMMIT_MESSAGE" value=".broken" />
   </component>
-  <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/trajectory_planner.py</url>
-          <line>235</line>
-          <option name="timeStamp" value="6" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
-  </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/ros2_ws$ttest_rviz.coverage" NAME="ttest_rviz Coverage Results" MODIFIED="1766044293950" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts" />
+    <SUITE FILE_PATH="coverage/ros2_ws$pytest_in_test_cam_feed_server_py.coverage" NAME="pytest in test_cam_feed_server.py Coverage Results" MODIFIED="1769600024851" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/ros2_ws$fairino_bridge_server.coverage" NAME="fairino_bridge_server Coverage Results" MODIFIED="1766147841383" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/ros2_ws$ttest_cam_feed_server.coverage" NAME="ttest_cam_feed_server Coverage Results" MODIFIED="1769600033296" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/ros2_ws$pytest_in_test_rviz_py.coverage" NAME="pytest in test_rviz.py Coverage Results" MODIFIED="1766044227907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/ros2_ws$rest_server.coverage" NAME="rest_server Coverage Results" MODIFIED="1766148146033" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/server" />
   </component>

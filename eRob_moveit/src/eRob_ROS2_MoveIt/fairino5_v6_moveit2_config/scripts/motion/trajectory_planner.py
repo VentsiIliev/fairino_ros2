@@ -1,10 +1,8 @@
 from geometry_msgs.msg import Pose
 from moveit_msgs.srv import GetCartesianPath
 from utils.transformation_utils import TransformationUtils
-from fairino5_v6_moveit2_config.srv import ApplyIPP
-from control_msgs.action import FollowJointTrajectory
-from control_msgs.msg import JointTolerance
-
+from .trajectory_executor import _send_trajectory_to_controller
+from .trajectory_optimization import apply_ipp_totg
 
 def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
     """Cartesian Path: Uses MoveIt's compute_cartesian_path service with adaptive step sizing.
@@ -12,8 +10,32 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
     Args:
         waypoints_mm: List of TCP waypoints [x_mm, y_mm, z_mm] in millimeters
         rx, ry, rz: TCP orientation in degrees (same for all waypoints)
+
+    Returns:
+        int: 0 if executing now, >0 if queued (queue position), -2 if service unavailable, -5 if queue full
     """
     robot_controller.safety_manager.force_update()
+
+    # If robot is executing, queue this command
+    if robot_controller.is_executing:
+        result = robot_controller.motion_queue.submit(
+            task_function=_execute_path_internal,
+            task_args=[robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling]
+        )
+        if isinstance(result, tuple):
+            task_id, position = result
+            robot_controller.get_logger().info(f'[Queue] Motion queued at position {position} (task #{task_id})')
+            return position  # Return queue position (positive number)
+        else:
+            robot_controller.get_logger().error(f'[Queue] Queue is full! Cannot accept new motion')
+            return result  # -5 = queue full
+
+    # Robot is idle, execute immediately
+    return _execute_path_internal(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+
+
+def _execute_path_internal(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
+    """Internal function to execute path (called directly or from queue)."""
     num_waypoints = len(waypoints_mm)
     robot_controller.get_logger().info(f'[Cartesian Path] Computing smooth path through {num_waypoints} waypoints')
     robot_controller.get_logger().info(f'[Cartesian Path] vel= {vel_scaling}, acc= {acc_scaling}')
@@ -26,7 +48,7 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
 
     if not robot_controller.cart_path_client.wait_for_service(timeout_sec=1.0):
         robot_controller.get_logger().error('[Cartesian Path] compute_cartesian_path service not available')
-        return
+        return -2
 
     # Create waypoint poses for ee_link (applying inverse of tool transform only)
     # Since MoveIt now plans for ee_link, we only need to remove the tool offset
@@ -51,7 +73,7 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
         )
         if not is_safe:
             robot_controller.get_logger().error(f'[SAFETY] Waypoint {i + 1} rejected: {msg}')
-            return  # Reject entire path if any waypoint unsafe
+            return -3  # Reject entire path if any waypoint unsafe
         if "Warning" in msg and i == 0:  # Only warn once
             robot_controller.get_logger().warning(f'[SAFETY] {msg}')
 
@@ -94,8 +116,15 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
     # ✅ CRITICAL FIX: Set start state to robot's CURRENT position
     # Without this, MoveIt uses an empty/default state causing trajectory mismatch
     if hasattr(robot_controller, 'current_joint_state') and robot_controller.current_joint_state is not None:
-        request.start_state.joint_state = robot_controller.current_joint_state
+        from sensor_msgs.msg import JointState
+        from copy import deepcopy
+
+        current_state = deepcopy(robot_controller.current_joint_state)
+        current_state.header.stamp = robot_controller.get_clock().now().to_msg()
+
+        request.start_state.joint_state = current_state
         request.start_state.is_diff = False  # Use as absolute state, not differential
+        robot_controller.get_logger().info(f'[Cartesian Path] Using current joint state as start: {[round(p, 3) for p in current_state.position[:6]]}')
     else:
         robot_controller.get_logger().warning('[Cartesian Path] No current joint state available - trajectory may not execute correctly')
 
@@ -104,101 +133,8 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
     robot_controller.get_logger().info('[Cartesian Path] Requesting cartesian path computation...')
     future = robot_controller.cart_path_client.call_async(request)
     future.add_done_callback(lambda f: _cartesian_path_response(robot_controller,f, vel_scaling, acc_scaling))
+    return 0  # Request submitted successfully
 
-def apply_ipp_totg(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
-    """Call the IPP service to apply TOTG (ASYNC).
-
-    Args:
-        trajectory: RobotTrajectory to time-parameterize
-        vel_scaling: Velocity scaling factor [0.0-1.0]
-        acc_scaling: Acceleration scaling factor [0.0-1.0]
-        callback: Function to call with (trajectory_or_None) when done
-    """
-    robot_controller.get_logger().info('[TOTG] Checking if IPP service is available...')
-
-    if not robot_controller.ipp_client.wait_for_service(timeout_sec=5.0):
-        robot_controller.get_logger().error('[TOTG] ✗ IPP service /apply_ipp NOT available after 5s!')
-        robot_controller.get_logger().error('[TOTG]    Is ipp_helper node running? Check: ros2 node list | grep ipp')
-        if callback:
-            callback(None)
-        return
-
-    robot_controller.get_logger().info('[TOTG] ✓ IPP service is available')
-
-    request = ApplyIPP.Request()
-    request.trajectory = trajectory.joint_trajectory
-    request.max_velocity_scaling = float(vel_scaling)
-    request.max_acceleration_scaling = float(acc_scaling)
-
-    robot_controller.get_logger().info(
-        f'[TOTG] Requesting time-optimal parameterization (vel={vel_scaling}, acc={acc_scaling})')
-
-    # Call ASYNC to avoid blocking the executor
-    future = robot_controller.ipp_client.call_async(request)
-
-    # Handle response when ready
-    def handle_ipp_response(fut):
-        try:
-            response = fut.result()
-
-            if response is None:
-                robot_controller.get_logger().error('[TOTG] ✗ Response is None')
-                if callback:
-                    callback(None)
-                return
-
-            # ✅ FIX: Extract JointTrajectory from RobotTrajectory response
-            if not hasattr(response, 'trajectory'):
-                robot_controller.get_logger().error('[TOTG] ✗ Response has no trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            # Response is RobotTrajectory, extract joint_trajectory
-            if not hasattr(response.trajectory, 'joint_trajectory'):
-                robot_controller.get_logger().error('[TOTG] ✗ Response.trajectory has no joint_trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            joint_traj = response.trajectory.joint_trajectory
-            num_points = len(joint_traj.points)
-
-            if num_points == 0:
-                robot_controller.get_logger().error('[TOTG] ✗ Empty trajectory - TOTG failed')
-                if callback:
-                    callback(None)
-                return
-
-            robot_controller.get_logger().info(
-                f'[TOTG] ✓ Generated {num_points} time-parameterized points')
-
-            # Validate that timestamps are present
-            has_timestamps = False
-            for pt in joint_traj.points:
-                if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
-                    has_timestamps = True
-                    break
-
-            if not has_timestamps:
-                robot_controller.get_logger().error('[TOTG] ✗ Response has no timestamps - INVALID trajectory')
-                if callback:
-                    callback(None)
-                return
-
-            # ✅ Success: Update trajectory with time-parameterized result
-            trajectory.joint_trajectory = joint_traj
-            if callback:
-                callback(trajectory)
-
-        except Exception as e:
-            robot_controller.get_logger().error(f'[TOTG] ✗ Service call failed: {e}')
-            import traceback
-            robot_controller.get_logger().error(f'[TOTG] Traceback: {traceback.format_exc()}')
-            if callback:
-                callback(None)
-
-    future.add_done_callback(handle_ipp_response)
 
 def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling):
         robot_controller.safety_manager.force_update()
@@ -208,7 +144,17 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling)
             robot_controller.get_logger().info(f'[Cartesian Path] Path computed: {fraction * 100:.1f}% successful')
 
             if fraction < 0.9:
-                robot_controller.get_logger().warning(f'[Cartesian Path] Only {fraction * 100:.1f}% of path could be computed')
+                robot_controller.get_logger().error(f'[Cartesian Path] ✗ Only {fraction * 100:.1f}% of path could be computed')
+                robot_controller.get_logger().error(f'[Cartesian Path] Possible reasons:')
+                robot_controller.get_logger().error(f'[Cartesian Path]   1. Target unreachable from current position')
+                robot_controller.get_logger().error(f'[Cartesian Path]   2. Path goes through collision/obstacles')
+                robot_controller.get_logger().error(f'[Cartesian Path]   3. Joint limits would be exceeded')
+
+                # Log current position for debugging
+                if hasattr(robot_controller, 'prev_cartesian') and robot_controller.prev_cartesian is not None:
+                    curr = robot_controller.prev_cartesian
+                    robot_controller.get_logger().error(f'[Cartesian Path] Current: X={curr[0]:.1f} Y={curr[1]:.1f} Z={curr[2]:.1f} RX={curr[3]:.1f} RY={curr[4]:.1f} RZ={curr[5]:.1f}')
+
                 return
 
             # Get the computed trajectory
@@ -233,94 +179,6 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling)
         except Exception as e:
             robot_controller.get_logger().error(f'[Cartesian Path] Service call failed: {e}')
 
-def _send_trajectory_to_controller(robot_controller, joint_trajectory):
-        """Send trajectory DIRECTLY to the low-level controller for maximum smoothness.
-
-        Bypasses MoveIt's ExecuteTrajectory action which can enforce unwanted path constraints.
-        The controller's spline interpolation will smoothly blend through all waypoints.
-        """
-        if not robot_controller.execution_lock.acquire(blocking=False):
-            robot_controller.get_logger().warning('[Controller] Trajectory already executing, ignoring')
-            return
-
-        if robot_controller.is_executing:
-            robot_controller.get_logger().warning('[Controller] Previous trajectory still active')
-            robot_controller.execution_lock.release()
-            return
-
-        if not robot_controller.controller_client.wait_for_server(timeout_sec=1.0):
-            robot_controller.get_logger().error('[Controller] fairino5_controller not available')
-            robot_controller.execution_lock.release()
-            return
-
-        # ✅ CRITICAL VALIDATION: Check for timestamps
-        if len(joint_trajectory.points) == 0:
-            robot_controller.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
-            robot_controller.execution_lock.release()
-            return
-
-        has_valid_timestamps = False
-        for pt in joint_trajectory.points:
-            if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
-                has_valid_timestamps = True
-                break
-
-        if not has_valid_timestamps:
-            robot_controller.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
-            robot_controller.get_logger().error('[Controller] TOTG must have failed. Cannot execute.')
-            robot_controller.execution_lock.release()
-            return
-
-        robot_controller.is_executing = True
-
-        # Create controller goal with NO path tolerances
-        # Only enforce goal position (final point)
-
-        goal_tolerance = []
-        for name in joint_trajectory.joint_names:
-            tol = JointTolerance()
-            tol.name = name
-            tol.position = 0.01  # 0.01 rad final position tolerance
-            tol.velocity = 0.0  # Must stop at end
-            tol.acceleration = 0.0
-            goal_tolerance.append(tol)
-
-        controller_goal = FollowJointTrajectory.Goal()
-        controller_goal.trajectory = joint_trajectory
-        controller_goal.path_tolerance = []  # EMPTY = smooth blending, no stops
-        controller_goal.goal_tolerance = goal_tolerance
-
-        # Calculate trajectory duration and set VERY generous time tolerance
-        # This prevents spurious aborts when controller is slightly behind schedule
-        if len(joint_trajectory.points) > 0:
-            last_point = joint_trajectory.points[-1]
-            traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
-            # Tolerance = 2x trajectory duration or 5s minimum
-            # This gives controller plenty of room for execution delays
-            time_tolerance_sec = max(5.0, traj_duration_sec * 2.0)
-
-            # DEBUG: Log trajectory details
-            robot_controller.get_logger().info(
-                f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
-            robot_controller.get_logger().info(
-                f'[Controller] First point positions: {[round(p, 3) for p in joint_trajectory.points[0].positions]}')
-            robot_controller.get_logger().info(f'[Controller] Last point positions: {[round(p, 3) for p in last_point.positions]}')
-            robot_controller.get_logger().info(
-                f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
-            robot_controller.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
-        else:
-            time_tolerance_sec = 5.0
-
-        controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
-        controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
-
-        robot_controller.get_logger().info(
-            f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
-            f'(spline interpolation, no path tolerance, goal_time_tolerance={time_tolerance_sec:.1f}s)')
-
-        future = robot_controller.controller_client.send_goal_async(controller_goal)
-        robot_controller.active_execute_send_future = future
-        future.add_done_callback(lambda f: _controller_goal_response(robot_controller, f))
 
 
 def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN',
@@ -336,55 +194,36 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
         acc_scale: Acceleration scaling (0.0-1.0)
         planner_id: Ignored (kept for API compatibility, always uses cartesian path)
         tool_transform: Tool offset transform (optional)
+
+    Returns:
+        int: 0 on success, -1 if robot is busy, -2 if service unavailable, -3 if safety rejected
     """
     robot_controller.safety_manager.force_update()
 
     if robot_controller.is_executing:
         robot_controller.get_logger().warning('[MOVE] Previous trajectory still executing, ignoring new goal')
-        return
+        return -1
 
-    # Use a single-waypoint cartesian path (smoother than MoveGroup action)
-    send_path_cartesian(
+    # Get current cartesian position as starting point
+    current_cart = robot_controller.prev_cartesian
+    if current_cart is None or len(current_cart) < 3:
+        robot_controller.get_logger().error('[MOVE] No current position available, cannot plan path')
+        return -4
+
+    # Create 2-waypoint path: current position → target position
+    # This allows MoveIt to plan a smooth linear interpolation
+    waypoints_mm = [
+        [current_cart[0], current_cart[1], current_cart[2]],  # Start from current position
+        [x_mm, y_mm, z_mm]  # Move to target
+    ]
+
+    robot_controller.get_logger().info(f'[MOVE] Planning from [{current_cart[0]:.1f}, {current_cart[1]:.1f}, {current_cart[2]:.1f}] to [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}]')
+
+    return send_path_cartesian(
         robot_controller,
-        waypoints_mm=[[x_mm, y_mm, z_mm]],
+        waypoints_mm=waypoints_mm,
         rx=rx, ry=ry, rz=rz,
         vel_scaling=vel_scale,
         acc_scaling=acc_scale
     )
 
-def _controller_goal_response(robot_controller, future):
-    """Handle controller goal acceptance."""
-    robot_controller.active_execute_send_future = None
-    try:
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            robot_controller.get_logger().error('[Controller] Trajectory execution rejected by fairino5_controller')
-            robot_controller.active_controller_goal = None
-            robot_controller.is_executing = False
-            robot_controller.execution_lock.release()
-            return
-
-        robot_controller.get_logger().info('[Controller] Trajectory accepted by fairino5_controller')
-        robot_controller.active_controller_goal = goal_handle
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(lambda f: _controller_goal_result(robot_controller, f))
-    except Exception as e:
-        robot_controller.get_logger().error(f'[Controller] Goal response error: {e}')
-        robot_controller.is_executing = False
-        robot_controller.execution_lock.release()
-
-def _controller_goal_result(robot_controller, future):
-    """Handle controller goal completion."""
-    try:
-        result = future.result().result
-        if result.error_code == 0:
-            robot_controller.get_logger().info('[Controller] ✓ Trajectory execution succeeded!')
-        else:
-            robot_controller.get_logger().error(f'[Controller] Trajectory execution failed with error: {result.error_code}')
-    except Exception as e:
-        robot_controller.get_logger().error(f'[Controller] Result error: {e}')
-    finally:
-        robot_controller.active_controller_goal = None
-        robot_controller.is_executing = False
-        if robot_controller.execution_lock.locked():
-            robot_controller.execution_lock.release()

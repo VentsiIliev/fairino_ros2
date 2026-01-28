@@ -19,18 +19,13 @@ from action_msgs.msg import GoalStatusArray
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
 from status.robot_monitor import RobotMonitor
-
+from status.robot_status_publisher import RobotStatusPublisher
+from motion.motion_queue import MotionQueue
+from utils.workspace_extractor import _extract_workspace_from_urdf
 # ============ Safety Workspace Boundaries ============
 # Safety workspace will be extracted from mounting_surface link mesh geometry
 # Fallback values if mesh extraction fails
-SAFETY_WORKSPACE_FALLBACK = {
-    'x_min': -0.37,
-    'x_max': 0.5,
-    'y_min': -0.8,
-    'y_max': 0.6,
-    'z_min': 0.0,
-    'z_max': 1.1,
-}
+
 
 SAFETY_MARGIN = 0.01
 
@@ -61,6 +56,17 @@ class RobotController(Node):
         self.lock = Lock()
         self.execution_lock = Lock()
 
+        # Motion queue for sequential execution
+        self.motion_queue = MotionQueue(max_size=10)
+
+        # Status publisher - broadcasts execution state and queue size
+        self.status_publisher = RobotStatusPublisher(
+            node=self,
+            motion_queue=self.motion_queue,
+            topic_name='/robot_status',
+            publish_rate=10.0  # 10 Hz
+        )
+
         self.monitor = None
         self.tcp_loaded = False
         self.T_ee_link = None
@@ -69,7 +75,8 @@ class RobotController(Node):
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
         t1 = time.time()
-        workspace = self._extract_workspace_from_urdf()
+        workspace = _extract_workspace_from_urdf(self,max_retries=3,retry_delay=3)
+
         self.get_logger().info(f'[Init] Workspace extraction took {time.time() - t1:.2f}s')
 
         self.safety_manager = SafetyWallManager(
@@ -113,104 +120,6 @@ class RobotController(Node):
         if hasattr(self, '_safety_init_timer'):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
-
-    def _extract_workspace_from_urdf(self, max_retries=3, retry_delay=0.1):
-        """Extract workspace boundaries from mounting_surface collision mesh in URDF."""
-        import xml.etree.ElementTree as ET
-        import os
-        from ament_index_python.packages import get_package_share_directory
-        import time
-
-        for attempt in range(max_retries):
-            try:
-                robot_description = None
-
-                try:
-                    from rclpy.parameter import Parameter
-                    params = self.get_parameters_by_prefix('')
-                    if 'robot_description' in params:
-                        robot_description = params['robot_description']
-                except:
-                    pass
-
-                if not robot_description:
-                    try:
-                        from rcl_interfaces.srv import GetParameters
-                        client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
-                        if client.wait_for_service(timeout_sec=0.3):
-                            request = GetParameters.Request()
-                            request.names = ['robot_description']
-                            future = client.call_async(request)
-                            import rclpy
-                            rclpy.spin_until_future_complete(self, future, timeout_sec=0.3)
-                            if future.done():
-                                response = future.result()
-                                if response and len(response.values) > 0:
-                                    robot_description = response.values[0].string_value
-                    except Exception as e:
-                        self.get_logger().debug(f"Could not fetch from robot_state_publisher: {e}")
-
-                if not robot_description:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    else:
-                        self.get_logger().info("Using fallback workspace (robot_description not available yet)")
-                        return SAFETY_WORKSPACE_FALLBACK.copy()
-
-                root = ET.fromstring(robot_description)
-
-                for link in root.findall('.//link[@name="mounting_surface"]'):
-                    collision = link.find('collision')
-                    if collision is not None:
-                        mesh_elem = collision.find('.//mesh')
-                        if mesh_elem is not None:
-                            mesh_filename = mesh_elem.get('filename', '')
-
-                            if mesh_filename.startswith('package://'):
-                                package_path = mesh_filename.replace('package://', '')
-                                parts = package_path.split('/', 1)
-                                if len(parts) == 2:
-                                    package_name, relative_path = parts
-                                    try:
-                                        package_dir = get_package_share_directory(package_name)
-                                        mesh_path = os.path.join(package_dir, relative_path)
-
-                                        # Quick file existence check before loading
-                                        if not os.path.exists(mesh_path):
-                                            self.get_logger().info(f"Mesh file not found, using fallback workspace")
-                                            return SAFETY_WORKSPACE_FALLBACK.copy()
-
-                                        # Load mesh (this can be slow)
-                                        import trimesh
-                                        mesh = trimesh.load(mesh_path)
-                                        bounds = mesh.bounds
-
-                                        workspace = {
-                                            'x_min': float(bounds[0][0]),
-                                            'x_max': float(bounds[1][0]),
-                                            'y_min': float(bounds[0][1]),
-                                            'y_max': float(bounds[1][1]),
-                                            'z_min': float(bounds[0][2]),
-                                            'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
-                                        }
-
-                                        self.get_logger().info(f"✓ Extracted workspace from mesh")
-                                        return workspace
-                                    except Exception as e:
-                                        self.get_logger().debug(f"Mesh load failed: {e}")
-
-                self.get_logger().info("Using fallback workspace (mounting_surface not in URDF)")
-                return SAFETY_WORKSPACE_FALLBACK.copy()
-
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    self.get_logger().info(f"Using fallback workspace (URDF parsing failed)")
-
-        return SAFETY_WORKSPACE_FALLBACK.copy()
 
     def wait_for_monitor(self, timeout_sec=5.0):
         """Wait until RobotMonitor (TCP) is initialized."""
@@ -319,15 +228,15 @@ class RobotController(Node):
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN',
                             tool_transform=None):
         from motion.trajectory_planner import send_cartesian_goal
-        send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id, tool_transform)
+        return send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id, tool_transform)
 
     def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
         from motion.jog_controller import jog_cartesian
-        jog_cartesian(self, dx_mm, dy_mm, dz_mm, vel_scale, acc_scale)
+        return jog_cartesian(self, dx_mm, dy_mm, dz_mm, vel_scale, acc_scale)
 
     def send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
         from motion.trajectory_planner import send_path_cartesian
-        send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+        return send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
 
     def _controller_status_callback(self, msg):
         """Monitor controller action status and track active goals."""
@@ -377,39 +286,48 @@ class RobotController(Node):
 
     def stop_motion(self):
         """
-        Cancel all active motion goals (Controller only).
+        Cancel all active motion goals (Controller only) and clear queue.
 
         Returns:
-            bool: True if motion was stopped, False if no active goals
+            int: 0 if motion was stopped, -1 if no active goals
         """
         stopped = False
+        queue_cleared = 0
 
         # Cancel pending send operation
         if self.active_execute_send_future is not None:
-            self.get_logger().info('[STOP] Cancelling pending send operation...')
+            self.get_logger().info('[STOP] Cancelling pending trajectory submission...')
             try:
                 self.active_execute_send_future.cancel()
                 self.active_execute_send_future = None
                 stopped = True
+                self.get_logger().info('[STOP] ✓ Pending submission cancelled')
             except Exception as e:
                 self.get_logger().error(f'[STOP] Failed to cancel send future: {e}')
 
         # Cancel the actual hardware controller goal (fairino5_controller)
         if self.active_controller_goal is not None:
-            self.get_logger().info('[STOP] Cancelling active Controller goal (fairino5_controller)...')
+            self.get_logger().info('[STOP] Cancelling active controller trajectory...')
             try:
                 future = self.active_controller_goal.cancel_goal_async()
                 self.active_controller_goal = None
+                self.is_executing = False  # Clear execution flag
                 stopped = True
+                self.get_logger().warning('[STOP] ✓ Robot motion cancelled!')
             except Exception as e:
                 self.get_logger().error(f'[STOP] Failed to cancel controller goal: {e}')
 
-        if stopped:
-            self.get_logger().warning('[STOP] Robot motion cancelled!')
-        else:
-            self.get_logger().info('[STOP] No active goals to cancel')
+        # Clear motion queue
+        queue_cleared = self.motion_queue.clear()
+        if queue_cleared > 0:
+            self.get_logger().warning(f'[STOP] Cleared {queue_cleared} queued motions')
 
-        return stopped
+        if stopped or queue_cleared > 0:
+            self.get_logger().warning('[STOP] 🛑 Robot motion stopped and queue cleared')
+            return 0  # Success
+        else:
+            self.get_logger().info('[STOP] No active motion to cancel')
+            return -1  # No motion was active
 
     def is_motion_active(self):
         """Return True if any motion goal is active."""

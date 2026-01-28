@@ -26,6 +26,9 @@ cd "$WS_DIR"
 # This prevents incompatible moveit_msgs from loading
 echo -e "${YELLOW}Setting up environment...${NC}"
 
+# Set correct DISPLAY for RViz (Xorg runs on :1 not :0)
+export DISPLAY=:1
+
 # Clean any existing ROS environment to avoid ws_moveit2 contamination
 unset ROS_PACKAGE_PATH
 unset AMENT_PREFIX_PATH
