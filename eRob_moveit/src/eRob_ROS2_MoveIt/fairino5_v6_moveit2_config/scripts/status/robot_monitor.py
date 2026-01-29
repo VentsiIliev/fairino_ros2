@@ -6,6 +6,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from std_msgs.msg import Float64MultiArray
 from utils.transformation_utils import TransformationUtils
+import time
 
 
 class RobotMonitor:
@@ -20,7 +21,7 @@ class RobotMonitor:
     - /joint_acceleration (Float64MultiArray): Joint accelerations from C++ node
     """
 
-    def __init__(self, ros_node, velocity_window_size=5, acceleration_window_size=5, tcp_transform=None):
+    def __init__(self, ros_node, velocity_window_size=5, acceleration_window_size=5, tcp_transform=None, stable_update_rate_hz=50.0):
         """
         Initialize robot monitor.
 
@@ -29,8 +30,12 @@ class RobotMonitor:
             velocity_window_size: Window size for velocity smoothing
             acceleration_window_size: Window size for acceleration smoothing
             tcp_transform: 4x4 homogeneous transform from wrist3 to TCP (unused, kept for compatibility)
+            stable_update_rate_hz: Fixed rate for stable data sampling (default: 50Hz = 20ms)
         """
         self.node = ros_node
+        self.stable_update_rate_hz = stable_update_rate_hz
+        self.stable_update_callback = None
+        self.last_stable_update_time = 0.0
         self.prev_positions = None
         self.prev_velocities = None
         self.prev_time = None
@@ -52,9 +57,11 @@ class RobotMonitor:
             'efforts': np.zeros(6)                 # Joint efforts/torques [j1..j6] in N·m (currently unused)
         }
 
+        self.stable_data = self.latest_data.copy()
+        self._stable_timer = None
+
         self.T_tcp = tcp_transform if tcp_transform is not None else np.eye(4)
 
-        # Subscribe to Cartesian position from C++ node
         self.cart_pos_sub = self.node.create_subscription(
             PoseStamped,
             '/cartesian_position',
@@ -100,49 +107,56 @@ class RobotMonitor:
         self.node.get_logger().info("RobotMonitor: Subscribed to /joint_velocity")
         self.node.get_logger().info("RobotMonitor: Subscribed to /joint_acceleration")
 
-    def _cartesian_position_callback(self, msg: PoseStamped):
-        """
-        Callback for Cartesian position from C++ publisher.
+        if self.stable_update_rate_hz > 0:
+            self._start_stable_update_timer()
 
-        Args:
-            msg: PoseStamped with ee_link position (m) and orientation (quaternion)
-        """
-        # Extract ee_link position (convert m → mm)
+    def _start_stable_update_timer(self):
+        timer_period = 1.0 / self.stable_update_rate_hz
+        self._stable_timer = self.node.create_timer(timer_period, self._stable_update_callback)
+        self.node.get_logger().info(f"RobotMonitor: Started stable update timer at {self.stable_update_rate_hz}Hz ({timer_period*1000:.2f}ms)")
+
+    def _stable_update_callback(self):
+        current_time = time.time()
+
+        if self.last_stable_update_time > 0.0:
+            dt = (current_time - self.last_stable_update_time) * 1000.0
+            hz = 1000.0 / dt if dt > 0 else 0.0
+            self.node.get_logger().info(f"[STABLE_UPDATE] dt={dt:.2f}ms, Hz={hz:.1f}")
+
+        self.last_stable_update_time = current_time
+        self.stable_data = self.latest_data.copy()
+
+        if self.stable_update_callback is not None:
+            self.stable_update_callback(self.stable_data)
+
+
+    def _cartesian_position_callback(self, msg: PoseStamped):
+
         ee_pos = np.array([
             msg.pose.position.x,
             msg.pose.position.y,
             msg.pose.position.z
         ])
 
-        # Convert quaternion to rotation matrix
         q = msg.pose.orientation
         ee_rot_matrix = TransformationUtils.quaternion_to_matrix(
             np.array([q.x, q.y, q.z, q.w])
         )
 
-        # Build ee_link transform
         T_ee = np.eye(4)
         T_ee[:3, :3] = ee_rot_matrix
         T_ee[:3, 3] = ee_pos
 
-        # Apply TCP tool offset (ee_link → TCP)
         T_tcp = T_ee @ self.T_tcp
 
-        # Extract TCP position and orientation
-        tcp_pos = T_tcp[:3, 3] * 1000.0  # Convert to mm
+        tcp_pos = T_tcp[:3, 3] * 1000.0
         tcp_euler_deg = TransformationUtils.matrix_to_euler(T_tcp[:3, :3])
 
-        # Store as [x, y, z, rx, ry, rz]
         cart_pos = np.concatenate([tcp_pos, tcp_euler_deg])
         self.latest_data['cartesian'] = cart_pos
 
     def _cartesian_velocity_callback(self, msg: TwistStamped):
-        """
-        Callback for Cartesian velocity from C++ publisher.
 
-        Args:
-            msg: TwistStamped with linear velocity (m/s)
-        """
         cart_vel = np.array([
             msg.twist.linear.x * 1000.0,
             msg.twist.linear.y * 1000.0,
@@ -153,12 +167,7 @@ class RobotMonitor:
         self.latest_data['cart_vel_magnitude'] = np.linalg.norm(cart_vel)
 
     def _cartesian_acceleration_callback(self, msg: TwistStamped):
-        """
-        Callback for Cartesian acceleration from C++ publisher.
 
-        Args:
-            msg: TwistStamped with linear acceleration (m/s²)
-        """
         cart_acc = np.array([
             msg.twist.linear.x * 1000.0,
             msg.twist.linear.y * 1000.0,
@@ -169,24 +178,14 @@ class RobotMonitor:
         self.latest_data['cart_acc_magnitude'] = np.linalg.norm(cart_acc)
 
     def _joint_velocity_callback(self, msg: Float64MultiArray):
-        """
-        Callback for joint velocities from C++ publisher.
 
-        Args:
-            msg: Float64MultiArray with 6 joint velocities (rad/s)
-        """
         if len(msg.data) >= 6:
             joint_vel = np.array(msg.data[:6])
             self.latest_data['velocities'] = joint_vel
             self.latest_data['vel_magnitude'] = np.linalg.norm(joint_vel)
 
     def _joint_acceleration_callback(self, msg: Float64MultiArray):
-        """
-        Callback for joint accelerations from C++ publisher.
 
-        Args:
-            msg: Float64MultiArray with 6 joint accelerations (rad/s²)
-        """
         if len(msg.data) >= 6:
             joint_acc = np.array(msg.data[:6])
             self.latest_data['accelerations'] = joint_acc
@@ -333,6 +332,24 @@ class RobotMonitor:
             dict: Copy of latest data
         """
         return self.latest_data.copy()
+
+    def get_stable_data(self):
+        """
+        Get stable data sampled at fixed rate.
+
+        Returns:
+            dict: Copy of stable data (updated at stable_update_rate_hz)
+        """
+        return self.stable_data.copy()
+
+    def set_stable_update_callback(self, callback):
+        """
+        Register callback to be called at stable update rate.
+
+        Args:
+            callback: Function to call with stable_data as argument
+        """
+        self.stable_update_callback = callback
 
     def get_cartesian_position(self):
         """

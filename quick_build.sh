@@ -1,16 +1,13 @@
 #!/bin/bash
-# ROS2 Workspace Quick Build Script
-# Rebuilds without cleaning (faster for iterative development)
+# ROS2 Workspace Quick Build Script with Library Checks
 
-set -e  # Exit on any error
+set -e
 
-# Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Workspace directory
 WS_DIR="/home/ilv/ros2_ws"
 
 echo -e "${BLUE}========================================${NC}"
@@ -18,42 +15,36 @@ echo -e "${BLUE}ROS2 Workspace Quick Build${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Change to workspace directory
 cd "$WS_DIR"
 
-# Source ROS2 base installation
 echo -e "${YELLOW}Sourcing ROS2 Rolling...${NC}"
 source /opt/ros/rolling/setup.bash
 
-# CRITICAL: Remove ws_moveit2 from Python path to avoid incompatible moveit_msgs
 export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
 
-# Check if specific packages are provided as arguments
 if [ $# -eq 0 ]; then
-    # No arguments - build all packages with proper dependency order
     echo -e "${YELLOW}Building all packages...${NC}"
 
-    # Build fairino_msgs first (required by fairino5_v6_moveit2_config)
     echo -e "${BLUE}Step 1/2: Building fairino_msgs...${NC}"
-    colcon build --symlink-install --packages-select fairino_msgs --cmake-args -DCMAKE_BUILD_TYPE=Release
+    colcon build --symlink-install --packages-select fairino_msgs --cmake-args -DCMAKE_BUILD_TYPE=Release --event-handlers console_cohesion+
 
-    # Build remaining packages
     echo -e "${BLUE}Step 2/2: Building remaining packages...${NC}"
-    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-skip fairino_msgs --event-handlers console_cohesion+
 else
-    # Build specific packages
     echo -e "${YELLOW}Building packages: $@${NC}"
-    colcon build --symlink-install --packages-select "$@" --cmake-args -DCMAKE_BUILD_TYPE=Release
+    colcon build --symlink-install --packages-select "$@" --cmake-args -DCMAKE_BUILD_TYPE=Release --event-handlers console_cohesion+
 fi
 
-# Source the workspace
-echo ""
 echo -e "${YELLOW}Sourcing workspace...${NC}"
 source install/setup.bash
 
-echo ""
+# Optional: check critical libraries exist
+for lib in libfairino.so.2 libruckig.so libOgreMain.so.1.12.10; do
+    if ! find "$WS_DIR/install" -name "$lib" | grep -q .; then
+        echo -e "${YELLOW}⚠ Warning: $lib not found in workspace install${NC}"
+    fi
+done
+
 echo -e "${GREEN}✓ Build complete!${NC}"
-echo ""
 echo -e "${YELLOW}To use this workspace, run:${NC}"
 echo -e "  source $WS_DIR/install/setup.bash"
-echo ""

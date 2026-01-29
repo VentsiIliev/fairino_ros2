@@ -12,6 +12,9 @@ def generate_launch_description():
     # Xorg runs on :1 on this Ubuntu system
     os.environ['DISPLAY'] = os.environ.get('DISPLAY', ':1')
 
+    # Preserve LD_LIBRARY_PATH from environment
+    ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+
     # Build MoveIt config with only Pilz planner (disable CHOMP, OMPL, STOMP for faster startup)
     moveit_config = (
         MoveItConfigsBuilder("fairino5_v6_robot", package_name="fairino5_v6_moveit2_config")
@@ -41,6 +44,14 @@ def generate_launch_description():
     )
     demo_ld.add_action(set_display)
 
+    # Set LD_LIBRARY_PATH to ensure all nodes can find shared libraries
+    if ld_library_path:
+        set_ld_library_path = SetEnvironmentVariable(
+            name='LD_LIBRARY_PATH',
+            value=ld_library_path
+        )
+        demo_ld.add_action(set_ld_library_path)
+
     # Launch IPP helper node for TOTG trajectory optimization
     ipp_helper_node = Node(
         package='fairino5_v6_moveit2_config',
@@ -65,7 +76,24 @@ def generate_launch_description():
     )
     demo_ld.add_action(robot_state_publisher_node)
 
-    # Launch GUI as an ROS2 node with delay to wait for controllers
+    # # Launch GUI as an ROS2 node with delay to wait for controllers
+    # velocity_monitor_gui = Node(
+    #     package='fairino5_v6_moveit2_config',
+    #     executable='main.py',
+    #     name='velocity_monitor',
+    #     output='screen',
+    #     emulate_tty=True
+    # )
+    #
+    # # Delay GUI launch by 3 seconds (reduced from 8s - faster planner loading)
+    # delayed_gui = TimerAction(
+    #     period=10.0,
+    #     actions=[velocity_monitor_gui]
+    # )
+    #
+    # demo_ld.add_action(delayed_gui)
+
+    # Launch GUI as a ROS2 node (velocity monitor)
     velocity_monitor_gui = Node(
         package='fairino5_v6_moveit2_config',
         executable='main.py',
@@ -74,12 +102,17 @@ def generate_launch_description():
         emulate_tty=True
     )
 
-    # Delay GUI launch by 3 seconds (reduced from 8s - faster planner loading)
-    delayed_gui = TimerAction(
-        period=3.0,
-        actions=[velocity_monitor_gui]
-    )
+    # Launch GUI **only after robot_state_publisher_cpp node starts**
+    from launch.actions import RegisterEventHandler
+    from launch.event_handlers import OnProcessStart
 
-    demo_ld.add_action(delayed_gui)
+    demo_ld.add_action(
+        RegisterEventHandler(
+            OnProcessStart(
+                target_action=robot_state_publisher_node,
+                on_start=[velocity_monitor_gui]
+            )
+        )
+    )
 
     return demo_ld

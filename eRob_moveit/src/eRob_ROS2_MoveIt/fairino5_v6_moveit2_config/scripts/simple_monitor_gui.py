@@ -187,7 +187,7 @@ class SimpleMonitorGUI(QWidget):
             ms = avg_dt * 1000.0
             self.update_rate_label.setText(f'Update Rate: {hz:.1f} Hz ({ms:.1f} ms)')
 
-        data = self.robot_monitor.get_latest_data()
+        data = self.robot_monitor.get_stable_data()
         if data is None:
             return
         # Update Cartesian Position
@@ -251,10 +251,9 @@ def ros_spin_thread(node):
     rclpy.spin(node)
 def main():
     rclpy.init()
-    # Create ROS node
     ros_node = Node('simple_monitor_gui')
-    # Create RobotMonitor - subscribes to all topics from robot_state_publisher.cpp
-    robot_monitor = RobotMonitor(ros_node)
+
+    robot_monitor = RobotMonitor(ros_node, stable_update_rate_hz=50.0)
 
     # Create GUI first
     app = QApplication(sys.argv)

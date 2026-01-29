@@ -75,7 +75,7 @@ class RobotController(Node):
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
         t1 = time.time()
-        workspace = _extract_workspace_from_urdf(self,max_retries=3,retry_delay=3)
+        workspace = _extract_workspace_from_urdf(self,max_retries=60,retry_delay=2.0)
 
         self.get_logger().info(f'[Init] Workspace extraction took {time.time() - t1:.2f}s')
 
@@ -98,7 +98,7 @@ class RobotController(Node):
         self.ipp_client = self.create_client(ApplyIPP, '/apply_ipp')
 
         self.prev_cartesian = None
-        self.current_joint_state = None  # Store latest joint state for trajectory planning
+        self.current_joint_state = None  # Store the latest joint state for trajectory planning
 
         # Track active goal handles for motion cancellation
         self.active_execute_send_future = None
@@ -195,7 +195,7 @@ class RobotController(Node):
 
                 # Initialize with a composed transform (wrist3 → ee_link → TCP)
                 T_tcp_total = self.T_ee_link @ self.T_tool
-                self.monitor = RobotMonitor(ros_node=self, tcp_transform=T_tcp_total)
+                self.monitor = RobotMonitor(ros_node=self, tcp_transform=T_tcp_total, stable_update_rate_hz=50.0)
                 self.tcp_loaded = True
 
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")

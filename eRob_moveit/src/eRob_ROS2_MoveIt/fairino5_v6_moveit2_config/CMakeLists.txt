@@ -13,6 +13,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
+
 # Generate custom service
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ApplyIPP.srv"
@@ -27,6 +28,7 @@ install(PROGRAMS
   scripts/robot_controller.py
   scripts/rest_server.py
   scripts/enums.py
+  scripts/fairino_ros2_robot.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -98,6 +100,13 @@ ament_target_dependencies(ipp_helper
 # Link the generated service types
 target_link_libraries(ipp_helper ${cpp_typesupport_target})
 
+# Set RPATH to find libraries at runtime
+set_target_properties(ipp_helper PROPERTIES
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/../../../lib:$ORIGIN/../../../../fairino_msgs/lib"
+  BUILD_WITH_INSTALL_RPATH FALSE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
+
 # Install the executable
 install(TARGETS ipp_helper DESTINATION lib/${PROJECT_NAME})
 
@@ -123,6 +132,13 @@ ament_target_dependencies(robot_state_publisher
   tf2
   tf2_geometry_msgs
   fairino_msgs
+)
+
+# Set RPATH to find libraries at runtime
+set_target_properties(robot_state_publisher PROPERTIES
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/../../../lib:$ORIGIN/../../../../fairino_msgs/lib"
+  BUILD_WITH_INSTALL_RPATH FALSE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
 )
 
 install(TARGETS robot_state_publisher DESTINATION lib/${PROJECT_NAME})

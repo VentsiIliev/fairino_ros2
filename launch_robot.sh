@@ -13,65 +13,57 @@ NC='\033[0m' # No Color
 
 # Workspace directory
 WS_DIR="/home/ilv/ros2_ws"
+PKG_NAME="fairino5_v6_moveit2_config"
+LAUNCH_FILE="demo.launch.py"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}ROS2 Robot Launch Script${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Change to workspace directory
 cd "$WS_DIR"
 
-# CRITICAL: Unset ws_moveit2 paths BEFORE sourcing anything
-# This prevents incompatible moveit_msgs from loading
 echo -e "${YELLOW}Setting up environment...${NC}"
 
-# Set correct DISPLAY for RViz (Xorg runs on :1 not :0)
+# Set DISPLAY for RViz
 export DISPLAY=:1
 
-# Clean any existing ROS environment to avoid ws_moveit2 contamination
-unset ROS_PACKAGE_PATH
-unset AMENT_PREFIX_PATH
-unset PYTHONPATH
-unset LD_LIBRARY_PATH
-unset CMAKE_PREFIX_PATH
+# Clean incompatible paths (optional)
+for VAR in ROS_PACKAGE_PATH AMENT_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH CMAKE_PREFIX_PATH; do
+    export $VAR=$(echo ${!VAR} | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+done
 
-# Now source ROS2 with clean environment
+# Source ROS2 and workspace
 source /opt/ros/rolling/setup.bash
-
-# Additional safety: Strip any ws_moveit2 that might have leaked in
-export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
-export AMENT_PREFIX_PATH=$(echo $AMENT_PREFIX_PATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
-export CMAKE_PREFIX_PATH=$(echo $CMAKE_PREFIX_PATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
-
 source install/setup.bash
 
-# Verify critical library exists
+# NOTE: LD_LIBRARY_PATH is automatically configured by setup.bash
+# Explicitly export it to ensure child processes inherit it
+export LD_LIBRARY_PATH
+
+# Verify critical libraries
 if [ ! -f "$WS_DIR/install/fairino_hardware/lib/libfairino.so.2" ]; then
     echo -e "${RED}✗ Error: libfairino.so.2 not found!${NC}"
-    echo -e "${YELLOW}Please run ./clean_build.sh first${NC}"
+    echo -e "${YELLOW}Please run ./quick_build.sh first${NC}"
+    exit 1
+fi
+
+# Full path to launch file
+FULL_LAUNCH_PATH="$WS_DIR/install/$PKG_NAME/share/$PKG_NAME/launch/$LAUNCH_FILE"
+if [ ! -f "$FULL_LAUNCH_PATH" ]; then
+    echo -e "${RED}✗ Error: Launch file '$LAUNCH_FILE' not found!${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}✓ Environment ready${NC}"
+echo -e "${YELLOW}Launching: $FULL_LAUNCH_PATH${NC}"
 echo ""
 
-# Parse command line arguments
-LAUNCH_FILE="demo.launch.py"
-EXTRA_ARGS=""
-
-if [ $# -gt 0 ]; then
-    LAUNCH_FILE="$1"
-    shift
-    EXTRA_ARGS="$@"
-fi
-
-# Launch
-echo -e "${YELLOW}Launching: ${LAUNCH_FILE} ${EXTRA_ARGS}${NC}"
-echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Initial startup may take ~40 seconds${NC}"
 echo -e "${BLUE}  (Processing collision geometry)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-ros2 launch fairino5_v6_moveit2_config "$LAUNCH_FILE" $EXTRA_ARGS
+
+# Launch ROS2 (environment already configured by setup.bash)
+ros2 launch "$FULL_LAUNCH_PATH"
