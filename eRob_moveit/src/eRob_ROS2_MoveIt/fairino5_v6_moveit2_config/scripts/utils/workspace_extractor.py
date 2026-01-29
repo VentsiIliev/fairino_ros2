@@ -13,39 +13,40 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
     import os
     from ament_index_python.packages import get_package_share_directory
     import time
+    from std_msgs.msg import String
 
     for attempt in range(max_retries):
         try:
             robot_description = None
 
+            # Subscribe to /robot_description topic (the standard ROS2 way)
             try:
-                from rclpy.parameter import Parameter
-                params = robot_controller.get_parameters_by_prefix('')
-                if 'robot_description' in params:
-                    robot_description = params['robot_description']
-            except:
-                pass
+                from rclpy.qos import QoSProfile, DurabilityPolicy
+                qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
+                future_msg = None
+
+                def desc_callback(msg):
+                    nonlocal future_msg
+                    future_msg = msg.data
+
+                sub = robot_controller.create_subscription(String, '/robot_description', desc_callback, qos)
+
+                # Wait for message with timeout
+                wait_start = time.time()
+                while future_msg is None and (time.time() - wait_start) < retry_delay:
+                    import rclpy
+                    rclpy.spin_once(robot_controller, timeout_sec=0.05)
+
+                robot_controller.destroy_subscription(sub)
+                robot_description = future_msg
+
+            except Exception as e:
+                robot_controller.get_logger().debug(f"Could not subscribe to /robot_description: {e}")
 
             if not robot_description:
                 robot_controller.get_logger().info(
                     f"Retry {attempt + 1}/{max_retries}: robot_description not available yet...")
-                try:
-                    from rcl_interfaces.srv import GetParameters
-                    client = robot_controller.create_client(GetParameters, '/robot_state_publisher/get_parameters')
-                    if client.wait_for_service(timeout_sec=0.3):
-                        request = GetParameters.Request()
-                        request.names = ['robot_description']
-                        future = client.call_async(request)
-                        import rclpy
-                        rclpy.spin_until_future_complete(robot_controller, future, timeout_sec=0.3)
-                        if future.done():
-                            response = future.result()
-                            if response and len(response.values) > 0:
-                                robot_description = response.values[0].string_value
-                except Exception as e:
-                    robot_controller.get_logger().debug(f"Could not fetch from robot_state_publisher: {e}")
-
-            if not robot_description:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue

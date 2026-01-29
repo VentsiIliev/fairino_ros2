@@ -121,7 +121,7 @@ class RobotMonitor:
         if self.last_stable_update_time > 0.0:
             dt = (current_time - self.last_stable_update_time) * 1000.0
             hz = 1000.0 / dt if dt > 0 else 0.0
-            self.node.get_logger().info(f"[STABLE_UPDATE] dt={dt:.2f}ms, Hz={hz:.1f}")
+            # self.node.get_logger().info(f"[STABLE_UPDATE] dt={dt:.2f}ms, Hz={hz:.1f}")
 
         self.last_stable_update_time = current_time
         self.stable_data = self.latest_data.copy()
