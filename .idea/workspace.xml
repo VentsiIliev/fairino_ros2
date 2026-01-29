@@ -6,9 +6,8 @@
   <component name="ChangeListManager">
     <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment=".broken">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/config/fairino5_v6_robot.urdf.xacro" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/config/fairino5_v6_robot.urdf.xacro" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status/robot_monitor.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status/robot_monitor.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/utils/workspace_extractor.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/utils/workspace_extractor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/trajectory_planner.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/trajectory_planner.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fairino_hardware/src/fairino_hardware_interface.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/fairino_hardware/src/fairino_hardware_interface.cpp" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -131,6 +130,7 @@
       <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/pl25488/config" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/data" />
       <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status" />
       <recent name="$PROJECT_DIR$/src/fairino_description/meshes" />
       <recent name="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts" />
@@ -233,7 +233,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="pytest in ttest_cam_feed_server.py" type="tests" factoryName="py.test" temporary="true" nameIsGenerated="true">
+    <configuration name="pytest in /home/ilv/ros2_ws/ttest_cam_feed_server.py" type="tests" factoryName="py.test" temporary="true" nameIsGenerated="true">
       <module name="ros2_ws" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -255,7 +255,7 @@
     <recent_temporary>
       <list>
         <item itemvalue="Python.ttest_cam_feed_server" />
-        <item itemvalue="Python tests.pytest in ttest_cam_feed_server.py" />
+        <item itemvalue="Python tests.pytest in /home/ilv/ros2_ws/ttest_cam_feed_server.py" />
         <item itemvalue="Python.rest_server" />
         <item itemvalue="Python.fairino_bridge_server" />
         <item itemvalue="Python.ttest_rviz" />
@@ -331,7 +331,7 @@
       <workItem from="1769666183125" duration="10972000" />
       <workItem from="1769677297775" duration="386000" />
       <workItem from="1769677804798" duration="1242000" />
-      <workItem from="1769679298165" duration="2405000" />
+      <workItem from="1769679298165" duration="20109000" />
     </task>
     <task id="LOCAL-00001" summary="first commit">
       <option name="closed" value="true" />
@@ -485,7 +485,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769676491456</updated>
     </task>
-    <option name="localTasksCounter" value="20" />
+    <task id="LOCAL-00020" summary=".broken">
+      <option name="closed" value="true" />
+      <created>1769681735616</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1769681735616</updated>
+    </task>
+    <option name="localTasksCounter" value="21" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
