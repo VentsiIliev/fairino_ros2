@@ -224,7 +224,7 @@ def _execute_path_internal(robot_controller, waypoints_mm, rx, ry, rz, vel_scali
     request.waypoints = waypoints
     request.max_step = max_step
     request.jump_threshold = 0.0  # Disabled - no jump checking
-    request.avoid_collisions = False  # Re-enabled - safety walls removed from planning scene
+    request.avoid_collisions = True  # Re-enabled - safety walls removed from planning scene
     # Set velocity and acceleration scaling factors for TOTG
     request.max_velocity_scaling_factor = vel_scaling
     request.max_acceleration_scaling_factor = acc_scaling

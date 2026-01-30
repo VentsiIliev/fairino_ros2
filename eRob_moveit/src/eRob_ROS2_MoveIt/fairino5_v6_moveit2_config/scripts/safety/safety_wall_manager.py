@@ -217,19 +217,24 @@ class SafetyWallManager:
         ws = self.safety_workspace
         collision_objects = []
 
+        # Calculate workspace centers from actual bounds
+        x_center = (ws['x_min'] + ws['x_max']) / 2
+        y_center = (ws['y_min'] + ws['y_max']) / 2
+        z_center = (ws['z_min'] + ws['z_max']) / 2
+
         # Define 6 walls (name, center_x, center_y, center_z, size_x, size_y, size_z)
         walls = [
-            ('wall_x_min', ws['x_min'], 0.0, (ws['z_max'] + ws['z_min']) / 2,
+            ('wall_x_min', ws['x_min'], y_center, z_center,
              0.01, ws['y_max'] - ws['y_min'], ws['z_max'] - ws['z_min']),
-            ('wall_x_max', ws['x_max'], 0.0, (ws['z_max'] + ws['z_min']) / 2,
+            ('wall_x_max', ws['x_max'], y_center, z_center,
              0.01, ws['y_max'] - ws['y_min'], ws['z_max'] - ws['z_min']),
-            ('wall_y_min', 0.0, ws['y_min'], (ws['z_max'] + ws['z_min']) / 2,
+            ('wall_y_min', x_center, ws['y_min'], z_center,
              ws['x_max'] - ws['x_min'], 0.01, ws['z_max'] - ws['z_min']),
-            ('wall_y_max', 0.0, ws['y_max'], (ws['z_max'] + ws['z_min']) / 2,
+            ('wall_y_max', x_center, ws['y_max'], z_center,
              ws['x_max'] - ws['x_min'], 0.01, ws['z_max'] - ws['z_min']),
-            ('wall_z_min', 0.0, 0.0, ws['z_min'],
+            ('wall_z_min', x_center, y_center, ws['z_min'],
              ws['x_max'] - ws['x_min'], ws['y_max'] - ws['y_min'], 0.01),
-            ('wall_z_max', 0.0, 0.0, ws['z_max'],
+            ('wall_z_max', x_center, y_center, ws['z_max'],
              ws['x_max'] - ws['x_min'], ws['y_max'] - ws['y_min'], 0.01),
         ]
 
@@ -277,19 +282,24 @@ class SafetyWallManager:
 
         ws = self.safety_workspace
 
+        # Calculate workspace centers from actual bounds
+        x_center = (ws['x_min'] + ws['x_max']) / 2
+        y_center = (ws['y_min'] + ws['y_max']) / 2
+        z_center = (ws['z_min'] + ws['z_max']) / 2
+
         # Define 6 walls (name, center_x, center_y, center_z, size_x, size_y, size_z)
         walls = [
-            ('wall_x_min', ws['x_min'], 0.0, (ws['z_max']+ws['z_min'])/2,
+            ('wall_x_min', ws['x_min'], y_center, z_center,
              0.01, ws['y_max']-ws['y_min'], ws['z_max']-ws['z_min']),
-            ('wall_x_max', ws['x_max'], 0.0, (ws['z_max']+ws['z_min'])/2,
+            ('wall_x_max', ws['x_max'], y_center, z_center,
              0.01, ws['y_max']-ws['y_min'], ws['z_max']-ws['z_min']),
-            ('wall_y_min', 0.0, ws['y_min'], (ws['z_max']+ws['z_min'])/2,
+            ('wall_y_min', x_center, ws['y_min'], z_center,
              ws['x_max']-ws['x_min'], 0.01, ws['z_max']-ws['z_min']),
-            ('wall_y_max', 0.0, ws['y_max'], (ws['z_max']+ws['z_min'])/2,
+            ('wall_y_max', x_center, ws['y_max'], z_center,
              ws['x_max']-ws['x_min'], 0.01, ws['z_max']-ws['z_min']),
-            ('wall_z_min', 0.0, 0.0, ws['z_min'],
+            ('wall_z_min', x_center, y_center, ws['z_min'],
              ws['x_max']-ws['x_min'], ws['y_max']-ws['y_min'], 0.01),
-            ('wall_z_max', 0.0, 0.0, ws['z_max'],
+            ('wall_z_max', x_center, y_center, ws['z_max'],
              ws['x_max']-ws['x_min'], ws['y_max']-ws['y_min'], 0.01),
         ]
 
