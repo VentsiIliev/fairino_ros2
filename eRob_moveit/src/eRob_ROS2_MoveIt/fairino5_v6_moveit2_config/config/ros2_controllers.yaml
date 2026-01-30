@@ -1,7 +1,7 @@
 # This config file is used by ros2_control
 controller_manager:
   ros__parameters:
-    update_rate: 100  # Hz
+    update_rate: 200  # Hz
     status_publish_rate: 50.0  # Added to enable joint state publishing
 
     joint_state_broadcaster:
@@ -25,6 +25,7 @@ fairino5_controller:
     state_interfaces:
       - position
       - velocity
+      - acceleration
 
     # Spline interpolation for smooth trajectory execution
     interpolation_method: "splines"

@@ -14,6 +14,7 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0          # Symmetric deceleration for smooth stops
+    has_jerk_limits: true            # REQUIRED for MoveIt Ruckig to use jerk limits
     max_jerk: 50.0                   # Jerk limiting enables S-curve trajectories
     max_effort: 0.25
   j2:
@@ -22,6 +23,7 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
+    has_jerk_limits: true
     max_jerk: 50.0
     max_effort: 0.25
   j3:
@@ -30,6 +32,7 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
+    has_jerk_limits: true
     max_jerk: 50.0
     max_effort: 0.25
   j4:
@@ -38,6 +41,7 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
+    has_jerk_limits: true
     max_jerk: 60.0                   # Higher jerk limit for wrist joints
     max_effort: 0.20
   j5:
@@ -46,6 +50,7 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
+    has_jerk_limits: true
     max_jerk: 60.0
     max_effort: 0.20
   j6:
@@ -54,5 +59,6 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
+    has_jerk_limits: true
     max_jerk: 70.0                   # Highest jerk limit for end effector
     max_effort: 0.15

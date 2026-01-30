@@ -3,8 +3,17 @@ from moveit_msgs.srv import GetCartesianPath, GetPositionFK
 from moveit_msgs.msg import RobotState
 from utils.transformation_utils import TransformationUtils
 from .trajectory_executor import _send_trajectory_to_controller
-from .trajectory_optimization import apply_ipp_totg
+from .trajectory_optimization import apply_ipp_totg, apply_ruckig_service
 import numpy as np
+
+# ============ Trajectory Parameterization Selection ============
+# Options:
+#   "RUCKIG"  - Use Ruckig C++ service (jerk-limited, requires ruckig_helper node)
+#   "TOTG"    - Use TOTG C++ service (time-optimal, requires ipp_helper node)
+#
+# Ruckig provides smoother motion with S-curve profiles (3rd order)
+# TOTG is faster but has trapezoidal velocity profiles (2nd order)
+TIME_PARAMETERIZATION = "TOTG"
 
 
 def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
@@ -224,12 +233,12 @@ def _execute_path_internal(robot_controller, waypoints_mm, rx, ry, rz, vel_scali
     request.waypoints = waypoints
     request.max_step = max_step
     request.jump_threshold = 0.0  # Disabled - no jump checking
-    request.avoid_collisions = True  # Re-enabled - safety walls removed from planning scene
-    # Set velocity and acceleration scaling factors for TOTG
+    request.avoid_collisions = True  # Re-enabled - safety walls removed from a planning scene
+
     request.max_velocity_scaling_factor = vel_scaling
     request.max_acceleration_scaling_factor = acc_scaling
 
-    # ✅ CRITICAL FIX: Set start state to robot's CURRENT position
+    # ✅ CRITICAL FIX: Set start state to the robot's CURRENT position
     # Without this, MoveIt uses an empty/default state causing trajectory mismatch
     if hasattr(robot_controller, 'current_joint_state') and robot_controller.current_joint_state is not None:
         from sensor_msgs.msg import JointState
@@ -287,12 +296,13 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling)
 
         robot_controller.get_logger().info(
             f'[Cartesian Path] Computed trajectory has {len(trajectory.joint_trajectory.points)} points')
-
-        # ✅ CRITICAL: Apply TOTG for time-optimal velocity profile (ASYNC)
+        # log the full trajectory for debugging purposes
+        robot_controller.get_logger().info(f'[Cartesian Path] Full trajectory: {trajectory}')
+        # ✅ CRITICAL: Apply time parameterization for smooth velocity profile
         # This ensures smooth continuous motion without stops at waypoints
-        def on_totg_done(result_trajectory):
+        def on_time_param_done(result_trajectory):
             if result_trajectory is None:
-                robot_controller.get_logger().error('[Cartesian Path] ✗ TOTG failed - aborting execution')
+                robot_controller.get_logger().error('[Cartesian Path] Time parameterization failed - aborting execution')
                 robot_controller.get_logger().error(
                     '[Cartesian Path] Cannot execute trajectory without time parameterization')
                 return
@@ -300,7 +310,11 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling)
             # Send trajectory directly to the controller
             _send_trajectory_to_controller(robot_controller, result_trajectory.joint_trajectory)
 
-        apply_ipp_totg(robot_controller, trajectory, vel_scaling, acc_scaling, callback=on_totg_done)
+        # Select time parameterization method based on TIME_PARAMETERIZATION setting
+        if TIME_PARAMETERIZATION == "RUCKIG":
+            apply_ruckig_service(robot_controller, trajectory, vel_scaling, acc_scaling, callback=on_time_param_done)
+        else:  # "TOTG" or any other value
+            apply_ipp_totg(robot_controller, trajectory, vel_scaling, acc_scaling, callback=on_time_param_done)
 
     except Exception as e:
         robot_controller.get_logger().error(f'[Cartesian Path] Service call failed: {e}')

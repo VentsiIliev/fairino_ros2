@@ -38,9 +38,10 @@ SYMBOLIC)
 
 add_executable(ros2_cmd_server ${SRC_DIR})
 add_executable(srv_test_client ${EXP_SRC_DIR})
+add_executable(digital_io_node ./src/digital_io_node.cpp)
 add_library(
-  fairino_hardware 
-  SHARED 
+  fairino_hardware
+  SHARED
   ./src/fairino_hardware_interface.cpp
 )
 
@@ -55,10 +56,13 @@ $<INSTALL_INTERFACE:include/fairino_hardware>
 )
 target_link_libraries(ros2_cmd_server ${CMAKE_CURRENT_SOURCE_DIR}/libfairino/lib/libfairino.so)
 target_link_libraries(fairino_hardware ${CMAKE_CURRENT_SOURCE_DIR}/libfairino/lib/libfairino.so)
+target_include_directories(digital_io_node PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/)
+target_link_libraries(digital_io_node ${CMAKE_CURRENT_SOURCE_DIR}/libfairino/lib/libfairino.so)
 
 #add dependencies
 ament_target_dependencies(ros2_cmd_server rclcpp fairino_msgs)
 ament_target_dependencies(srv_test_client rclcpp fairino_msgs)
+ament_target_dependencies(digital_io_node rclcpp std_msgs)
 ament_target_dependencies(fairino_hardware 
   hardware_interface
   pluginlib
@@ -74,6 +78,11 @@ pluginlib_export_plugin_description_file(hardware_interface fairino_hardware.xml
 #install all files
 #command server
 install(TARGETS ros2_cmd_server
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+#digital io node
+install(TARGETS digital_io_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

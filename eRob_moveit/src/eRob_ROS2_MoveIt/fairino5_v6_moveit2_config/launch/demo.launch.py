@@ -52,7 +52,7 @@ def generate_launch_description():
         )
         demo_ld.add_action(set_ld_library_path)
 
-    # Launch IPP helper node for TOTG trajectory optimization
+    # Launch IPP helper node for TOTG trajectory optimization (2nd order)
     ipp_helper_node = Node(
         package='fairino5_v6_moveit2_config',
         executable='ipp_helper',
@@ -66,6 +66,21 @@ def generate_launch_description():
         ],
     )
     demo_ld.add_action(ipp_helper_node)
+
+    # Launch Ruckig helper node for jerk-limited trajectory smoothing (3rd order)
+    ruckig_helper_node = Node(
+        package='fairino5_v6_moveit2_config',
+        executable='ruckig_helper',
+        name='ruckig_helper',
+        output='screen',
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+        ],
+    )
+    demo_ld.add_action(ruckig_helper_node)
 
     # Launch C++ robot state publisher for actual TCP position from robot
     robot_state_publisher_node = Node(

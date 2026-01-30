@@ -164,12 +164,15 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
                                     )
 
                                     # Apply offset to mesh bounds
+                                    # the bottom wall goes below the surface so need to account for the surface thickness
+                                    # for now will set thickness to 50mm or 0.05m
+                                    surface_thickness = 0.05
                                     workspace = {
                                         'x_min': float(bounds[0][0] + total_offset[0]),
                                         'x_max': float(bounds[1][0] + total_offset[0]),
                                         'y_min': float(bounds[0][1] + total_offset[1]),
                                         'y_max': float(bounds[1][1] + total_offset[1]),
-                                        'z_min': float(bounds[0][2] + total_offset[2]),
+                                        'z_min': float(bounds[0][2] + total_offset[2])+surface_thickness,
                                         'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
                                     }
 

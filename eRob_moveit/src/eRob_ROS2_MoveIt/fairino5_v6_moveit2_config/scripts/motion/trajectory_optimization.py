@@ -1,5 +1,341 @@
 # Time Optimal Trajectory Generation
 from fairino5_v6_moveit2_config.srv import ApplyIPP
+from trajectory_msgs.msg import JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
+import yaml
+import os
+
+# Cache for loaded joint limits
+_joint_limits_cache = None
+
+
+def _load_joint_limits_from_config():
+    """Load joint limits from joint_limits.yaml config file."""
+    global _joint_limits_cache
+
+    if _joint_limits_cache is not None:
+        return _joint_limits_cache
+
+    # Try to find the config file
+    config_paths = [
+        # Source path
+        os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'joint_limits.yaml'),
+        # Install path (via ament)
+    ]
+
+    # Try ament_index if available
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        pkg_dir = get_package_share_directory('fairino5_v6_moveit2_config')
+        config_paths.insert(0, os.path.join(pkg_dir, 'config', 'joint_limits.yaml'))
+    except Exception:
+        pass
+
+    for config_path in config_paths:
+        config_path = os.path.normpath(config_path)
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                joint_limits = config.get('joint_limits', {})
+                joint_names = ['j1', 'j2', 'j3', 'j4', 'j5', 'j6']
+
+                limits = {
+                    'max_velocity': [],
+                    'max_acceleration': [],
+                    'max_jerk': [],
+                    'default_vel_scaling': config.get('default_velocity_scaling_factor', 0.6),
+                    'default_acc_scaling': config.get('default_acceleration_scaling_factor', 0.4),
+                }
+
+                for joint in joint_names:
+                    if joint in joint_limits:
+                        jl = joint_limits[joint]
+                        limits['max_velocity'].append(jl.get('max_velocity', 3.14))
+                        limits['max_acceleration'].append(jl.get('max_acceleration', 10.0))
+                        limits['max_jerk'].append(jl.get('max_jerk', 50.0))
+                    else:
+                        # Fallback defaults
+                        limits['max_velocity'].append(3.14)
+                        limits['max_acceleration'].append(10.0)
+                        limits['max_jerk'].append(50.0)
+
+                _joint_limits_cache = limits
+                return limits
+
+            except Exception as e:
+                print(f"[Ruckig] Warning: Could not load {config_path}: {e}")
+
+    # Fallback if no config found
+    _joint_limits_cache = {
+        'max_velocity': [3.14, 3.14, 3.14, 3.14, 3.14, 3.14],
+        'max_acceleration': [10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+        'max_jerk': [50.0, 50.0, 50.0, 50.0, 60.0, 70.0],
+        'default_vel_scaling': 0.6,
+        'default_acc_scaling': 0.4,
+    }
+    return _joint_limits_cache
+
+
+def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=None, jerk_scaling=0.5, callback=None):
+    """
+    Apply Ruckig time-optimal jerk-limited trajectory parameterization.
+
+    This is a drop-in replacement for apply_ipp_totg with smoother motion
+    due to jerk limiting (3rd order vs 2nd order).
+
+    Args:
+        robot_controller: ROS2 node for logging
+        trajectory: RobotTrajectory to time-parameterize
+        vel_scaling: Velocity scaling factor [0.0-1.0], None = use config default
+        acc_scaling: Acceleration scaling factor [0.0-1.0], None = use config default
+        jerk_scaling: Jerk scaling factor [0.0-1.0]
+        callback: Function to call with (trajectory_or_None) when done
+    """
+    try:
+        from ruckig import InputParameter, OutputParameter, Result, Ruckig
+    except ImportError:
+        robot_controller.get_logger().error('[Ruckig] ruckig not installed! Run: pip install ruckig')
+        if callback:
+            callback(None)
+        return
+
+    # Load limits from config
+    limits = _load_joint_limits_from_config()
+
+    # Use config defaults if not specified
+    if vel_scaling is None:
+        vel_scaling = limits['default_vel_scaling']
+    if acc_scaling is None:
+        acc_scaling = limits['default_acc_scaling']
+
+    robot_controller.get_logger().info(
+        f'[Ruckig] Applying jerk-limited time parameterization (vel={vel_scaling}, acc={acc_scaling}, jerk={jerk_scaling})')
+    robot_controller.get_logger().info(
+        f'[Ruckig] Limits from config: max_vel={limits["max_velocity"]}, max_acc={limits["max_acceleration"]}, max_jerk={limits["max_jerk"]}')
+
+    joint_traj = trajectory.joint_trajectory
+    num_joints = len(joint_traj.joint_names)
+    num_points = len(joint_traj.points)
+
+    if num_points < 2:
+        robot_controller.get_logger().warning('[Ruckig] Trajectory has < 2 points, nothing to parameterize')
+        if callback:
+            callback(trajectory)
+        return
+
+    # Apply scaling to limits from config
+    max_vel = [v * vel_scaling for v in limits['max_velocity'][:num_joints]]
+    max_acc = [a * acc_scaling for a in limits['max_acceleration'][:num_joints]]
+    max_jerk = [j * jerk_scaling for j in limits['max_jerk'][:num_joints]]
+
+    robot_controller.get_logger().info(f'[Ruckig] Processing {num_points} waypoints for {num_joints} joints')
+
+    # Build new trajectory with proper time parameterization
+    new_points = []
+    current_time = 0.0
+    sample_dt = 0.008  # 8ms sampling (125 Hz) - good for smooth motion
+
+    for i in range(num_points - 1):
+        start_pt = joint_traj.points[i]
+        end_pt = joint_traj.points[i + 1]
+
+        # Setup Ruckig for this segment
+        otg = Ruckig(num_joints)
+        inp = InputParameter(num_joints)
+        out = OutputParameter(num_joints)
+
+        # Current state
+        inp.current_position = list(start_pt.positions[:num_joints])
+        if start_pt.velocities and len(start_pt.velocities) >= num_joints:
+            inp.current_velocity = list(start_pt.velocities[:num_joints])
+        else:
+            inp.current_velocity = [0.0] * num_joints
+        if start_pt.accelerations and len(start_pt.accelerations) >= num_joints:
+            inp.current_acceleration = list(start_pt.accelerations[:num_joints])
+        else:
+            inp.current_acceleration = [0.0] * num_joints
+
+        # Target state
+        inp.target_position = list(end_pt.positions[:num_joints])
+        if end_pt.velocities and len(end_pt.velocities) >= num_joints:
+            inp.target_velocity = list(end_pt.velocities[:num_joints])
+        else:
+            # For intermediate waypoints, allow non-zero velocity for smooth blending
+            if i < num_points - 2:
+                inp.target_velocity = [0.0] * num_joints  # Will be optimized by Ruckig
+            else:
+                inp.target_velocity = [0.0] * num_joints  # Final point: stop
+        inp.target_acceleration = [0.0] * num_joints
+
+        # Limits
+        inp.max_velocity = max_vel
+        inp.max_acceleration = max_acc
+        inp.max_jerk = max_jerk
+
+        # Calculate time-optimal trajectory for this segment
+        result = otg.calculate(inp, out)
+
+        if result == Result.ErrorInvalidInput:
+            robot_controller.get_logger().error(f'[Ruckig] Invalid input at segment {i}')
+            if callback:
+                callback(None)
+            return
+
+        # Get segment duration
+        segment_duration = out.trajectory.duration
+
+        if segment_duration <= 0:
+            # Skip zero-duration segments (identical positions)
+            continue
+
+        # Sample the trajectory at fixed intervals
+        t = 0.0
+        while t < segment_duration:
+            out.trajectory.at_time(t, out.new_position, out.new_velocity, out.new_acceleration)
+
+            point = JointTrajectoryPoint()
+            point.positions = list(out.new_position)
+            point.velocities = list(out.new_velocity)
+            point.accelerations = list(out.new_acceleration)
+
+            # Set timestamp
+            total_time = current_time + t
+            point.time_from_start = Duration(
+                sec=int(total_time),
+                nanosec=int((total_time % 1.0) * 1e9)
+            )
+
+            new_points.append(point)
+            t += sample_dt
+
+        current_time += segment_duration
+
+    # Add final point
+    final_pt = joint_traj.points[-1]
+    final_point = JointTrajectoryPoint()
+    final_point.positions = list(final_pt.positions[:num_joints])
+    final_point.velocities = [0.0] * num_joints
+    final_point.accelerations = [0.0] * num_joints
+    final_point.time_from_start = Duration(
+        sec=int(current_time),
+        nanosec=int((current_time % 1.0) * 1e9)
+    )
+    new_points.append(final_point)
+
+    # Update trajectory
+    joint_traj.points = new_points
+    trajectory.joint_trajectory = joint_traj
+
+    robot_controller.get_logger().info(
+        f'[Ruckig] Generated {len(new_points)} points, total duration: {current_time:.3f}s')
+
+    if callback:
+        callback(trajectory)
+
+
+def apply_ruckig_service(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
+    """Call the Ruckig service for jerk-limited trajectory smoothing (ASYNC).
+
+    This uses the C++ ruckig_helper node which leverages MoveIt's built-in Ruckig integration.
+    Provides smoother motion than TOTG due to jerk limiting (3rd order vs 2nd order).
+
+    Args:
+        robot_controller: ROS2 node with ruckig_client
+        trajectory: RobotTrajectory to time-parameterize
+        vel_scaling: Velocity scaling factor [0.0-1.0]
+        acc_scaling: Acceleration scaling factor [0.0-1.0]
+        callback: Function to call with (trajectory_or_None) when done
+    """
+    robot_controller.get_logger().info('[Ruckig] Checking if Ruckig service is available...')
+
+    # Create client if not exists
+    if not hasattr(robot_controller, 'ruckig_client'):
+        robot_controller.ruckig_client = robot_controller.create_client(ApplyIPP, '/apply_ruckig')
+
+    if not robot_controller.ruckig_client.wait_for_service(timeout_sec=5.0):
+        robot_controller.get_logger().error('[Ruckig] ✗ Ruckig service /apply_ruckig NOT available after 5s!')
+        robot_controller.get_logger().error('[Ruckig]    Is ruckig_helper node running? Check: ros2 node list | grep ruckig')
+        if callback:
+            callback(None)
+        return
+
+    robot_controller.get_logger().info('[Ruckig] ✓ Ruckig service is available')
+
+    request = ApplyIPP.Request()
+    request.trajectory = trajectory.joint_trajectory
+    request.max_velocity_scaling = float(vel_scaling)
+    request.max_acceleration_scaling = float(acc_scaling)
+
+    robot_controller.get_logger().info(
+        f'[Ruckig] Requesting jerk-limited smoothing (vel={vel_scaling}, acc={acc_scaling})')
+
+    # Call ASYNC to avoid blocking the executor
+    future = robot_controller.ruckig_client.call_async(request)
+
+    # Handle response when ready
+    def handle_ruckig_response(fut):
+        try:
+            response = fut.result()
+
+            if response is None:
+                robot_controller.get_logger().error('[Ruckig] ✗ Response is None')
+                if callback:
+                    callback(None)
+                return
+
+            if not hasattr(response, 'trajectory'):
+                robot_controller.get_logger().error('[Ruckig] ✗ Response has no trajectory attribute')
+                if callback:
+                    callback(None)
+                return
+
+            if not hasattr(response.trajectory, 'joint_trajectory'):
+                robot_controller.get_logger().error('[Ruckig] ✗ Response.trajectory has no joint_trajectory attribute')
+                if callback:
+                    callback(None)
+                return
+
+            joint_traj = response.trajectory.joint_trajectory
+            num_points = len(joint_traj.points)
+
+            if num_points == 0:
+                robot_controller.get_logger().error('[Ruckig] ✗ Empty trajectory - Ruckig smoothing failed')
+                if callback:
+                    callback(None)
+                return
+
+            robot_controller.get_logger().info(
+                f'[Ruckig] ✓ Generated {num_points} jerk-limited points')
+
+            # Validate that timestamps are present
+            has_timestamps = False
+            for pt in joint_traj.points:
+                if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
+                    has_timestamps = True
+                    break
+
+            if not has_timestamps:
+                robot_controller.get_logger().error('[Ruckig] ✗ Response has no timestamps - INVALID trajectory')
+                if callback:
+                    callback(None)
+                return
+
+            # Success: Update trajectory with smoothed result
+            trajectory.joint_trajectory = joint_traj
+            if callback:
+                callback(trajectory)
+
+        except Exception as e:
+            robot_controller.get_logger().error(f'[Ruckig] ✗ Service call failed: {e}')
+            import traceback
+            robot_controller.get_logger().error(f'[Ruckig] Traceback: {traceback.format_exc()}')
+            if callback:
+                callback(None)
+
+    future.add_done_callback(handle_ruckig_response)
+
 
 def apply_ipp_totg(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
     """Call the IPP service to apply TOTG (ASYNC).

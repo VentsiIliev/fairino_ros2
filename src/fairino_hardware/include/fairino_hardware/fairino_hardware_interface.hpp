@@ -9,6 +9,7 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "visibility_control.h"
 #include <vector>
+#include <std_msgs/msg/int32_multi_array.hpp>
 #include "libfairino/include/robot.h"
 
 
@@ -65,6 +66,11 @@ private:
   int _control_mode;
   std::string _controller_ip = CONTROLLER_IP_ADDRESS;
   std::unique_ptr<FRRobot> _ptr_robot;
+
+  // Digital IO control via internal node
+  rclcpp::Node::SharedPtr _io_node;
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr _do_sub;
+  void do_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg);
 };
 
 } //end namespace
