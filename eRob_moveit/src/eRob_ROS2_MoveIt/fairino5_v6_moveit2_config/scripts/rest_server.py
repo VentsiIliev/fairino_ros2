@@ -247,6 +247,49 @@ def start_rest_server(
         status = robot.node.status_publisher.get_status_dict()
         return jsonify(status)
 
+    @app.route("/set_sensitivity", methods=["POST"])
+    def set_sensitivity():
+        """Set collision detection sensitivity preset."""
+        try:
+            data = request.json
+            preset = data.get("preset")
+
+            if not preset:
+                return jsonify({"error": "Missing 'preset' parameter"}), 400
+
+            # Valid presets
+            valid_presets = [
+                'ULTRA_SENSITIVE_2KG',
+                'HIGH_SENSITIVE_4KG',
+                'MEDIUM_SENSITIVE_5KG',
+                'STANDARD_6KG',
+                'LOW_SENSITIVE_8KG'
+            ]
+
+            if preset not in valid_presets:
+                return jsonify({
+                    "error": f"Invalid preset '{preset}'. Valid options: {valid_presets}"
+                }), 400
+
+            # Set the sensitivity via robot controller
+            success = robot.node.set_sensitivity_preset(preset)
+
+            if success:
+                return jsonify({
+                    "success": True,
+                    "preset": preset,
+                    "message": f"Sensitivity set to {preset}"
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": "Failed to set sensitivity preset"
+                }), 500
+
+        except Exception as e:
+            logger.error(f"Error setting sensitivity: {e}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/jog", methods=["POST"])
     def jog():
         data = request.json

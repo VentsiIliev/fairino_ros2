@@ -18,6 +18,7 @@ from action_msgs.msg import GoalStatusArray
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
+from safety.dynamics_collision_detector import DynamicsCollisionDetector
 from status.robot_monitor import RobotMonitor
 from status.robot_status_publisher import RobotStatusPublisher
 from motion.motion_queue import MotionQueue
@@ -104,6 +105,27 @@ class RobotController(Node):
         self.active_execute_send_future = None
         self.active_controller_goal = None
         self.is_executing = False
+
+        # Dynamics-based collision detector - uses inverse dynamics to isolate external torques
+        # τ_external = τ_measured - τ_expected(q, dq, ddq)
+        self.collision_detector = DynamicsCollisionDetector(
+            urdf_path='/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf',
+            base_link='base_link',
+            tip_link='wrist3_link',
+            num_joints=6,
+            # External torque thresholds (much more sensitive than raw torque)
+            external_torque_thresholds=np.array([8.0, 8.0, 6.0, 4.0, 3.0, 2.0]),
+            external_torque_rate_thresholds=np.array([15.0, 15.0, 12.0, 8.0, 6.0, 4.0]),
+            confirmation_samples=3,
+            recovery_time=1.0,
+            logger=self.get_logger()
+        )
+        self.collision_detector.set_on_collision(self._on_collision_detected)
+        self.collision_detector.enable()
+        self.collision_detector.arm()  # Always armed for testing
+        self.collision_stop_enabled = False  # Set to True to auto-stop on collision
+        self.collision_always_armed = True  # Keep detector armed even when not moving
+        self.get_logger().info('[Init] Dynamics collision detector initialized (ALWAYS ARMED for testing)')
 
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
         self.create_subscription(GoalStatusArray, '/fairino5_controller/follow_joint_trajectory/_action/status',
@@ -238,20 +260,54 @@ class RobotController(Node):
         from motion.trajectory_planner import send_path_cartesian
         return send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
 
+    def _on_collision_detected(self):
+        """Callback when collision detector triggers."""
+        self.get_logger().error('[COLLISION] Collision detected!')
+        if self.collision_stop_enabled:
+            self.get_logger().error('[COLLISION] Stopping motion immediately!')
+            self.stop_motion()
+
     def _controller_status_callback(self, msg):
         """Monitor controller action status and track active goals."""
 
         for status in msg.status_list:
             if status.status in [GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING]:
-                pass
+                # Arm collision detector when motion starts
+                if not self.collision_detector.armed:
+                    self.collision_detector.arm()
             elif status.status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
                                    GoalStatus.STATUS_CANCELED]:
                 if self.active_controller_goal is not None:
                     self.active_controller_goal = None
                 self.is_executing = False
+                # Only disarm if not in "always armed" mode
+                if not self.collision_always_armed:
+                    self.collision_detector.disarm()
 
     def joint_state_callback(self, msg):
         """Process joint states and store for trajectory planning."""
+        import time
+
+        # Feed data to dynamics collision detector (outside lock for speed)
+        if len(msg.effort) >= 6 and len(msg.position) >= 6:
+            # Get velocities and accelerations from monitor if available
+            if self.monitor is not None:
+                data = self.monitor.get_latest_data()
+                velocities = data.get('velocities', np.zeros(6))
+                accelerations = data.get('accelerations', np.zeros(6))
+            else:
+                # Fallback: use velocity from joint_states if available
+                velocities = np.array(msg.velocity[:6]) if len(msg.velocity) >= 6 else np.zeros(6)
+                accelerations = np.zeros(6)
+
+            self.collision_detector.update(
+                measured_efforts=np.array(msg.effort[:6]),
+                positions=np.array(msg.position[:6]),
+                velocities=velocities,
+                accelerations=accelerations,
+                timestamp=time.time()
+            )
+
         with self.lock:
 
             if self.monitor is None:  # <-- guard added
@@ -270,6 +326,10 @@ class RobotController(Node):
                 # Update previous Cartesian for jogging
                 self.prev_cartesian = data['cartesian']
                 self.latest_data = data  # Store latest data
+
+                # Also store efforts in monitor data
+                if len(msg.effort) >= 6:
+                    data['efforts'] = np.array(msg.effort[:6])
 
             # Send data to UI
             # self.ui_callback(data)
@@ -335,3 +395,83 @@ class RobotController(Node):
             self.active_controller_goal is not None,
             self.active_execute_send_future is not None
         ])
+
+    # ============ Collision Detection API ============
+
+    def enable_collision_detection(self):
+        """Enable effort-based collision detection."""
+        self.collision_detector.enable()
+        self.get_logger().info('[CollisionDetector] Enabled')
+
+    def disable_collision_detection(self):
+        """Disable effort-based collision detection."""
+        self.collision_detector.disable()
+        self.get_logger().info('[CollisionDetector] Disabled')
+
+    def enable_collision_stop(self):
+        """Enable automatic motion stop when collision detected."""
+        self.collision_stop_enabled = True
+        self.get_logger().info('[CollisionDetector] Auto-stop ENABLED')
+
+    def disable_collision_stop(self):
+        """Disable automatic motion stop (detection still active for monitoring)."""
+        self.collision_stop_enabled = False
+        self.get_logger().info('[CollisionDetector] Auto-stop DISABLED (monitoring only)')
+
+    def set_collision_always_armed(self, always_armed: bool):
+        """
+        Set whether collision detector should always be armed.
+
+        Args:
+            always_armed: True to keep armed even when not moving (for testing)
+        """
+        self.collision_always_armed = always_armed
+        if always_armed:
+            self.collision_detector.arm()
+            self.get_logger().info('[CollisionDetector] ALWAYS ARMED mode enabled')
+        else:
+            self.get_logger().info('[CollisionDetector] Normal mode - armed only during motion')
+
+    def set_collision_thresholds(self, effort_thresholds, rate_thresholds=None):
+        """
+        Set collision detection thresholds.
+
+        Args:
+            effort_thresholds: Per-joint effort thresholds (N·m), array of 6 values
+            rate_thresholds: Per-joint effort rate thresholds (N·m per sample), optional
+        """
+        self.collision_detector.set_thresholds(
+            np.array(effort_thresholds),
+            np.array(rate_thresholds) if rate_thresholds else None
+        )
+
+    def reset_collision_baseline(self):
+        """Reset collision detector baseline (call when robot is stationary)."""
+        self.collision_detector.reset_baseline()
+
+    def get_collision_status(self):
+        """Get collision detector status for debugging."""
+        return self.collision_detector.get_status()
+
+    def set_sensitivity_preset(self, preset_name: str):
+        """
+        Set collision detection sensitivity preset.
+
+        Args:
+            preset_name: One of 'ULTRA_SENSITIVE_2KG', 'HIGH_SENSITIVE_4KG',
+                        'MEDIUM_SENSITIVE_5KG', 'STANDARD_6KG', 'LOW_SENSITIVE_8KG'
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.collision_detector.set_sensitivity_preset(preset_name)
+            self.get_logger().info(f'[CollisionDetector] Sensitivity changed to: {preset_name}')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'[CollisionDetector] Failed to set preset {preset_name}: {e}')
+            return False
+
+    def get_current_sensitivity_preset(self):
+        """Get the currently active sensitivity preset name."""
+        return self.collision_detector.get_current_preset()

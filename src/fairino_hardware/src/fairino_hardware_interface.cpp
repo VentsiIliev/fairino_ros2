@@ -223,7 +223,7 @@ hardware_interface::return_type FairinoHardwareInterface::write(const rclcpp::Ti
 // JUST FOR DEBUG END
 
         // Create subscription for /robot_status and print cartesian position
-        int returncode = _ptr_robot->ServoJ(&cmd,&extcmd,0,0,0.004,0,0);
+        int returncode = _ptr_robot->ServoJ(&cmd,&extcmd,0,0,0.008,0,0);
         if(returncode != 0){
             RCLCPP_INFO(rclcpp::get_logger("FairinoHardwareInterface"), "ServoJ指令下发错误,错误码:%d",returncode);
         }
