@@ -72,6 +72,8 @@ class RobotStatusPublisher:
             'expected_torque': expected_torque,
             'measured_torque': measured_torque,
             'rate_thresholds': collision_status.get('rate_thresholds', [0.0] * 6),
+            'effective_rate_thresholds': collision_status.get('effective_rate_thresholds', [0.0] * 6),
+            'current_rate': collision_status.get('current_rate', [0.0] * 6),
         }
 
         msg = String()

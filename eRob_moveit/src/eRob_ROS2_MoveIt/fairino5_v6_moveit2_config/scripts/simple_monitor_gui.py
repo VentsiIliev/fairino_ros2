@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from status.robot_monitor import RobotMonitor
-from safety import SensitivityPreset
 
 
 class SimpleMonitorGUI(QWidget):
@@ -42,6 +41,8 @@ class SimpleMonitorGUI(QWidget):
             'external_torque': [0.0] * 6,
             'expected_torque': [0.0] * 6,
             'measured_torque': [0.0] * 6,
+            'current_rate': [0.0] * 6,
+            'effective_rate_thresholds': [5.0, 5.0, 4.0, 2.7, 2.0, 1.7],  # Match detector defaults
             'use_dynamics': False
         }
 
@@ -222,43 +223,17 @@ class SimpleMonitorGUI(QWidget):
         armed_layout.addStretch()
         collision_layout.addLayout(armed_layout)
 
-        # Sensitivity preset selector
-        sensitivity_layout = QHBoxLayout()
-        sensitivity_layout.addWidget(QLabel('Sensitivity:'))
-
-        self.sensitivity_combo = QComboBox()
-        self.sensitivity_combo.addItems([
-            'ULTRA_SENSITIVE_2KG',
-            'HIGH_SENSITIVE_4KG',
-            'MEDIUM_SENSITIVE_5KG',
-            'STANDARD_6KG',
-            'LOW_SENSITIVE_8KG'
-        ])
-        self.sensitivity_combo.setCurrentText('STANDARD_6KG')
-        self.sensitivity_combo.currentTextChanged.connect(self.on_sensitivity_changed)
-        self.sensitivity_combo.setStyleSheet('font-family: monospace; padding: 3px;')
-        sensitivity_layout.addWidget(self.sensitivity_combo)
-
-        # Info button to show preset details
-        self.sensitivity_info_button = QPushButton('ℹ')
-        self.sensitivity_info_button.setMaximumWidth(30)
-        self.sensitivity_info_button.clicked.connect(self.show_sensitivity_info)
-        self.sensitivity_info_button.setStyleSheet('font-weight: bold;')
-        sensitivity_layout.addWidget(self.sensitivity_info_button)
-
-        sensitivity_layout.addStretch()
-        collision_layout.addLayout(sensitivity_layout)
 
         collision_group.setLayout(collision_layout)
         right_column.addWidget(collision_group)
 
-        # Torque Table (measured, expected, external)
+        # Torque Table (measured, expected, external, rate, threshold)
         torque_group = QGroupBox('Joint Torques (N·m)')
         torque_layout = QGridLayout()
         torque_layout.setSpacing(3)
 
         # Headers
-        headers = ['Joint', 'Measured', 'Expected', 'External', 'Thresh']
+        headers = ['Joint', 'Measured', 'Expected', 'External', 'Rate', 'Thresh']
         for col, h in enumerate(headers):
             lbl = QLabel(h)
             lbl.setStyleSheet('font-weight: bold; font-size: 9pt;')
@@ -269,9 +244,11 @@ class SimpleMonitorGUI(QWidget):
         self.measured_torque_labels = []
         self.expected_torque_labels = []
         self.ext_torque_labels = []
+        self.rate_labels = []  # Store rate labels for updates
         self.threshold_labels = []  # Store threshold labels for updates
-        # Default thresholds match STANDARD_6KG preset
-        thresholds = [18.0, 18.0, 12.0, 10.0, 6.0, 5.0]
+
+        # Default rate thresholds from detector (dynamics_collision_detector.py line 86)
+        default_rate_thresholds = [5.0, 5.0, 4.0, 2.7, 2.0, 1.7]
 
         for i in range(6):
             # Joint label
@@ -300,21 +277,28 @@ class SimpleMonitorGUI(QWidget):
             torque_layout.addWidget(x_lbl, i + 1, 3)
             self.ext_torque_labels.append(x_lbl)
 
-            # Threshold (store in list for updates)
-            t_lbl = QLabel(f'±{thresholds[i]:.0f}')
+            # Rate (current calculated rate)
+            r_lbl = QLabel('0.00')
+            r_lbl.setStyleSheet('font-family: monospace; font-size: 9pt; color: #0066cc;')
+            r_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            torque_layout.addWidget(r_lbl, i + 1, 4)
+            self.rate_labels.append(r_lbl)
+
+            # Threshold (rate threshold from settings)
+            t_lbl = QLabel(f'{default_rate_thresholds[i]:.1f}')
             t_lbl.setStyleSheet('font-family: monospace; font-size: 9pt; color: #999;')
             t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            torque_layout.addWidget(t_lbl, i + 1, 4)
+            torque_layout.addWidget(t_lbl, i + 1, 5)
             self.threshold_labels.append(t_lbl)
 
         torque_group.setLayout(torque_layout)
         right_column.addWidget(torque_group)
 
         # Formula reminder - shows baseline-relative detection
-        formula_label = QLabel('External = (τ_measured - τ_expected) - τ_baseline')
-        formula_label.setStyleSheet('font-family: monospace; font-size: 9pt; color: #666; padding: 5px;')
-        formula_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_column.addWidget(formula_label)
+        # formula_label = QLabel('External = (τ_measured - τ_expected) - τ_baseline')
+        # formula_label.setStyleSheet('font-family: monospace; font-size: 9pt; color: #666; padding: 5px;')
+        # formula_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # right_column.addWidget(formula_label)
 
         right_column.addStretch()
 
@@ -488,10 +472,8 @@ class SimpleMonitorGUI(QWidget):
         measured = self.robot_status.get('measured_torque', [0.0] * 6)
         expected = self.robot_status.get('expected_torque', [0.0] * 6)
         external = self.robot_status.get('external_torque', [0.0] * 6)
-
-        # Get current thresholds based on selected sensitivity preset
-        current_preset = self.sensitivity_combo.currentText()
-        thresholds = self.get_preset_thresholds(current_preset)
+        current_rate = self.robot_status.get('current_rate', [0.0] * 6)
+        effective_rate_thresholds = self.robot_status.get('effective_rate_thresholds', [5.0, 5.0, 4.0, 2.7, 2.0, 1.7])
 
         for i in range(6):
             # Measured
@@ -500,11 +482,20 @@ class SimpleMonitorGUI(QWidget):
             # Expected
             self.expected_torque_labels[i].setText(f'{expected[i]:+.2f}')
 
-            # External (with color coding)
+            # External (with color coding based on rate vs threshold)
             ext_val = external[i]
             self.ext_torque_labels[i].setText(f'{ext_val:+.2f}')
 
-            ratio = abs(ext_val) / thresholds[i] if thresholds[i] > 0 else 0
+            # Rate (current calculated rate)
+            rate_val = current_rate[i]
+            self.rate_labels[i].setText(f'{rate_val:.2f}')
+
+            # Threshold (current effective rate threshold - dynamically scaled)
+            thresh_val = effective_rate_thresholds[i]
+            self.threshold_labels[i].setText(f'{thresh_val:.1f}')
+
+            # Color code external torque based on rate vs effective threshold
+            ratio = abs(rate_val) / effective_rate_thresholds[i] if effective_rate_thresholds[i] > 0 else 0
             if ratio > 1.0:
                 self.ext_torque_labels[i].setStyleSheet(
                     'font-family: monospace; font-size: 10pt; font-weight: bold; '
@@ -583,78 +574,6 @@ class SimpleMonitorGUI(QWidget):
         except json.JSONDecodeError:
             pass
 
-    def on_sensitivity_changed(self, preset_name):
-        """Called when user selects a new sensitivity preset."""
-        try:
-            # Send request to robot controller via HTTP API
-            url = 'http://localhost:5000/set_sensitivity'
-            data = {'preset': preset_name}
-            response = requests.post(url, json=data, timeout=2)
-
-            if response.status_code == 200:
-                # Update threshold labels in the GUI
-                self.update_threshold_labels(preset_name)
-
-                self.ros_node.get_logger().info(f'✓ Sensitivity changed to: {preset_name}')
-                QMessageBox.information(
-                    self,
-                    'Sensitivity Changed',
-                    f'Collision sensitivity set to:\n{preset_name}\n\n{self.get_preset_description(preset_name)}'
-                )
-            else:
-                error_msg = response.json().get('error', 'Unknown error')
-                QMessageBox.warning(self, 'Error', f'Failed to change sensitivity:\n{error_msg}')
-
-        except requests.exceptions.ConnectionError:
-            QMessageBox.warning(
-                self,
-                'Connection Error',
-                'Could not connect to robot controller.\nMake sure the robot controller is running.'
-            )
-        except Exception as e:
-            QMessageBox.warning(self, 'Error', f'Failed to change sensitivity:\n{str(e)}')
-
-    def update_threshold_labels(self, preset_name):
-        """Update the threshold column in the torque table based on selected preset."""
-        thresholds = self.get_preset_thresholds(preset_name)
-        for i in range(6):
-            self.threshold_labels[i].setText(f'±{thresholds[i]:.1f}')
-
-    def get_preset_thresholds(self, preset_name):
-        """Get the threshold values for a given preset."""
-        # Use actual SensitivityPreset data instead of duplicating
-        preset_data = SensitivityPreset.get_preset(preset_name)
-        return preset_data['external_torque'].tolist() if hasattr(preset_data['external_torque'], 'tolist') else preset_data['external_torque']
-
-    def show_sensitivity_info(self):
-        """Show information about all sensitivity presets."""
-        # Dynamically generate info from actual SensitivityPreset data
-        info_text = "<h3>Collision Sensitivity Presets</h3>\n"
-
-        for preset_name in SensitivityPreset.list_presets():
-            if preset_name == 'CUSTOM':
-                continue  # Skip custom preset in info dialog
-
-            preset_data = SensitivityPreset.get_preset(preset_name)
-            thresholds = preset_data['external_torque']
-            description = preset_data['description']
-
-            info_text += f"\n<p><b>{preset_name}</b><br/>"
-            info_text += f"External Torque: {list(thresholds)} N·m<br/>"
-            info_text += f"Use for: {description}</p>"
-
-        info_text += "\n<p><i>Force ≈ Torque / (0.3m × 9.81 m/s²)</i></p>"
-
-        msg = QMessageBox(self)
-        msg.setWindowTitle('Sensitivity Presets Information')
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText(info_text)
-        msg.exec()
-
-    def get_preset_description(self, preset_name):
-        """Get human-readable description of a preset."""
-        # Use actual SensitivityPreset description
-        return SensitivityPreset.get_description(preset_name)
 
 
 def ros_spin_thread(node):

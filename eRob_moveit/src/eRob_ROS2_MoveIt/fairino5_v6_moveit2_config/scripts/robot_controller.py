@@ -18,7 +18,7 @@ from action_msgs.msg import GoalStatusArray
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
-from safety.dynamics_collision_detector import DynamicsCollisionDetector
+from safety.dynamics_collision_detector import create_dynamics_collision_detector
 from status.robot_monitor import RobotMonitor
 from status.robot_status_publisher import RobotStatusPublisher
 from motion.motion_queue import MotionQueue
@@ -108,13 +108,15 @@ class RobotController(Node):
 
         # Dynamics-based collision detector - uses inverse dynamics to isolate external torques
         # τ_external = τ_measured - τ_expected(q, dq, ddq)
-        self.collision_detector = DynamicsCollisionDetector(
+        self.collision_detector = create_dynamics_collision_detector(
             urdf_path='/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf',
             base_link='base_link',
             tip_link='wrist3_link',
             num_joints=6,
             external_torque_rate_thresholds=np.array([15.0, 15.0, 12.0, 8.0, 6.0, 4.0]),
-            confirmation_samples=3,
+            external_torque_sustained_thresholds=np.array([12.0, 12.0, 10.0, 8.0, 6.0, 5.0]),
+            enable_sustained_check=False,  # Disable to avoid false positives during high acceleration
+            confirmation_samples=1,
             recovery_time=1.0,
             logger=self.get_logger(),
             include_gravity=False,
@@ -449,25 +451,3 @@ class RobotController(Node):
         """Get collision detector status for debugging."""
         return self.collision_detector.get_status()
 
-    def set_sensitivity_preset(self, preset_name: str):
-        """
-        Set collision detection sensitivity preset.
-
-        Args:
-            preset_name: One of 'ULTRA_SENSITIVE_2KG', 'HIGH_SENSITIVE_4KG',
-                        'MEDIUM_SENSITIVE_5KG', 'STANDARD_6KG', 'LOW_SENSITIVE_8KG'
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            self.collision_detector.set_sensitivity_preset(preset_name)
-            self.get_logger().info(f'[CollisionDetector] Sensitivity changed to: {preset_name}')
-            return True
-        except Exception as e:
-            self.get_logger().error(f'[CollisionDetector] Failed to set preset {preset_name}: {e}')
-            return False
-
-    def get_current_sensitivity_preset(self):
-        """Get the currently active sensitivity preset name."""
-        return self.collision_detector.get_current_preset()
