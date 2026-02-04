@@ -5,15 +5,13 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ac7725ca-cf95-4d86-a205-dfc3a86407a3" name="Changes" comment=".broken">
-      <change afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection_strategy.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/external_torque_estimator.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/inverse_dynamics_model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/rest_server.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/robot_controller.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/dynamics_collision_detector.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/dynamics_collision_detector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/simple_monitor_gui.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status/robot_status_publisher.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/status/robot_status_publisher.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection/collision_detection_strategy.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/dynamics_collision_detector.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection/dynamics_collision_detector.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/external_torque_estimator.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection/external_torque_estimator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/inverse_dynamics_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/safety/collision_detection/inverse_dynamics_model.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -340,7 +338,7 @@
       <workItem from="1769679298165" duration="20232000" />
       <workItem from="1769751765969" duration="32456000" />
       <workItem from="1770114739629" duration="19497000" />
-      <workItem from="1770194098954" duration="12762000" />
+      <workItem from="1770194098954" duration="14716000" />
     </task>
     <task id="LOCAL-00001" summary="first commit">
       <option name="closed" value="true" />
@@ -558,7 +556,15 @@
       <option name="project" value="LOCAL" />
       <updated>1770199097274</updated>
     </task>
-    <option name="localTasksCounter" value="28" />
+    <task id="LOCAL-00028" summary=".broken">
+      <option name="closed" value="true" />
+      <created>1770208656054</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1770208656054</updated>
+    </task>
+    <option name="localTasksCounter" value="29" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

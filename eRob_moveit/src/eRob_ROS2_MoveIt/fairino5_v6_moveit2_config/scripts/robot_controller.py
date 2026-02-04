@@ -18,7 +18,7 @@ from action_msgs.msg import GoalStatusArray
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
-from safety.dynamics_collision_detector import create_dynamics_collision_detector
+from safety.collision_detection import create_dynamics_collision_detector
 from status.robot_monitor import RobotMonitor
 from status.robot_status_publisher import RobotStatusPublisher
 from motion.motion_queue import MotionQueue

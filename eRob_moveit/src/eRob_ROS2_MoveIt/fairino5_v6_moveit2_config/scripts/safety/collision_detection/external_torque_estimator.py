@@ -11,7 +11,7 @@ tau_external = tau_measured - tau_expected
 import numpy as np
 from collections import deque
 
-from safety.inverse_dynamics_model import InverseDynamicsModel
+from .inverse_dynamics_model import InverseDynamicsModel
 
 
 class ExternalTorqueEstimator:

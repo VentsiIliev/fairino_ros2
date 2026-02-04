@@ -10,13 +10,13 @@ import numpy as np
 from typing import Optional, Callable, List
 from enum import Enum
 
-from safety.external_torque_estimator import ExternalTorqueEstimator
-from safety.collision_detection_strategy import (
+from .external_torque_estimator import ExternalTorqueEstimator
+from .collision_detection_strategy import (
     CollisionDetectionStrategy,
     RateThresholdStrategy,
     SustainedTorqueStrategy,
 )
-from safety.inverse_dynamics_model import KDLInverseDynamicsModel
+from .inverse_dynamics_model import KDLInverseDynamicsModel
 
 
 class CollisionState(Enum):

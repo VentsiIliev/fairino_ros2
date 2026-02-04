@@ -10,7 +10,7 @@ state and returns True if a collision is detected.
 import numpy as np
 from abc import ABC, abstractmethod
 
-from safety.external_torque_estimator import ExternalTorqueEstimator
+from .external_torque_estimator import ExternalTorqueEstimator
 
 
 class CollisionDetectionStrategy(ABC):
