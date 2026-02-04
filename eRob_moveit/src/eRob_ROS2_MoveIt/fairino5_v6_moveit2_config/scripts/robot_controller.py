@@ -113,18 +113,17 @@ class RobotController(Node):
             base_link='base_link',
             tip_link='wrist3_link',
             num_joints=6,
-            # External torque thresholds (much more sensitive than raw torque)
-            external_torque_thresholds=np.array([8.0, 8.0, 6.0, 4.0, 3.0, 2.0]),
             external_torque_rate_thresholds=np.array([15.0, 15.0, 12.0, 8.0, 6.0, 4.0]),
             confirmation_samples=3,
             recovery_time=1.0,
-            logger=self.get_logger()
+            logger=self.get_logger(),
+            include_gravity=False,
         )
         self.collision_detector.set_on_collision(self._on_collision_detected)
         self.collision_detector.enable()
         self.collision_detector.arm()  # Always armed for testing
         self.collision_stop_enabled = False  # Set to True to auto-stop on collision
-        self.collision_always_armed = True  # Keep detector armed even when not moving
+        self.collision_always_armed = True # Keep detector armed even when not moving
         self.get_logger().info('[Init] Dynamics collision detector initialized (ALWAYS ARMED for testing)')
 
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
@@ -432,22 +431,19 @@ class RobotController(Node):
         else:
             self.get_logger().info('[CollisionDetector] Normal mode - armed only during motion')
 
-    def set_collision_thresholds(self, effort_thresholds, rate_thresholds=None):
+    def set_collision_thresholds(self, rate_thresholds):
         """
-        Set collision detection thresholds.
+        Set collision detection rate thresholds.
 
         Args:
-            effort_thresholds: Per-joint effort thresholds (N·m), array of 6 values
-            rate_thresholds: Per-joint effort rate thresholds (N·m per sample), optional
+            rate_thresholds: Per-joint rate thresholds (N·m/sample), array of 6 values
         """
-        self.collision_detector.set_thresholds(
-            np.array(effort_thresholds),
-            np.array(rate_thresholds) if rate_thresholds else None
-        )
+        self.collision_detector.set_thresholds(np.array(rate_thresholds))
 
-    def reset_collision_baseline(self):
-        """Reset collision detector baseline (call when robot is stationary)."""
-        self.collision_detector.reset_baseline()
+    def reset_collision_state(self):
+        """Reset collision detector state."""
+        self.collision_detector.arm()
+        self.get_logger().info('[CollisionDetector] State reset and re-armed')
 
     def get_collision_status(self):
         """Get collision detector status for debugging."""

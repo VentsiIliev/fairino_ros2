@@ -40,50 +40,20 @@ class RobotStatusPublisher:
         # Get collision status if detector exists
         collision_status = {}
         external_torque = [0.0] * 6
-        external_torque_deviation = [0.0] * 6  # Baseline-relative
         expected_torque = [0.0] * 6
         measured_torque = [0.0] * 6
-        baseline_torque = None
-        baseline_calibrated = False
-        use_adaptive_baseline = False
 
         if hasattr(self.node, 'collision_detector'):
             detector = self.node.collision_detector
             collision_status = detector.get_status()
             external_torque = collision_status.get('external_torque', [0.0] * 6)
 
-            # Check if using adaptive baseline
-            use_adaptive_baseline = collision_status.get('use_adaptive_baseline', False)
-            baseline_calibrated = collision_status.get('baseline_initialized', False)
-
-            # Get baseline-calibrated deviation (what's actually used for detection)
-            if use_adaptive_baseline:
-                # Adaptive baseline - always available after initialization
-                if baseline_calibrated and collision_status.get('adaptive_baseline') is not None:
-                    baseline_torque = collision_status.get('adaptive_baseline')
-                    # Deviation from adaptive baseline
-                    external_torque_deviation = [
-                        ext - base for ext, base in zip(external_torque, baseline_torque)
-                    ]
-                else:
-                    # Not initialized yet
-                    external_torque_deviation = external_torque
-            else:
-                # Legacy single-point baseline
-                baseline_calibrated = getattr(detector, 'baseline_calibrated', False)
-                if baseline_calibrated and detector.baseline_external_torque is not None:
-                    baseline_torque = list(detector.baseline_external_torque)
-                    external_torque_deviation = [
-                        ext - base for ext, base in zip(external_torque, baseline_torque)
-                    ]
-                else:
-                    external_torque_deviation = external_torque
-
             # Get expected torque history if available
             if hasattr(detector, 'expected_torque_history'):
                 hist = detector.expected_torque_history
                 if len(hist) > 0:
                     expected_torque = list(hist[-1])
+
         # Get measured torque from current joint state
         if hasattr(self.node, 'current_joint_state') and self.node.current_joint_state is not None:
             if len(self.node.current_joint_state.effort) >= 6:
@@ -98,13 +68,10 @@ class RobotStatusPublisher:
             'collision_detected': collision_status.get('state', 'CLEAR') in ['DETECTED', 'RECOVERING'],
             'collision_state': collision_status.get('state', 'CLEAR'),
             'collision_armed': collision_status.get('armed', False),
-            'external_torque': external_torque,  # Raw external torque (τ_measured - τ_expected)
-            'external_torque_deviation': external_torque_deviation,  # Baseline-relative (used for detection)
-            'baseline_torque': baseline_torque,  # Baseline calibrated values
-            'baseline_calibrated': baseline_calibrated,  # Is baseline ready?
+            'external_torque': external_torque,
             'expected_torque': expected_torque,
             'measured_torque': measured_torque,
-            'use_dynamics': collision_status.get('use_kdl', False)
+            'rate_thresholds': collision_status.get('rate_thresholds', [0.0] * 6),
         }
 
         msg = String()

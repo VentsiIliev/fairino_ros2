@@ -480,25 +480,14 @@ class SimpleMonitorGUI(QWidget):
             self.collision_armed_label.setText('DISARMED')
             self.collision_armed_label.setStyleSheet('font-family: monospace; color: #999;')
 
-        # Baseline calibration status
-        if self.robot_status.get('baseline_calibrated', False):
-            self.baseline_status_label.setText('✓ CALIBRATED')
-            self.baseline_status_label.setStyleSheet('font-family: monospace; font-weight: bold; color: #00cc00;')
-        else:
-            self.baseline_status_label.setText('CALIBRATING...')
-            self.baseline_status_label.setStyleSheet('font-family: monospace; color: #ff9800;')
+        # Rate-only detection mode
+        self.baseline_status_label.setText('RATE-ONLY')
+        self.baseline_status_label.setStyleSheet('font-family: monospace; font-weight: bold; color: #0066cc;')
 
         # Torque values
         measured = self.robot_status.get('measured_torque', [0.0] * 6)
         expected = self.robot_status.get('expected_torque', [0.0] * 6)
-
-        # Use baseline-calibrated deviation (this is what triggers detection!)
-        baseline_calibrated = self.robot_status.get('baseline_calibrated', False)
-        if baseline_calibrated:
-            external = self.robot_status.get('external_torque_deviation', [0.0] * 6)
-        else:
-            # Fallback to raw external torque if baseline not calibrated yet
-            external = self.robot_status.get('external_torque', [0.0] * 6)
+        external = self.robot_status.get('external_torque', [0.0] * 6)
 
         # Get current thresholds based on selected sensitivity preset
         current_preset = self.sensitivity_combo.currentText()
