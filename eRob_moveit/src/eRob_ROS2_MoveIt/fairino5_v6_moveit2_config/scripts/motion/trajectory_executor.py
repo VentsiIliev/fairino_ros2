@@ -12,19 +12,17 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
         robot_controller.get_logger().warning('[Controller] Trajectory already executing, ignoring')
         return
 
-    if robot_controller.is_executing:
-        robot_controller.get_logger().warning('[Controller] Previous trajectory still active')
-        robot_controller.execution_lock.release()
-        return
-
     if not robot_controller.controller_client.wait_for_server(timeout_sec=1.0):
         robot_controller.get_logger().error('[Controller] fairino5_controller not available')
+        with robot_controller.lock:
+            robot_controller.is_executing = False
         robot_controller.execution_lock.release()
         return
 
-    # ✅ CRITICAL VALIDATION: Check for timestamps
     if len(joint_trajectory.points) == 0:
         robot_controller.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
+        with robot_controller.lock:
+            robot_controller.is_executing = False
         robot_controller.execution_lock.release()
         return
 
@@ -36,7 +34,8 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
 
     if not has_valid_timestamps:
         robot_controller.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
-        robot_controller.get_logger().error('[Controller] TOTG must have failed. Cannot execute.')
+        with robot_controller.lock:
+            robot_controller.is_executing = False
         robot_controller.execution_lock.release()
         return
 
@@ -73,9 +72,9 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
         robot_controller.get_logger().info(
             f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
         robot_controller.get_logger().info(
-            f'[Controller] First point positions: {[round(p, 3) for p in joint_trajectory.points[0].positions]}')
+            f'[Controller] First point positions: {[round(p, 6) for p in joint_trajectory.points[0].positions]}')
         robot_controller.get_logger().info(
-            f'[Controller] Last point positions: {[round(p, 3) for p in last_point.positions]}')
+            f'[Controller] Last point positions: {[round(p, 6) for p in last_point.positions]}')
         robot_controller.get_logger().info(
             f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
         robot_controller.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
@@ -124,22 +123,26 @@ def _controller_goal_result(robot_controller, future):
         result = future.result().result
         if result.error_code == 0:
             robot_controller.get_logger().info('[Controller] ✓ Trajectory execution succeeded!')
+            robot_controller.last_move_result = 0
         else:
             robot_controller.get_logger().error(f'[Controller] Trajectory execution failed with error: {result.error_code}')
+            robot_controller.last_move_result = result.error_code
     except Exception as e:
         robot_controller.get_logger().error(f'[Controller] Result error: {e}')
+        robot_controller.last_move_result = -1
     finally:
         robot_controller.active_controller_goal = None
-        with robot_controller.lock:
-            robot_controller.is_executing = False
+        lock_released = False
         if robot_controller.execution_lock.locked():
             robot_controller.execution_lock.release()
-
-        # Mark current queue task as complete
-        robot_controller.motion_queue.mark_current_complete()
-
-        # Process next task in queue
-        _process_next_queued_task(robot_controller)
+            lock_released = True
+        # Only clear is_executing and advance queue if WE held the lock.
+        # If stop_motion() already released it, a new command may have started.
+        if lock_released:
+            with robot_controller.lock:
+                robot_controller.is_executing = False
+            robot_controller.motion_queue.mark_current_complete()
+            _process_next_queued_task(robot_controller)
 
 
 def _process_next_queued_task(robot_controller):

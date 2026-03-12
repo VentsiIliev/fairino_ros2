@@ -152,7 +152,7 @@ def start_rest_server(
         path = data.get("path")
 
         if not path:
-            return jsonify({"error": "No path provided"}), 400
+            return jsonify({"error": "No path provided"}) , 400
 
         # Flatten path if it's nested (client sends [[[waypoints]]])
         if path and isinstance(path, list) and len(path) > 0:
@@ -220,6 +220,7 @@ def start_rest_server(
 
     @app.route("/stop", methods=["POST"])
     def stop_motion():
+        robot.node.get_logger().info("[rest_server.py] Stopping motion")
         result = robot.stop_motion()
         # robot.stop_motion() returns 0 on success, -1 on error
         success = (result == 0)

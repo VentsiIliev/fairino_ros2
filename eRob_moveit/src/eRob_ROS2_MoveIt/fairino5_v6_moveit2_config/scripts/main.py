@@ -63,10 +63,10 @@ def main():
 
 
 
-    win = MonitorWindow(ros_node,fairino_robot)
-    ros_node.ui_callback = win.ros_update
+    # win = MonitorWindow(ros_node,fairino_robot)
+    # ros_node.ui_callback = win.ros_update
 
-    win.show()
+    # win.show()
     sys.exit(app.exec())
 
 if __name__ == '__main__':

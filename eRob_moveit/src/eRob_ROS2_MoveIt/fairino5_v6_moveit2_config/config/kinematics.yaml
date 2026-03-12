@@ -1,5 +1,8 @@
 fairino5_v6_group:
-  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
-  kinematics_solver_search_resolution: 0.0050000000000000001
-  kinematics_solver_timeout: 0.0050000000000000001
+  kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.05
+  kinematics_solver_attempts: 3
+  epsilon: 0.00001
+  solve_type: Distance
   tip_link: ee_link

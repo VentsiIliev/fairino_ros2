@@ -14,17 +14,12 @@ def jog_cartesian(robot_controller, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0
         return -4
 
     # Current TCP position (already in mm from robot_monitor.py)
-    x = robot_controller.prev_cartesian[0]
-    y = robot_controller.prev_cartesian[1]
-    z = robot_controller.prev_cartesian[2]
+    x = robot_controller.prev_cartesian[0] + dx_mm
+    y = robot_controller.prev_cartesian[1] + dy_mm
+    z = robot_controller.prev_cartesian[2] + dz_mm
     rx = robot_controller.prev_cartesian[3]
     ry = robot_controller.prev_cartesian[4]
     rz = robot_controller.prev_cartesian[5]
-
-    # Apply jog step (in base frame)
-    x += dx_mm
-    y += dy_mm
-    z += dz_mm
 
     # Pre-validate jog target safety
     is_safe, msg = robot_controller.safety_manager.check_position_safety(
@@ -34,5 +29,4 @@ def jog_cartesian(robot_controller, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0
         robot_controller.get_logger().error(f'[SAFETY] Jog target rejected: {msg}')
         return -3
 
-    # Send new TCP position (maintaining current orientation)
     return robot_controller.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale, acc_scale)

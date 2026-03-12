@@ -94,7 +94,8 @@ class FairinoRos2Robot:
             vel_scale = max(0.0, min(1.0, vel / 100.0))
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
-            self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='PTP', tool_transform=tool_transform)
+            from motion.strategies import SingleTargetStrategy
+            self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale, planner_id='PTP', tool_transform=tool_transform))
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
                 self.wait_for_position(position, threshold=1.0, timeout=60.0)
@@ -132,17 +133,26 @@ class FairinoRos2Robot:
             vel_scale = max(0.0, min(1.0, vel / 100.0))
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
-            result = self.node.send_cartesian_goal(x, y, z, rx, ry, rz, vel_scale=vel_scale, acc_scale=acc_scale, planner_id='LIN', tool_transform=tool_transform)
+            from motion.strategies import SingleTargetStrategy
+            result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN', tool_transform=tool_transform))
 
-            # Return error code if planning/submission failed
             if result != 0:
                 return result
 
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
-                return self.wait_for_position(position_base, threshold=1.0, timeout=60.0)
+                import time
+                timeout = 60.0
+                start = time.time()
+                time.sleep(0.05)  # let is_executing be set
+                while self.node.is_executing:
+                    if time.time() - start > timeout:
+                        self.node.get_logger().error('[MOVE_LINER] Timeout waiting for motion to complete')
+                        return -1
+                    time.sleep(0.01)
+                return self.node.last_move_result
 
-            return 0  # Success
+            return 0
         except Exception as e:
             print(f"move_liner error: {e}")
             return -1  # Error
@@ -224,14 +234,8 @@ class FairinoRos2Robot:
         # ✅ ALWAYS use compute_cartesian_path for consistency
         # Controller's spline interpolation + TOTG provides smooth continuous motion
         self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
-        result = self.node.send_path_cartesian(
-            waypoints_mm=waypoints_xyz,
-            rx=rx,
-            ry=ry,
-            rz=rz,
-            vel_scaling=vel,
-            acc_scaling=acc
-        )
+        from motion.strategies import PathStrategy
+        result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc))
 
         # Return error code if planning/submission failed
         if result < 0:
@@ -340,13 +344,6 @@ class FairinoRos2Robot:
 
     # ---------------- Jog / Control / Misc ----------------
     def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc):
-        """
-        Starts jogging the robot in a specified axis and direction.
-        """
-        if self.node.is_motion_active():
-            self.node.get_logger().warn("Cannot start new jog: previous motion still active")
-            return 0
-
         self.node.get_logger().info(
             f"Starting jog: axis={axis}, direction={direction}, step={step}mm, vel={vel}%, acc={acc}%"
         )
@@ -354,53 +351,39 @@ class FairinoRos2Robot:
         if self.node is None or self.node.prev_cartesian is None:
             return -1
 
-        # Handle enum types
+        if self.node.is_motion_active():
+            self.node.get_logger().info('[JOG] Busy — ignoring')
+            return -1
+
         axis_val = axis.value if hasattr(axis, 'value') else axis
         dir_val = direction.value if hasattr(direction, 'value') else direction
 
         if axis_val not in [1, 2, 3, 4, 5, 6] or dir_val not in [1, -1]:
             return -1
 
-        # Get current position in workobject frame
         current_pos_wobj = self.get_current_position()
         if current_pos_wobj is None or len(current_pos_wobj) < 6:
             return -1
 
         x, y, z, rx, ry, rz = current_pos_wobj
-
-        # Map enum value to 0-based index for deltas
-        axis_index = axis_val - 1  # X=0, Y=1, Z=2, RX=3, etc.
-
-        # Initialize full 6-element delta array
         deltas = [0.0] * 6
-        deltas[axis_index] = step * dir_val
+        deltas[axis_val - 1] = step * dir_val
 
-        # Apply delta to current position
-        new_pos_wobj = [
-            x + deltas[0],
-            y + deltas[1],
-            z + deltas[2],
-            rx + deltas[3],
-            ry + deltas[4],
-            rz + deltas[5]
-        ]
+        new_pos_base = self.apply_workobject([
+            x + deltas[0], y + deltas[1], z + deltas[2],
+            rx + deltas[3], ry + deltas[4], rz + deltas[5]
+        ])
 
-        # Transform to base frame
-        new_pos_base = self.apply_workobject(new_pos_wobj)
-
-        # Send command
         vel_scale = max(0.0, min(1.0, vel / 100.0))
         acc_scale = max(0.0, min(1.0, acc / 100.0))
 
         try:
-            x_base, y_base, z_base, rx_base, ry_base, rz_base = new_pos_base
-            result = self.node.send_cartesian_goal(
-                x_base, y_base, z_base,
-                rx_base, ry_base, rz_base,
+            x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
+            return self.node.send_cartesian_goal(
+                x_b, y_b, z_b, rx_b, ry_b, rz_b,
                 vel_scale=vel_scale, acc_scale=acc_scale,
                 planner_id='LIN'
             )
-            return result
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
             return -1

@@ -105,11 +105,15 @@ class RobotController(Node):
         self.active_execute_send_future = None
         self.active_controller_goal = None
         self.is_executing = False
+        self.plan_generation = 0
+        self.last_move_result = 0  # 0=success, negative=error/skip (set by async callbacks)
+
+        self.urdf_path = '/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf'
 
         # Dynamics-based collision detector - uses inverse dynamics to isolate external torques
         # τ_external = τ_measured - τ_expected(q, dq, ddq)
         self.collision_detector = create_dynamics_collision_detector(
-            urdf_path='/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf',
+            urdf_path=self.urdf_path,
             base_link='base_link',
             tip_link='wrist3_link',
             num_joints=6,
@@ -248,18 +252,23 @@ class RobotController(Node):
             self.get_logger().warning(f"Could not get TCP transform from tf: {e}")
             return np.eye(4)
 
+    def execute(self, strategy):
+        return strategy.execute(self)
+
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN',
-                            tool_transform=None):
-        from motion.trajectory_planner import send_cartesian_goal
-        return send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id, tool_transform)
+                            tool_transform=None, allow_preempt=False):
+        from motion.strategies import SingleTargetStrategy
+        return self.execute(SingleTargetStrategy(
+            x_mm, y_mm, z_mm, rx, ry, rz,
+            vel_scale, acc_scale, planner_id, tool_transform, allow_preempt))
 
     def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
         from motion.jog_controller import jog_cartesian
         return jog_cartesian(self, dx_mm, dy_mm, dz_mm, vel_scale, acc_scale)
 
     def send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
-        from motion.trajectory_planner import send_path_cartesian
-        return send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+        from motion.strategies import PathStrategy
+        return self.execute(PathStrategy(waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling))
 
     def _on_collision_detected(self):
         """Callback when collision detector triggers."""
@@ -352,14 +361,16 @@ class RobotController(Node):
         Returns:
             int: 0 if motion was stopped, -1 if no active goals
         """
+        self.get_logger().info('[STOP] Stopping motion called')
         stopped = False
         queue_cleared = 0
 
         # Cancel pending send operation
-        if self.active_execute_send_future is not None:
+        future = self.active_execute_send_future
+        if future is not None:
             self.get_logger().info('[STOP] Cancelling pending trajectory submission...')
             try:
-                self.active_execute_send_future.cancel()
+                future.cancel()
                 self.active_execute_send_future = None
                 stopped = True
                 self.get_logger().info('[STOP] ✓ Pending submission cancelled')
@@ -372,11 +383,23 @@ class RobotController(Node):
             try:
                 future = self.active_controller_goal.cancel_goal_async()
                 self.active_controller_goal = None
-                self.is_executing = False  # Clear execution flag
                 stopped = True
                 self.get_logger().warning('[STOP] ✓ Robot motion cancelled!')
             except Exception as e:
                 self.get_logger().error(f'[STOP] Failed to cancel controller goal: {e}')
+
+        # Only invalidate pending plans when something was actually cancelled.
+        # Incrementing unconditionally (or based on is_executing) causes valid
+        # in-flight MoveIt responses to be discarded when stop_motion is called
+        # during the planning phase where no controller goal exists yet.
+        with self.lock:
+            if stopped:  # ← restore the condition
+                self.plan_generation += 1
+            self.is_executing = False
+            self.last_move_result = -1
+
+        if self.execution_lock.locked():
+            self.execution_lock.release()
 
         # Clear motion queue
         queue_cleared = self.motion_queue.clear()
