@@ -95,7 +95,9 @@ class FairinoRos2Robot:
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
             from motion.strategies import SingleTargetStrategy
-            self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale, planner_id='PTP', tool_transform=tool_transform))
+            result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale, planner_id='PTP', tool_transform=tool_transform))
+            if result != 0:
+                return result
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
                 self.wait_for_position(position, threshold=1.0, timeout=60.0)
@@ -251,7 +253,8 @@ class FairinoRos2Robot:
         if blocking:
             last_waypoint = waypoints_xyz[-1] + [rx, ry, rz]
             self.node.get_logger().info(f"[EXECUTE_PATH] Blocking until final position reached")
-            return self.wait_for_position(last_waypoint, threshold=1.0, timeout=60.0)
+            success = self.wait_for_position(last_waypoint, threshold=1.0, timeout=60.0)
+            return 0 if success else -1
 
         return 0
 
@@ -442,8 +445,7 @@ class FairinoRos2Robot:
             return -1
 
         # Cancel all active motion goals
-        stopped = self.node.stop_motion()
-        return 0 if stopped else -1
+        return self.node.stop_motion()
 
     def resetAllErrors(self):
         """

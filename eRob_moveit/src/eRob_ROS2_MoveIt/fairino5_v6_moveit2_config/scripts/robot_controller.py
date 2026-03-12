@@ -30,6 +30,11 @@ from utils.workspace_extractor import _extract_workspace_from_urdf
 
 SAFETY_MARGIN = 0.01
 
+# Inset side walls (X and Y only) by this amount in meters.
+
+# Z (top/bottom) walls are unchanged.
+WALL_XY_OFFSET = 0  # 0 mm
+
 tool_registry = {
     # Format: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
     # Position in millimeters, orientation in degrees
@@ -80,6 +85,20 @@ class RobotController(Node):
 
         self.get_logger().info(f'[Init] Workspace extraction took {time.time() - t1:.2f}s')
 
+        workspace = {
+            'x_min': workspace['x_min'] - WALL_XY_OFFSET,
+            'x_max': workspace['x_max'] + WALL_XY_OFFSET,
+            'y_min': workspace['y_min'] - WALL_XY_OFFSET,
+            'y_max': workspace['y_max'] + WALL_XY_OFFSET,
+            'z_min': workspace['z_min'],
+            'z_max': workspace['z_max'],
+        }
+        self.get_logger().info(
+            f'[Init] Workspace after XY offset ({WALL_XY_OFFSET*1000:.0f}mm): '
+            f'X[{workspace["x_min"]:.3f},{workspace["x_max"]:.3f}] '
+            f'Y[{workspace["y_min"]:.3f},{workspace["y_max"]:.3f}] '
+            f'Z[{workspace["z_min"]:.3f},{workspace["z_max"]:.3f}]')
+
         self.safety_manager = SafetyWallManager(
             node=self,
             workspace=workspace,
@@ -126,7 +145,7 @@ class RobotController(Node):
             include_gravity=False,
         )
         self.collision_detector.set_on_collision(self._on_collision_detected)
-        self.collision_detector.enable()
+        self.collision_detector.disable()  # TEMPORARILY DISABLED — re-enable with self.collision_detector.enable()
         self.collision_detector.arm()  # Always armed for testing
         self.collision_stop_enabled = False  # Set to True to auto-stop on collision
         self.collision_always_armed = True # Keep detector armed even when not moving

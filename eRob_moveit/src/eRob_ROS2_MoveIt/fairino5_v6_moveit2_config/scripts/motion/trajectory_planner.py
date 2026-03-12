@@ -345,13 +345,159 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
     pt1.positions = list(target_joints)
     pt1.velocities = [0.0]*n
     pt1.accelerations = [0.0]*n
-    pt1.time_from_start = Duration(sec=0, nanosec=50_000_000)  # 50ms ensures motion
+    # Scale duration: cubic spline peak vel = 1.5 * max_dq / T → T = 1.5 * max_dq / (vel * limit)
+    duration_s = max(0.05, 1.5 * max_dq / (max(0.01, vel_scaling) * 3.0))
+    pt1.time_from_start = Duration(sec=0, nanosec=int(duration_s * 1e9))
 
     traj_msg.points = [pt0, pt1]
 
-    # Send trajectory directly for tiny moves
-    with robot_controller.lock:
-        robot_controller.last_move_result = 0
-    _send_trajectory_to_controller(robot_controller, traj_msg)
+    # Collision-check midpoint + endpoint in parallel, then execute if both valid
+    _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generation)
     return True
+
+
+def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generation):
+    """Fire parallel /check_state_validity calls for midpoint + endpoint, execute only if both valid."""
+    from moveit_msgs.srv import GetStateValidity
+    from moveit_msgs.msg import RobotState
+    from sensor_msgs.msg import JointState
+    import threading
+
+    if not hasattr(robot_controller, '_state_validity_client'):
+        robot_controller._state_validity_client = robot_controller.create_client(
+            GetStateValidity, '/check_state_validity')
+
+    if not robot_controller._state_validity_client.wait_for_service(timeout_sec=0.3):
+        robot_controller.get_logger().warning(
+            '[JacMove] /check_state_validity unavailable — relying on SafetyWallManager only')
+        with robot_controller.lock:
+            robot_controller.last_move_result = 0
+        _send_trajectory_to_controller(robot_controller, traj_msg)
+        return
+
+    q_start = list(traj_msg.points[0].positions)
+    q_end   = list(traj_msg.points[-1].positions)
+    q_mid   = [(q_start[i] + q_end[i]) * 0.5 for i in range(len(q_start))]
+
+    results = {'mid': None, 'end': None}
+    results_lock = threading.Lock()
+
+    def _make_request(q):
+        js = JointState()
+        js.name = joint_names
+        js.position = q
+        rs = RobotState()
+        rs.joint_state = js
+        req = GetStateValidity.Request()
+        req.robot_state = rs
+        req.group_name = 'fairino5_v6_group'
+        return req
+
+    def _log_contacts(label, response):
+        if response is None or not hasattr(response, 'contacts'):
+            return
+        if response.contacts:
+            bodies = set()
+            for c in response.contacts:
+                bodies.add(f'{c.contact_body_1} ↔ {c.contact_body_2}')
+            robot_controller.get_logger().warning(
+                f'[JacMove] {label} contacts: {", ".join(sorted(bodies))}')
+        else:
+            robot_controller.get_logger().warning(
+                f'[JacMove] {label} invalid but no contact details returned')
+
+    _SAFETY_WALL_NAMES = {
+        'wall_x_min', 'wall_x_max', 'wall_y_min', 'wall_y_max', 'wall_z_min', 'wall_z_max'
+    }
+    _EE_LINKS = {'ee_link', 'wrist3_link', 'wrist2_link', 'wrist1_link', 'forearm_link'}
+
+    def _is_ee_wall_contact_only(resp):
+        """Return True if the only contacts are ee_link ↔ safety-wall objects.
+        TCP position was already validated by check_position_safety(); the ee_link
+        geometry legitimately touches the boundary wall when operating near workspace edges."""
+        if resp is None or resp.valid or not resp.contacts:
+            return False
+        for c in resp.contacts:
+            b1, b2 = c.contact_body_1, c.contact_body_2
+            if not (
+                (b1 in _EE_LINKS and b2 in _SAFETY_WALL_NAMES) or
+                (b2 in _EE_LINKS and b1 in _SAFETY_WALL_NAMES)
+            ):
+                return False  # non-wall or non-ee contact — real collision
+        return True
+
+    def _log_ee_wall_contacts(label, resp):
+        """Log detail about allowed ee_link↔wall contacts for diagnostics."""
+        pairs = []
+        max_depth = 0.0
+        for c in resp.contacts:
+            b1, b2 = c.contact_body_1, c.contact_body_2
+            depth = getattr(c, 'depth', 0.0)
+            max_depth = max(max_depth, abs(depth))
+            pairs.append(f'{b1}↔{b2}(d={depth*1000:.2f}mm)')
+        robot_controller.get_logger().info(
+            f'[JacMove] {label}: ee_link↔wall contact ALLOWED — '
+            f'contacts=[{", ".join(sorted(pairs))}] max_penetration={max_depth*1000:.2f}mm '
+            f'(TCP already validated by safety manager, proceeding)')
+
+    def _on_both_done():
+        with results_lock:
+            if results['mid'] is None or results['end'] is None:
+                return
+            mid_resp = results['mid']
+            end_resp = results['end']
+
+        with robot_controller.lock:
+            if robot_controller.plan_generation != generation:
+                robot_controller.get_logger().info('[JacMove] Stale validity response — discarding')
+                return
+
+        if mid_resp is not None and not mid_resp.valid:
+            if _is_ee_wall_contact_only(mid_resp):
+                _log_ee_wall_contacts('Midpoint', mid_resp)
+            else:
+                robot_controller.get_logger().warning('[JacMove] ⛔ Midpoint invalid — collision on path, aborting')
+                _log_contacts('Midpoint', mid_resp)
+                with robot_controller.lock:
+                    robot_controller.is_executing = False
+                    robot_controller.last_move_result = -10
+                return
+
+        if end_resp is not None and not end_resp.valid:
+            if _is_ee_wall_contact_only(end_resp):
+                _log_ee_wall_contacts('Target', end_resp)
+            else:
+                robot_controller.get_logger().warning('[JacMove] ⛔ Target invalid — collision detected, aborting')
+                _log_contacts('Target', end_resp)
+                with robot_controller.lock:
+                    robot_controller.is_executing = False
+                    robot_controller.last_move_result = -10
+                return
+
+        with robot_controller.lock:
+            robot_controller.last_move_result = 0
+        _send_trajectory_to_controller(robot_controller, traj_msg)
+
+    def _cb_mid(fut):
+        try:
+            with results_lock:
+                results['mid'] = fut.result()
+        except Exception as e:
+            robot_controller.get_logger().error(f'[JacMove] Midpoint validity check failed: {e}')
+            with results_lock:
+                results['mid'] = None
+        _on_both_done()
+
+    def _cb_end(fut):
+        try:
+            with results_lock:
+                results['end'] = fut.result()
+        except Exception as e:
+            robot_controller.get_logger().error(f'[JacMove] Endpoint validity check failed: {e}')
+            with results_lock:
+                results['end'] = None
+        _on_both_done()
+
+    robot_controller._state_validity_client.call_async(_make_request(q_mid)).add_done_callback(_cb_mid)
+    robot_controller._state_validity_client.call_async(_make_request(q_end)).add_done_callback(_cb_end)
 

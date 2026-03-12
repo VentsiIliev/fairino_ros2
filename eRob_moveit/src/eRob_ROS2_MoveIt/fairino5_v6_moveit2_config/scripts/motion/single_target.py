@@ -124,11 +124,12 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
     robot_controller._last_requested_delta_mm = delta_m * 1000.0
     robot_controller._last_full_waypoints = waypoints
 
-    # Sub-1mm: IK solver cannot distinguish poses at the step sizes needed (all solutions
-    # collapse to one joint config → 1-point trajectory). Use Jacobian directly instead.
-    if delta_m < 0.001:
+    # Sub-5mm: compute_cartesian_path costs ~250ms fixed overhead regardless of step size.
+    # Jacobian is accurate to <0.01mm for 5mm steps (~2ms + ~5ms collision check).
+    # Each call reads fresh joint state so linearisation errors do not accumulate.
+    if delta_m < 0.005:
         robot_controller.get_logger().info(
-            f'[Single Point] Sub-1mm ({delta_m * 1000:.3f}mm): Jacobian direct (skip IK)')
+            f'[Single Point] Sub-5mm ({delta_m * 1000:.3f}mm): Jacobian direct (skip MoveIt)')
         with robot_controller.lock:
             robot_controller.is_executing = True
             robot_controller.plan_generation += 1
@@ -145,8 +146,12 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         max_step = 0.0005  # sub-2mm
     elif delta_m < 0.01:
         max_step = 0.0008  # sub-10mm
+    elif delta_m < 0.1:
+        max_step = 0.005  # 10mm–100mm: 5mm step
+    elif delta_m < 0.3:
+        max_step = 0.010  # 100mm–300mm: 10mm step (~2× faster)
     else:
-        max_step = 0.005  # >10mm moves, 5mm per step → fewer IK calls
+        max_step = 0.025  # >300mm: 25mm step (~5× faster, ~26 IK calls for 645mm)
 
     request = GetCartesianPath.Request()
     request.header.frame_id = 'base_link'

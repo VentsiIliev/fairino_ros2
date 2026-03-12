@@ -288,7 +288,18 @@ def start_rest_server(
             # Call jog
             result = robot.start_jog(axis, direction, step, vel, acc)
 
-            return jsonify({"result": result, "success": result == 0})
+            if result > 0:
+                return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+            elif result == 0:
+                return jsonify({"result": result, "success": True}), 200
+            elif result == -2:
+                return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+            elif result == -3:
+                return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+            elif result == -5:
+                return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+            else:
+                return jsonify({"result": result, "success": False, "error": f"Jog failed with code {result}"}), 500
 
         except Exception as e:
             robot.node.get_logger().error(f"Jog endpoint error: {e}")
@@ -307,6 +318,4 @@ def start_rest_server(
         sys.stdout = f
         sys.stderr = f
         app.run(host=host, port=port, threaded=True, use_reloader=False)
-
-    app.run(host=host, port=port, threaded=True, use_reloader=False)
 

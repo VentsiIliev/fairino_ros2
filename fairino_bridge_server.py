@@ -58,7 +58,18 @@ def move_cartesian():
         return jsonify({"error": "Invalid position format"}), 400
 
     result = robot.move_cartesian(position, tool=tool, user=user, vel=vel, acc=acc)
-    return jsonify({"result": result, "success": result == 0})
+    if result > 0:
+        return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+    elif result == 0:
+        return jsonify({"result": result, "success": True, "queued": False}), 200
+    elif result == -5:
+        return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+    elif result == -2:
+        return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+    elif result == -3:
+        return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+    else:
+        return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
 
 @app.route('/move/linear', methods=['POST'])
 def move_linear():
@@ -74,7 +85,18 @@ def move_linear():
         return jsonify({"error": "Invalid position format"}), 400
 
     result = robot.move_liner(position, tool=tool, user=user, vel=vel, acc=acc)
-    return jsonify({"result": result, "success": result == 0})
+    if result > 0:
+        return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+    elif result == 0:
+        return jsonify({"result": result, "success": True, "queued": False}), 200
+    elif result == -5:
+        return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+    elif result == -2:
+        return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+    elif result == -3:
+        return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+    else:
+        return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
 
 @app.route('/execute/path', methods=['POST'])
 def execute_path():
@@ -92,7 +114,18 @@ def execute_path():
         return jsonify({"error": "No path provided"}), 400
 
     result = robot.execute_path(path, rx=rx, ry=ry, rz=rz, vel=vel, acc=acc, blocking=blocking)
-    return jsonify({"result": result, "success": result == 0})
+    if result > 0:
+        return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+    elif result == 0:
+        return jsonify({"result": result, "success": True, "queued": False}), 200
+    elif result == -5:
+        return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+    elif result == -2:
+        return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+    elif result == -3:
+        return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+    else:
+        return jsonify({"result": result, "success": False, "error": f"Path execution failed with code {result}"}), 500
 
 @app.route('/position/current', methods=['GET'])
 def get_position():
@@ -114,7 +147,8 @@ def get_velocity():
 def stop_motion():
     """Stop all robot motion"""
     result = robot.stop_motion()
-    return jsonify({"result": result, "success": result == 0})
+    success = (result == 0)
+    return jsonify({"stopped": success, "result": result, "success": success})
 
 @app.route('/workobject/set', methods=['POST'])
 def set_workobject():
@@ -141,7 +175,18 @@ def jog():
     acc = data.get('acc', 10.0)
 
     result = robot.start_jog(axis, direction, step, vel, acc)
-    return jsonify({"result": result, "success": result == 0})
+    if result > 0:
+        return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+    elif result == 0:
+        return jsonify({"result": result, "success": True}), 200
+    elif result == -2:
+        return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
+    elif result == -3:
+        return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
+    elif result == -5:
+        return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
+    else:
+        return jsonify({"result": result, "success": False, "error": f"Jog failed with code {result}"}), 500
 
 if __name__ == '__main__':
     # Start ROS2 in background thread
