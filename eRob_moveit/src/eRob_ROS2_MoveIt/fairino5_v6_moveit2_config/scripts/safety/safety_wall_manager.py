@@ -13,10 +13,11 @@ This module provides centralized management of safety boundaries including:
 import rclpy
 import time
 from rclpy.node import Node
-from moveit_msgs.msg import PlanningScene, CollisionObject
+from moveit_msgs.msg import PlanningScene, CollisionObject, AllowedCollisionMatrix, AllowedCollisionEntry
 from shape_msgs.msg import SolidPrimitive
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Pose
+import config
 
 
 class SafetyWallManager:
@@ -32,8 +33,9 @@ class SafetyWallManager:
     - Publish collision objects and markers
     """
 
-    def __init__(self, node: Node, workspace: dict = None, margin: float = 0.01,
-                 enabled: bool = True, marker_publish_interval: float = 2.0):
+    def __init__(self, node: Node, workspace: dict = None, margin: float = config.SAFETY_MARGIN_M,
+                 enabled: bool = True, marker_publish_interval: float = config.MARKER_PUBLISH_INTERVAL_S,
+                 acm_bypass_links: frozenset = config.WALL_BYPASS_LINKS):
         """
         Initialize safety wall manager.
 
@@ -50,13 +52,14 @@ class SafetyWallManager:
         self.safety_margin = margin
         self.safety_enabled = enabled
         self.walls_marker_array = None
+        self.acm_bypass_links = set(acm_bypass_links)
 
         # Create ROS2 publishers
         self.planning_scene_pub = self.node.create_publisher(
-            PlanningScene, '/planning_scene', 10
+            PlanningScene, config.TOPIC_PLANNING_SCENE, 10
         )
         self.safety_walls_pub = self.node.create_publisher(
-            MarkerArray, '/safety_walls', 10
+            MarkerArray, config.TOPIC_SAFETY_WALLS, 10
         )
 
         # Create timer for periodic marker publishing
@@ -134,8 +137,24 @@ class SafetyWallManager:
 
         return True, "Position is safe"
 
+    def add_acm_bypass_link(self, link_name: str):
+        """
+        Allow a link to contact any safety wall without aborting MoveIt planning.
+
+        Call this to suppress wall-collision errors for tool meshes, end-effector
+        geometry, or any other link that legitimately touches the workspace boundary.
+        Takes effect on the next publish_to_planning_scene() / force_update() call.
+
+        Example:
+            safety_manager.add_acm_bypass_link('disk_link')
+            safety_manager.force_update()
+        """
+        self.acm_bypass_links.add(link_name)
+        self.node.get_logger().info(
+            f'[SafetyWallManager] ACM bypass added for: {link_name}')
+
     def publish_to_planning_scene(self):
-        """Publish safety walls as collision objects to MoveIt planning scene."""
+        """Publish safety walls as collision objects + ACM to MoveIt planning scene."""
         if not self.safety_workspace:
             self.node.get_logger().warning(
                 '[SafetyWallManager] Cannot publish to planning scene: no workspace configured'
@@ -145,9 +164,12 @@ class SafetyWallManager:
         ps = PlanningScene()
         ps.is_diff = True
         ps.world.collision_objects.extend(self._create_collision_objects())
+        ps.allowed_collision_matrix = self._create_wall_acm()
 
         self.planning_scene_pub.publish(ps)
-        self.node.get_logger().info('[SafetyWallManager] Published safety walls as collision objects')
+        self.node.get_logger().info(
+            f'[SafetyWallManager] Published safety walls + ACM '
+            f'(bypass links: {sorted(self.acm_bypass_links)})')
 
     def force_update(self):
         """
@@ -207,6 +229,33 @@ class SafetyWallManager:
 
     # ========== Private Methods ==========
 
+    def _create_wall_acm(self) -> AllowedCollisionMatrix:
+        acm = AllowedCollisionMatrix()
+        # default_entry_names only fills gaps — does NOT override SRDF disable_collisions entries
+        phantom = sorted(config.SAFETY_WALL_NAMES)
+        acm.default_entry_names = phantom
+        acm.default_entry_values = [True] * len(phantom)
+        return acm
+
+    def _wall_geometries(self) -> list:
+        """Return list of (name, cx, cy, cz, sx, sy, sz) for all 6 boundary walls."""
+        ws = self.safety_workspace
+        xc = (ws['x_min'] + ws['x_max']) / 2
+        yc = (ws['y_min'] + ws['y_max']) / 2
+        zc = (ws['z_min'] + ws['z_max']) / 2
+        dx = ws['x_max'] - ws['x_min']
+        dy = ws['y_max'] - ws['y_min']
+        dz = ws['z_max'] - ws['z_min']
+        t  = config.WALL_THICKNESS_M
+        return [
+            ('wall_x_min', ws['x_min'], yc, zc, t,  dy, dz),
+            ('wall_x_max', ws['x_max'], yc, zc, t,  dy, dz),
+            ('wall_y_min', xc, ws['y_min'], zc, dx, t,  dz),
+            ('wall_y_max', xc, ws['y_max'], zc, dx, t,  dz),
+            ('wall_z_min', xc, yc, ws['z_min'], dx, dy, t),
+            ('wall_z_max', xc, yc, ws['z_max'], dx, dy, t),
+        ]
+
     def _create_collision_objects(self) -> list:
         """
         Create MoveIt collision objects corresponding to safety walls.
@@ -214,34 +263,13 @@ class SafetyWallManager:
         Returns:
             list: List of 6 CollisionObject instances (one per boundary wall)
         """
-        ws = self.safety_workspace
         collision_objects = []
-
-        # Calculate workspace centers from actual bounds
-        x_center = (ws['x_min'] + ws['x_max']) / 2
-        y_center = (ws['y_min'] + ws['y_max']) / 2
-        z_center = (ws['z_min'] + ws['z_max']) / 2
-
-        # Define 6 walls (name, center_x, center_y, center_z, size_x, size_y, size_z)
-        walls = [
-            ('wall_x_min', ws['x_min'], y_center, z_center,
-             0.01, ws['y_max'] - ws['y_min'], ws['z_max'] - ws['z_min']),
-            ('wall_x_max', ws['x_max'], y_center, z_center,
-             0.01, ws['y_max'] - ws['y_min'], ws['z_max'] - ws['z_min']),
-            ('wall_y_min', x_center, ws['y_min'], z_center,
-             ws['x_max'] - ws['x_min'], 0.01, ws['z_max'] - ws['z_min']),
-            ('wall_y_max', x_center, ws['y_max'], z_center,
-             ws['x_max'] - ws['x_min'], 0.01, ws['z_max'] - ws['z_min']),
-            ('wall_z_min', x_center, y_center, ws['z_min'],
-             ws['x_max'] - ws['x_min'], ws['y_max'] - ws['y_min'], 0.01),
-            ('wall_z_max', x_center, y_center, ws['z_max'],
-             ws['x_max'] - ws['x_min'], ws['y_max'] - ws['y_min'], 0.01),
-        ]
+        walls = self._wall_geometries()
 
         for name, cx, cy, cz, sx, sy, sz in walls:
             co = CollisionObject()
             co.id = name
-            co.header.frame_id = 'base_link'
+            co.header.frame_id = config.BASE_LINK
 
             box = SolidPrimitive()
             box.type = SolidPrimitive.BOX
@@ -280,34 +308,12 @@ class SafetyWallManager:
 
         self.node.get_logger().info('[SafetyWallManager] Creating workspace boundary wall markers...')
 
-        ws = self.safety_workspace
-
-        # Calculate workspace centers from actual bounds
-        x_center = (ws['x_min'] + ws['x_max']) / 2
-        y_center = (ws['y_min'] + ws['y_max']) / 2
-        z_center = (ws['z_min'] + ws['z_max']) / 2
-
-        # Define 6 walls (name, center_x, center_y, center_z, size_x, size_y, size_z)
-        walls = [
-            ('wall_x_min', ws['x_min'], y_center, z_center,
-             0.01, ws['y_max']-ws['y_min'], ws['z_max']-ws['z_min']),
-            ('wall_x_max', ws['x_max'], y_center, z_center,
-             0.01, ws['y_max']-ws['y_min'], ws['z_max']-ws['z_min']),
-            ('wall_y_min', x_center, ws['y_min'], z_center,
-             ws['x_max']-ws['x_min'], 0.01, ws['z_max']-ws['z_min']),
-            ('wall_y_max', x_center, ws['y_max'], z_center,
-             ws['x_max']-ws['x_min'], 0.01, ws['z_max']-ws['z_min']),
-            ('wall_z_min', x_center, y_center, ws['z_min'],
-             ws['x_max']-ws['x_min'], ws['y_max']-ws['y_min'], 0.01),
-            ('wall_z_max', x_center, y_center, ws['z_max'],
-             ws['x_max']-ws['x_min'], ws['y_max']-ws['y_min'], 0.01),
-        ]
-
+        walls = self._wall_geometries()
         marker_array = MarkerArray()
 
         for i, (wall_name, cx, cy, cz, sx, sy, sz) in enumerate(walls):
             marker = Marker()
-            marker.header.frame_id = 'base_link'
+            marker.header.frame_id = config.BASE_LINK
             marker.ns = 'safety_walls'
             marker.id = i
             marker.type = Marker.CUBE
@@ -339,6 +345,7 @@ class SafetyWallManager:
                 f'[SafetyWallManager] Created {wall_name} at ({cx:.2f}, {cy:.2f}, {cz:.2f})'
             )
 
+        ws = self.safety_workspace
         self.node.get_logger().info('[SafetyWallManager] Workspace boundary markers created!')
         self.node.get_logger().info(
             f'[SafetyWallManager] Workspace: '

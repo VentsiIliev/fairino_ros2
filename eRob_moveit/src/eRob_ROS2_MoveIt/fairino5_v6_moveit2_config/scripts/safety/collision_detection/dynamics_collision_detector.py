@@ -9,6 +9,7 @@ to dedicated classes while preserving the original public API.
 import numpy as np
 from typing import Optional, Callable, List
 from enum import Enum
+import config
 
 from .external_torque_estimator import ExternalTorqueEstimator
 from .collision_detection_strategy import (
@@ -214,17 +215,17 @@ class DynamicsCollisionDetector:
 def create_dynamics_collision_detector(
     urdf_path: Optional[str] = None,
     urdf_string: Optional[str] = None,
-    base_link: str = 'base_link',
-    tip_link: str = 'wrist3_link',
-    num_joints: int = 6,
+    base_link: str = config.BASE_LINK,
+    tip_link: str = config.COLLISION_TIP_LINK,
+    num_joints: int = config.NUM_JOINTS,
     external_torque_rate_thresholds: Optional[np.ndarray] = None,
     external_torque_sustained_thresholds: Optional[np.ndarray] = None,
     enable_sustained_check: bool = False,
     rate_vel_scale: float = 2.0,
     rate_acc_scale: float = 0.5,
-    filter_alpha: float = 0.7,
-    confirmation_samples: int = 1,
-    recovery_time: float = 1.0,
+    filter_alpha: float = config.COLLISION_FILTER_ALPHA,
+    confirmation_samples: int = config.COLLISION_CONFIRMATION_SAMPLES,
+    recovery_time: float = config.COLLISION_RECOVERY_TIME_S,
     gravity: np.ndarray = np.array([0, 0, 9.81]),
     include_gravity: bool = False,
     logger=None
@@ -237,9 +238,9 @@ def create_dynamics_collision_detector(
     """
     # Defaults
     if external_torque_rate_thresholds is None:
-        external_torque_rate_thresholds = np.array([5.0, 5.0, 4.0, 2.7, 2, 1.7])
+        external_torque_rate_thresholds = np.array(config.COLLISION_RATE_THRESHOLDS)
     if external_torque_sustained_thresholds is None:
-        external_torque_sustained_thresholds = np.array([12.0, 12.0, 10.0, 8.0, 6.0, 5.0])
+        external_torque_sustained_thresholds = np.array(config.COLLISION_SUSTAINED_THRESHOLDS)
 
     # 1. Model
     model = KDLInverseDynamicsModel(

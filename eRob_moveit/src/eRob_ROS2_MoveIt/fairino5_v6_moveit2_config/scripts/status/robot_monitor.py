@@ -7,6 +7,7 @@ from geometry_msgs.msg import TwistStamped, PoseStamped
 from std_msgs.msg import Float64MultiArray
 from utils.transformation_utils import TransformationUtils
 import time
+import config
 
 
 class RobotMonitor:
@@ -21,7 +22,7 @@ class RobotMonitor:
     - /joint_acceleration (Float64MultiArray): Joint accelerations from C++ node
     """
 
-    def __init__(self, ros_node, velocity_window_size=5, acceleration_window_size=5, tcp_transform=None, stable_update_rate_hz=50.0):
+    def __init__(self, ros_node, velocity_window_size=config.MONITOR_VELOCITY_WINDOW, acceleration_window_size=config.MONITOR_ACCELERATION_WINDOW, tcp_transform=None, stable_update_rate_hz=config.MONITOR_UPDATE_RATE_HZ):
         """
         Initialize robot monitor.
 
@@ -64,7 +65,7 @@ class RobotMonitor:
 
         self.cart_pos_sub = self.node.create_subscription(
             PoseStamped,
-            '/cartesian_position',
+            config.TOPIC_CARTESIAN_POSITION,
             self._cartesian_position_callback,
             10
         )
@@ -72,7 +73,7 @@ class RobotMonitor:
         # Subscribe to Cartesian velocity from C++ node
         self.cart_vel_sub = self.node.create_subscription(
             TwistStamped,
-            '/cartesian_velocity',
+            config.TOPIC_CARTESIAN_VELOCITY,
             self._cartesian_velocity_callback,
             10
         )
@@ -80,7 +81,7 @@ class RobotMonitor:
         # Subscribe to Cartesian acceleration from C++ node
         self.cart_acc_sub = self.node.create_subscription(
             TwistStamped,
-            '/cartesian_acceleration',
+            config.TOPIC_CARTESIAN_ACCELERATION,
             self._cartesian_acceleration_callback,
             10
         )
@@ -88,7 +89,7 @@ class RobotMonitor:
         # Subscribe to joint velocity from C++ node
         self.joint_vel_sub = self.node.create_subscription(
             Float64MultiArray,
-            '/joint_velocity',
+            config.TOPIC_JOINT_VELOCITY,
             self._joint_velocity_callback,
             10
         )
@@ -96,16 +97,16 @@ class RobotMonitor:
         # Subscribe to joint acceleration from C++ node
         self.joint_acc_sub = self.node.create_subscription(
             Float64MultiArray,
-            '/joint_acceleration',
+            config.TOPIC_JOINT_ACCELERATION,
             self._joint_acceleration_callback,
             10
         )
 
-        self.node.get_logger().info("RobotMonitor: Subscribed to /cartesian_position")
-        self.node.get_logger().info("RobotMonitor: Subscribed to /cartesian_velocity")
-        self.node.get_logger().info("RobotMonitor: Subscribed to /cartesian_acceleration")
-        self.node.get_logger().info("RobotMonitor: Subscribed to /joint_velocity")
-        self.node.get_logger().info("RobotMonitor: Subscribed to /joint_acceleration")
+        self.node.get_logger().info(f"RobotMonitor: Subscribed to {config.TOPIC_CARTESIAN_POSITION}")
+        self.node.get_logger().info(f"RobotMonitor: Subscribed to {config.TOPIC_CARTESIAN_VELOCITY}")
+        self.node.get_logger().info(f"RobotMonitor: Subscribed to {config.TOPIC_CARTESIAN_ACCELERATION}")
+        self.node.get_logger().info(f"RobotMonitor: Subscribed to {config.TOPIC_JOINT_VELOCITY}")
+        self.node.get_logger().info(f"RobotMonitor: Subscribed to {config.TOPIC_JOINT_ACCELERATION}")
 
         if self.stable_update_rate_hz > 0:
             self._start_stable_update_timer()
@@ -308,11 +309,11 @@ class RobotMonitor:
         # Wrist3 FK
         T = np.eye(4)
         T = T @ TransformationUtils.rot_z(q[0])
-        T = T @ TransformationUtils.trans(0, 0, 0.152) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
-        T = T @ TransformationUtils.trans(-0.425, 0, 0) @ TransformationUtils.rot_z(q[2])
-        T = T @ TransformationUtils.trans(-0.39501, 0, 0) @ TransformationUtils.rot_z(q[3])
-        T = T @ TransformationUtils.trans(0, 0, 0.1021) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
-        T = T @ TransformationUtils.trans(0, 0, 0.102) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
+        T = T @ TransformationUtils.trans(0, 0, config.DH_D1) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
+        T = T @ TransformationUtils.trans(config.DH_A2, 0, 0) @ TransformationUtils.rot_z(q[2])
+        T = T @ TransformationUtils.trans(config.DH_A3, 0, 0) @ TransformationUtils.rot_z(q[3])
+        T = T @ TransformationUtils.trans(0, 0, config.DH_D4) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
+        T = T @ TransformationUtils.trans(0, 0, config.DH_D5) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
 
         # Apply TCP offset if provided
         if tcp_transform is not None:

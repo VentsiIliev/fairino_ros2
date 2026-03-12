@@ -16,6 +16,7 @@ from moveit_msgs.srv import GetCartesianPath
 from utils.transformation_utils import TransformationUtils
 from .trajectory_planner import _cartesian_path_response, _jacobian_fallback_move
 import numpy as np
+import config
 
 
 # ------------------------------------------------------------------------------
@@ -154,13 +155,13 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         max_step = 0.025  # >300mm: 25mm step (~5× faster, ~26 IK calls for 645mm)
 
     request = GetCartesianPath.Request()
-    request.header.frame_id = 'base_link'
-    request.group_name = 'fairino5_v6_group'
-    request.link_name = 'ee_link'
+    request.header.frame_id = config.BASE_LINK
+    request.group_name = config.PLANNING_GROUP
+    request.link_name = config.EE_LINK
     request.waypoints = waypoints
     request.max_step = max_step
     request.jump_threshold = 0.0
-    request.avoid_collisions = False
+    request.avoid_collisions = True
     request.max_velocity_scaling_factor = vel_scaling
     request.max_acceleration_scaling_factor = acc_scaling
 

@@ -20,9 +20,10 @@ from robot_controller import RobotController
 from fairino_ros2_robot import FairinoRos2Robot
 from utils.work_object import WorkObject
 from enums import RobotAxis, Direction
+import config
 
 
-LOG_FILE = "/tmp/fairino_rest_server.log"
+LOG_FILE = config.REST_LOG
 logger = logging.getLogger("fairino_rest_server")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -36,8 +37,8 @@ if not logger.handlers:
 def start_rest_server(
         robot: FairinoRos2Robot | None = None,
         node: RobotController | None = None,
-        host: str = "0.0.0.0",
-        port: int = 5000,
+        host: str = config.REST_HOST,
+        port: int = config.REST_PORT,
         start_ros: bool = True,
 ):
     """
@@ -59,7 +60,7 @@ def start_rest_server(
     if start_ros:
         rclpy.init()
         node = RobotController()
-        node.wait_for_monitor(timeout_sec=10.0)
+        node.wait_for_monitor(timeout_sec=config.MONITOR_WAIT_TIMEOUT_S)
 
         robot = FairinoRos2Robot(ip="0.0.0.0", node=node, workobject=None)
 
@@ -96,8 +97,8 @@ def start_rest_server(
             position,
             tool=data.get("tool", 0),
             user=0,
-            vel=data.get("vel", 30),
-            acc=data.get("acc", 30),
+            vel=data.get("vel", config.DEFAULT_VEL_PERCENT),
+            acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
         )
 
         # Handle queue and error responses
@@ -127,8 +128,8 @@ def start_rest_server(
             position,
             tool=data.get("tool", 0),
             user=0,
-            vel=data.get("vel", 30),
-            acc=data.get("acc", 30),
+            vel=data.get("vel", config.DEFAULT_VEL_PERCENT),
+            acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
         )
 
         # Handle queue and error responses
@@ -162,8 +163,8 @@ def start_rest_server(
                 logger.info(f"Flattened nested path, now has {len(path)} waypoints")
 
         # Ensure vel and acc are floats and normalize to 0.0-1.0 range
-        vel = float(data.get("vel", 0.6))
-        acc = float(data.get("acc", 0.4))
+        vel = float(data.get("vel", config.DEFAULT_VEL_SCALING))
+        acc = float(data.get("acc", config.DEFAULT_ACC_SCALING))
 
         # If values are > 1.0, assume they're percentages (0-100) and convert to scaling factors (0.0-1.0)
         if vel > 1.0:

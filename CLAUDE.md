@@ -129,6 +129,20 @@ REST POST /move/cartesian
 - **Trajectory parameterization:** TOTG by default; switch to Ruckig for smoother S-curve profiles
 - **Adaptive step sizing:** 0.8–1.5 mm based on path complexity
 
+## Configuration
+
+All Python runtime constants are centralized in `scripts/config.py` (under `eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/`).
+
+**To tune any parameter** — velocity defaults, safety margins, workspace offsets, DH parameters, topic names, collision thresholds — edit `config.py`. Do not hardcode values in individual scripts.
+
+Key groups in `config.py`:
+- **Safety**: `SAFETY_MARGIN_M`, `WALL_XY_OFFSET_M`, `WALL_BYPASS_LINKS`, `SAFETY_WALL_NAMES`
+- **Motion defaults**: `DEFAULT_VEL_SCALING` (0.6), `DEFAULT_ACC_SCALING` (0.4), `DEFAULT_VEL_PERCENT` (30%)
+- **DH parameters**: `DH_D1`, `DH_A2`, `DH_A3`, `DH_D4`, `DH_D5` — Fairino5 v6 kinematics (used in Jacobian FK and robot_monitor FK)
+- **Topics/services/actions**: all ROS2 interface names
+- **Collision detection**: threshold arrays, filter alpha, recovery time
+- **Tool registry**: `TOOL_REGISTRY`, `TOOL_ID_MAP`
+
 ## Error Codes
 
 See [`docs/error_codes.md`](docs/error_codes.md) for the full table of internal motion error codes (`0`, `-1` through `-10`, `> 0` for queued), their meanings, HTTP status mappings, and which source file generates each code.

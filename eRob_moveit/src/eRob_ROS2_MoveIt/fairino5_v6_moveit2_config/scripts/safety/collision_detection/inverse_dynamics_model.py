@@ -9,6 +9,7 @@ expected joint torques from the robot's dynamic model (RNEA).
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import Optional
+import config
 
 try:
     import PyKDL
@@ -60,9 +61,9 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
         self,
         urdf_path: Optional[str] = None,
         urdf_string: Optional[str] = None,
-        base_link: str = 'base_link',
-        tip_link: str = 'wrist3_link',
-        num_joints: int = 6,
+        base_link: str = config.BASE_LINK,
+        tip_link: str = config.COLLISION_TIP_LINK,
+        num_joints: int = config.NUM_JOINTS,
         gravity: np.ndarray = np.array([0, 0, 9.81]),
         include_gravity: bool = False,
         logger=None

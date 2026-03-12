@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from enums import RobotAxis, Direction
+import config
 
 
 class FairinoRos2Robot:
@@ -100,64 +101,44 @@ class FairinoRos2Robot:
                 return result
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
-                self.wait_for_position(position, threshold=1.0, timeout=60.0)
+                self.wait_for_position(position, threshold=config.BLOCKING_POS_THRESHOLD_MM, timeout=config.BLOCKING_MOVE_TIMEOUT_S)
             return 0  # Success
         except Exception as e:
-            print(f"move_cartesian error: {e}")
-            return -1  # Error
+            self.node.get_logger().error(f'[MOVE_LINER] Exception: {e}')
+            return -1
 
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True):
-        """
-        Executes a linear movement with blending.
-
-        Args:
-            position (list): Target position [x, y, z, rx, ry, rz] in tool frame
-            tool (int): Tool frame ID (position is relative to this tool frame)
-            user (int): User frame ID (0 = default workobject)
-            vel (float): Velocity (percentage 0-100)
-            acc (float): Acceleration (percentage 0-100)
-            blendR (float): Blend radius (not used in ROS2 implementation)
-            blocking (bool): Wait for motion to complete (not used in ROS2 async implementation)
-
-        Returns:
-            int: 0 on success, error code otherwise
-        """
         if len(position) != 6:
-            return -1  # Invalid position format
-
+            return -1
         try:
-            # Transform position from user frame to base frame
             position_base = self.apply_workobject(position, user_id=user)
-
-            # Get tool transform for the specified tool ID
             tool_transform = self.node.get_tool_transform(tool)
-
             vel_scale = max(0.0, min(1.0, vel / 100.0))
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
             from motion.strategies import SingleTargetStrategy
-            result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN', tool_transform=tool_transform))
-
+            result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale,
+                                                            planner_id='LIN', tool_transform=tool_transform))
             if result != 0:
+                self.node.get_logger().info(f"[MOVE_LINER] execute() returned {result}")
                 return result
 
             if blocking:
                 self.node.get_logger().info(f"[MOVE_LINER] Blocking until position reached: {position_base}")
-                import time
-                timeout = 60.0
-                start = time.time()
-                time.sleep(0.05)  # let is_executing be set
-                while self.node.is_executing:
-                    if time.time() - start > timeout:
-                        self.node.get_logger().error('[MOVE_LINER] Timeout waiting for motion to complete')
-                        return -1
-                    time.sleep(0.01)
-                return self.node.last_move_result
+                success = self.wait_for_position(position_base,
+                                                 threshold=config.BLOCKING_POS_THRESHOLD_MM,
+                                                 timeout=config.BLOCKING_MOVE_TIMEOUT_S)
+                if success:
+                    self.node.get_logger().info(f"[MOVE_LINER] Position reached successfully")
+                else:
+                    self.node.get_logger().error(f"[MOVE_LINER] Failed to reach position within timeout -> {config.BLOCKING_MOVE_TIMEOUT_S}s.")
+
+                return 0 if success else -1
 
             return 0
         except Exception as e:
             print(f"move_liner error: {e}")
-            return -1  # Error
+            return -1
 
     def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True):
         """Execute path with automatic selection of best execution strategy.
@@ -185,7 +166,7 @@ class FairinoRos2Robot:
                         rx, ry, rz = current_pose[3], current_pose[4], current_pose[5]
                     else:
                         # Fallback if current position unavailable
-                        rx, ry, rz = 180.0, 0.0, 0.0
+                        rx, ry, rz = config.DEFAULT_ORIENTATION
             elif len(wp) == 6:
                 wx, wy, wz, wrx, wry, wrz = wp
                 waypoints_xyz.append([wx, wy, wz])
@@ -253,7 +234,7 @@ class FairinoRos2Robot:
         if blocking:
             last_waypoint = waypoints_xyz[-1] + [rx, ry, rz]
             self.node.get_logger().info(f"[EXECUTE_PATH] Blocking until final position reached")
-            success = self.wait_for_position(last_waypoint, threshold=1.0, timeout=60.0)
+            success = self.wait_for_position(last_waypoint, threshold=config.BLOCKING_POS_THRESHOLD_MM, timeout=config.BLOCKING_MOVE_TIMEOUT_S)
             return 0 if success else -1
 
         return 0
@@ -314,16 +295,23 @@ class FairinoRos2Robot:
             return None
         return tuple(data['cart_acceleration'].tolist())
 
-    def wait_for_position(self, target_position, threshold=1.0, timeout=30.0, check_interval=0.01):
+    def wait_for_position(self, target_position, threshold=config.BLOCKING_POS_THRESHOLD_MM,
+                          timeout=config.BLOCKING_MOVE_TIMEOUT_S,
+                          check_interval=config.BLOCKING_CHECK_INTERVAL_S):
         import time, math
-        start_time = time.time()
-        if len(target_position) >= 3:
-            target_xyz = target_position[:3]
-        else:
+        if len(target_position) < 3:
             return False
+        target_xyz = target_position[:3]
+        start_time = time.time()
+        current_xyz = None
+        distance = None
 
         while True:
             if time.time() - start_time > timeout:
+                self.node.get_logger().error(
+                    f'[WAIT_POS] Timeout ({timeout}s) — never reached {[f"{v:.2f}" for v in target_xyz]}'
+                    + (f' | current={[f"{v:.2f}" for v in current_xyz]}'
+                       f' | delta={distance:.2f}mm' if current_xyz is not None else ' | no position data'))
                 return False
 
             if self.node is None:
@@ -339,8 +327,9 @@ class FairinoRos2Robot:
                 current_xyz = data['cartesian'][:3].tolist()
                 distance = math.sqrt(sum((current_xyz[i] - target_xyz[i]) ** 2 for i in range(3)))
                 if distance < threshold:
+                    self.node.get_logger().info(f'[WAIT_POS] ✓ Reached (dist={distance:.3f}mm)')
                     return True
-            except:
+            except Exception:
                 pass
 
             time.sleep(check_interval)

@@ -3,12 +3,13 @@
 
 import json
 from std_msgs.msg import String
+import config
 
 
 class RobotStatusPublisher:
     """Publishes robot execution status and queue information to ROS2 topic."""
 
-    def __init__(self, node, motion_queue, topic_name='/robot_status', publish_rate=10.0):
+    def __init__(self, node, motion_queue, topic_name=config.TOPIC_ROBOT_STATUS, publish_rate=config.STATUS_PUBLISH_RATE_HZ):
         """
         Initialize status publisher.
 

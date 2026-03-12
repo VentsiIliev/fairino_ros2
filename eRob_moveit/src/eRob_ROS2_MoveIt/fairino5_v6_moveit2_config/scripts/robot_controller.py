@@ -23,30 +23,30 @@ from status.robot_monitor import RobotMonitor
 from status.robot_status_publisher import RobotStatusPublisher
 from motion.motion_queue import MotionQueue
 from utils.workspace_extractor import _extract_workspace_from_urdf
-# ============ Safety Workspace Boundaries ============
-# Safety workspace will be extracted from mounting_surface link mesh geometry
-# Fallback values if mesh extraction fails
-
-
-SAFETY_MARGIN = 0.01
-
-# Inset side walls (X and Y only) by this amount in meters.
-
-# Z (top/bottom) walls are unchanged.
-WALL_XY_OFFSET = 0  # 0 mm
-
-tool_registry = {
-    # Format: [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
-    # Position in millimeters, orientation in degrees
-    "TOOL_0": [0, 0, 0, 0, 0, 0],
-    "TOOL_1": [0.081, -7.250, 0, 0, 0, 0],
-}
-
-# Tool ID to name mapping for move commands
-tool_id_map = {
-    0: "TOOL_0",
-    1: "TOOL_1",
-}
+# All tunable constants live in config.py
+from config import (
+    SAFETY_MARGIN_M as SAFETY_MARGIN,
+    WALL_XY_OFFSET_M as WALL_XY_OFFSET,
+    TOOL_REGISTRY as tool_registry,
+    TOOL_ID_MAP as tool_id_map,
+    MOTION_QUEUE_MAX_SIZE,
+    MARKER_PUBLISH_INTERVAL_S,
+    TOPIC_ROBOT_STATUS,
+    STATUS_PUBLISH_RATE_HZ,
+    WS_EXTRACT_MAX_RETRIES,
+    WS_EXTRACT_RETRY_DELAY,
+    MONITOR_WAIT_TIMEOUT_S,
+    ACTION_FOLLOW_TRAJECTORY,
+    SERVICE_CARTESIAN_PATH,
+    SERVICE_APPLY_IPP,
+    COLLISION_TIP_LINK,
+    BASE_LINK,
+    NUM_JOINTS,
+    COLLISION_RATE_THRESHOLDS,
+    COLLISION_SUSTAINED_THRESHOLDS,
+    COLLISION_CONFIRMATION_SAMPLES,
+    COLLISION_RECOVERY_TIME_S,
+)
 
 
 class RobotController(Node):
@@ -63,14 +63,14 @@ class RobotController(Node):
         self.execution_lock = Lock()
 
         # Motion queue for sequential execution
-        self.motion_queue = MotionQueue(max_size=10)
+        self.motion_queue = MotionQueue(max_size=MOTION_QUEUE_MAX_SIZE)
 
         # Status publisher - broadcasts execution state and queue size
         self.status_publisher = RobotStatusPublisher(
             node=self,
             motion_queue=self.motion_queue,
-            topic_name='/robot_status',
-            publish_rate=10.0  # 10 Hz
+            topic_name=TOPIC_ROBOT_STATUS,
+            publish_rate=STATUS_PUBLISH_RATE_HZ
         )
 
         self.monitor = None
@@ -81,7 +81,7 @@ class RobotController(Node):
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
         t1 = time.time()
-        workspace = _extract_workspace_from_urdf(self,max_retries=60,retry_delay=2.0)
+        workspace = _extract_workspace_from_urdf(self, max_retries=WS_EXTRACT_MAX_RETRIES, retry_delay=WS_EXTRACT_RETRY_DELAY)
 
         self.get_logger().info(f'[Init] Workspace extraction took {time.time() - t1:.2f}s')
 
@@ -104,7 +104,7 @@ class RobotController(Node):
             workspace=workspace,
             margin=SAFETY_MARGIN,
             enabled=True,
-            marker_publish_interval=2.0
+            marker_publish_interval=MARKER_PUBLISH_INTERVAL_S
         )
 
         # Defer initial safety wall publishing to speed up initialization
@@ -112,10 +112,9 @@ class RobotController(Node):
         self._safety_init_timer = self.create_timer(1.0, self._delayed_safety_init)
 
         # ROS clients
-        self.controller_client = ActionClient(self, FollowJointTrajectory,
-                                              '/fairino5_controller/follow_joint_trajectory')
-        self.cart_path_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
-        self.ipp_client = self.create_client(ApplyIPP, '/apply_ipp')
+        self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
+        self.cart_path_client = self.create_client(GetCartesianPath, SERVICE_CARTESIAN_PATH)
+        self.ipp_client = self.create_client(ApplyIPP, SERVICE_APPLY_IPP)
 
         self.prev_cartesian = None
         self.current_joint_state = None  # Store the latest joint state for trajectory planning
@@ -133,14 +132,14 @@ class RobotController(Node):
         # τ_external = τ_measured - τ_expected(q, dq, ddq)
         self.collision_detector = create_dynamics_collision_detector(
             urdf_path=self.urdf_path,
-            base_link='base_link',
-            tip_link='wrist3_link',
-            num_joints=6,
-            external_torque_rate_thresholds=np.array([15.0, 15.0, 12.0, 8.0, 6.0, 4.0]),
-            external_torque_sustained_thresholds=np.array([12.0, 12.0, 10.0, 8.0, 6.0, 5.0]),
+            base_link=BASE_LINK,
+            tip_link=COLLISION_TIP_LINK,
+            num_joints=NUM_JOINTS,
+            external_torque_rate_thresholds=np.array(COLLISION_RATE_THRESHOLDS),
+            external_torque_sustained_thresholds=np.array(COLLISION_SUSTAINED_THRESHOLDS),
             enable_sustained_check=False,  # Disable to avoid false positives during high acceleration
-            confirmation_samples=1,
-            recovery_time=1.0,
+            confirmation_samples=COLLISION_CONFIRMATION_SAMPLES,
+            recovery_time=COLLISION_RECOVERY_TIME_S,
             logger=self.get_logger(),
             include_gravity=False,
         )
@@ -152,7 +151,7 @@ class RobotController(Node):
         self.get_logger().info('[Init] Dynamics collision detector initialized (ALWAYS ARMED for testing)')
 
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
-        self.create_subscription(GoalStatusArray, '/fairino5_controller/follow_joint_trajectory/_action/status',
+        self.create_subscription(GoalStatusArray, ACTION_FOLLOW_TRAJECTORY + '/_action/status',
                                  self._controller_status_callback, 10)
 
         self.get_logger().info(f'[Init] RobotController ready ({time.time() - start_time:.2f}s total)')

@@ -1,5 +1,6 @@
 from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
+import config
 
 
 def _send_trajectory_to_controller(robot_controller, joint_trajectory):
@@ -49,7 +50,7 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
     for name in joint_trajectory.joint_names:
         tol = JointTolerance()
         tol.name = name
-        tol.position = 0.01  # 0.01 rad final position tolerance
+        tol.position = config.EXECUTOR_GOAL_POS_TOL_RAD  # 0.01 rad final position tolerance
         tol.velocity = 0.0  # Must stop at end
         tol.acceleration = 0.0
         goal_tolerance.append(tol)
@@ -66,7 +67,7 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
         traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
         # Tolerance = 2x trajectory duration or 5s minimum
         # This gives controller plenty of room for execution delays
-        time_tolerance_sec = max(5.0, traj_duration_sec * 2.0)
+        time_tolerance_sec = max(config.EXECUTOR_TIME_MIN_S, traj_duration_sec * config.EXECUTOR_TIME_MULTIPLIER)
 
         # DEBUG: Log trajectory details
         robot_controller.get_logger().info(
@@ -79,7 +80,7 @@ def _send_trajectory_to_controller(robot_controller, joint_trajectory):
             f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
         robot_controller.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
     else:
-        time_tolerance_sec = 5.0
+        time_tolerance_sec = config.EXECUTOR_TIME_MIN_S
 
     controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
     controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)

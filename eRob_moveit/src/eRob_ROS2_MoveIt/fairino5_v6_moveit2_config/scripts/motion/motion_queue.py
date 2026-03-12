@@ -4,10 +4,11 @@
 from collections import deque
 from threading import Lock
 import time
+import config
 
 
 class MotionQueue:
-    def __init__(self, max_size=10):
+    def __init__(self, max_size=config.MOTION_QUEUE_MAX_SIZE):
         self.queue = deque(maxlen=max_size)
         self.max_size = max_size
         self.lock = Lock()

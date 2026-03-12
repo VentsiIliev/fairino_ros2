@@ -4,6 +4,7 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import yaml
 import os
+import config as cfg
 
 # Cache for loaded joint limits
 _joint_limits_cache = None
@@ -39,14 +40,14 @@ def _load_joint_limits_from_config():
                     config = yaml.safe_load(f)
 
                 joint_limits = config.get('joint_limits', {})
-                joint_names = ['j1', 'j2', 'j3', 'j4', 'j5', 'j6']
+                joint_names = cfg.JOINT_NAMES
 
                 limits = {
                     'max_velocity': [],
                     'max_acceleration': [],
                     'max_jerk': [],
-                    'default_vel_scaling': config.get('default_velocity_scaling_factor', 0.6),
-                    'default_acc_scaling': config.get('default_acceleration_scaling_factor', 0.4),
+                    'default_vel_scaling': config.get('default_velocity_scaling_factor', cfg.DEFAULT_VEL_SCALING),
+                    'default_acc_scaling': config.get('default_acceleration_scaling_factor', cfg.DEFAULT_ACC_SCALING),
                 }
 
                 for joint in joint_names:
@@ -72,13 +73,13 @@ def _load_joint_limits_from_config():
         'max_velocity': [3.14, 3.14, 3.14, 3.14, 3.14, 3.14],
         'max_acceleration': [10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
         'max_jerk': [50.0, 50.0, 50.0, 50.0, 60.0, 70.0],
-        'default_vel_scaling': 0.6,
-        'default_acc_scaling': 0.4,
+        'default_vel_scaling': cfg.DEFAULT_VEL_SCALING,
+        'default_acc_scaling': cfg.DEFAULT_ACC_SCALING,
     }
     return _joint_limits_cache
 
 
-def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=None, jerk_scaling=0.5, callback=None):
+def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=None, jerk_scaling=cfg.DEFAULT_JERK_SCALING, callback=None):
     """
     Apply Ruckig time-optimal jerk-limited trajectory parameterization.
 
@@ -135,7 +136,7 @@ def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=Non
     # Build new trajectory with proper time parameterization
     new_points = []
     current_time = 0.0
-    sample_dt = 0.008  # 8ms sampling (125 Hz) - good for smooth motion
+    sample_dt = cfg.RUCKIG_SAMPLE_DT_S  # 8ms sampling (125 Hz) - good for smooth motion
 
     for i in range(num_points - 1):
         start_pt = joint_traj.points[i]
@@ -235,7 +236,7 @@ def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=Non
         callback(trajectory)
 
 
-def apply_ruckig_service(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
+def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):
     """Call the Ruckig service for jerk-limited trajectory smoothing (ASYNC).
 
     This uses the C++ ruckig_helper node which leverages MoveIt's built-in Ruckig integration.
@@ -254,7 +255,7 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=0.6, acc_scal
     if not hasattr(robot_controller, 'ruckig_client'):
         robot_controller.ruckig_client = robot_controller.create_client(ApplyIPP, '/apply_ruckig')
 
-    if not robot_controller.ruckig_client.wait_for_service(timeout_sec=5.0):
+    if not robot_controller.ruckig_client.wait_for_service(timeout_sec=cfg.OPT_SERVICE_TIMEOUT_S):
         robot_controller.get_logger().error('[Ruckig] ✗ Ruckig service /apply_ruckig NOT available after 5s!')
         robot_controller.get_logger().error('[Ruckig]    Is ruckig_helper node running? Check: ros2 node list | grep ruckig')
         if callback:
@@ -337,7 +338,7 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=0.6, acc_scal
     future.add_done_callback(handle_ruckig_response)
 
 
-def apply_ipp_totg(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.4, callback=None):
+def apply_ipp_totg(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):
     """Call the IPP service to apply TOTG (ASYNC).
 
     Args:
@@ -348,7 +349,7 @@ def apply_ipp_totg(robot_controller, trajectory, vel_scaling=0.6, acc_scaling=0.
     """
     robot_controller.get_logger().info('[TOTG] Checking if IPP service is available...')
 
-    if not robot_controller.ipp_client.wait_for_service(timeout_sec=5.0):
+    if not robot_controller.ipp_client.wait_for_service(timeout_sec=cfg.OPT_SERVICE_TIMEOUT_S):
         robot_controller.get_logger().error('[TOTG] ✗ IPP service /apply_ipp NOT available after 5s!')
         robot_controller.get_logger().error('[TOTG]    Is ipp_helper node running? Check: ros2 node list | grep ipp')
         if callback:

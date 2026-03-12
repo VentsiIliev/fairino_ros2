@@ -131,7 +131,7 @@ def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_s
     request.waypoints = waypoints
     request.max_step = max_step
     request.jump_threshold = 0.0  # Disabled - no jump checking
-    request.avoid_collisions = False  # Re-enabled - safety walls removed from a planning scene
+    request.avoid_collisions = True  # Re-enabled - safety walls removed from a planning scene
 
     request.max_velocity_scaling_factor = vel_scaling
     request.max_acceleration_scaling_factor = acc_scaling

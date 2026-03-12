@@ -14,6 +14,7 @@ from moveit_msgs.srv import GetPositionFK
 from .trajectory_executor import _send_trajectory_to_controller
 from .trajectory_optimization import apply_ipp_totg, apply_ruckig_service
 import numpy as np
+import config
 
 # ============ Trajectory Parameterization Selection ============
 # Options:
@@ -45,8 +46,8 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
     # Build FK request
     from copy import deepcopy
     fk_request = GetPositionFK.Request()
-    fk_request.header.frame_id = 'base_link'
-    fk_request.fk_link_names = ['ee_link']
+    fk_request.header.frame_id = config.BASE_LINK
+    fk_request.fk_link_names = [config.EE_LINK]
 
     # Set robot state from current joints
     fk_request.robot_state.joint_state = deepcopy(joint_state)
@@ -135,6 +136,55 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
     except Exception as e:
         logger.error(f'[FK Diagnostic] Exception during FK comparison: {e}')
 
+def _diagnose_start_collision(robot_controller):
+    from moveit_msgs.srv import GetStateValidity
+    from moveit_msgs.msg import RobotState
+    from sensor_msgs.msg import JointState
+
+    logger = robot_controller.get_logger()
+
+    if not hasattr(robot_controller, '_diag_validity_client'):
+        robot_controller._diag_validity_client = robot_controller.create_client(
+            GetStateValidity, '/check_state_validity')
+
+    if not robot_controller._diag_validity_client.wait_for_service(timeout_sec=0.5):
+        logger.warning('[CollisionDiag] /check_state_validity unavailable')
+        return
+
+    js = robot_controller.current_joint_state
+    if js is None:
+        logger.warning('[CollisionDiag] No joint state available')
+        return
+
+    from copy import deepcopy
+    rs = RobotState()
+    rs.joint_state = deepcopy(js)
+
+    req = GetStateValidity.Request()
+    req.robot_state = rs
+    req.group_name = config.PLANNING_GROUP
+
+    def _cb(fut):
+        try:
+            resp = fut.result()
+        except Exception as e:
+            logger.error(f'[CollisionDiag] Service call failed: {e}')
+            return
+
+        if resp.valid:
+            logger.info('[CollisionDiag] Start state is VALID — failure is IK/reachability, not collision')
+            return
+
+        if resp.contacts:
+            pairs = sorted({f'{c.contact_body_1} ↔ {c.contact_body_2}' for c in resp.contacts})
+            logger.error(f'[CollisionDiag] Start state IN COLLISION:')
+            for p in pairs:
+                logger.error(f'[CollisionDiag]   {p}')
+        else:
+            logger.error('[CollisionDiag] Start state invalid but no contact details returned')
+
+    robot_controller._diag_validity_client.call_async(req).add_done_callback(_cb)
+
 
 def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None):
     robot_controller.safety_manager.force_update()
@@ -148,7 +198,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         fraction = response.fraction
         robot_controller.get_logger().info(f'[Cartesian Path] Path computed: {fraction * 100:.1f}% successful')
 
-        if fraction < 0.9:
+        if fraction < config.CARTESIAN_MIN_FRACTION:
             robot_controller.get_logger().error(
                 f'[Cartesian Path] Only {fraction * 100:.1f}% of path could be computed')
             robot_controller.get_logger().error(f'[Cartesian Path] Possible reasons:')
@@ -160,6 +210,10 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
                 curr = robot_controller.prev_cartesian
                 robot_controller.get_logger().error(
                     f'[Cartesian Path] Current: X={curr[0]:.1f} Y={curr[1]:.1f} Z={curr[2]:.1f} RX={curr[3]:.1f} RY={curr[4]:.1f} RZ={curr[5]:.1f}')
+
+            # --- Collision diagnostics: check start state ---
+            _diagnose_start_collision(robot_controller)
+            # ------------------------------------------------
 
             with robot_controller.lock:
                 robot_controller.is_executing = False
@@ -250,11 +304,11 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
             return np.array([[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, z], [0, 0, 0, 1]], dtype=float)
         T = np.eye(4)
         T = T @ rotz(q[0])
-        T = T @ trans(0, 0, 0.152) @ rotx(np.pi / 2) @ rotz(q[1])
-        T = T @ trans(-0.425, 0, 0) @ rotz(q[2])
-        T = T @ trans(-0.39501, 0, 0) @ rotz(q[3])
-        T = T @ trans(0, 0, 0.1021) @ rotx(np.pi / 2) @ rotz(q[4])
-        T = T @ trans(0, 0, 0.102) @ rotx(-np.pi / 2) @ rotz(q[5])
+        T = T @ trans(0, 0, config.DH_D1) @ rotx(np.pi / 2) @ rotz(q[1])
+        T = T @ trans(config.DH_A2, 0, 0) @ rotz(q[2])
+        T = T @ trans(config.DH_A3, 0, 0) @ rotz(q[3])
+        T = T @ trans(0, 0, config.DH_D4) @ rotx(np.pi / 2) @ rotz(q[4])
+        T = T @ trans(0, 0, config.DH_D5) @ rotx(-np.pi / 2) @ rotz(q[5])
         return T
 
     n = 6
@@ -280,7 +334,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
         return True
 
     # Numerical Jacobian via pure-numpy FD (no PyKDL — avoids silent JntArray setitem failures)
-    eps = 1e-7
+    eps = config.JACOBIAN_NUM_DIFF_EPS
     J = np.zeros((6, n))
     for j in range(n):
         q_pert = q0.copy()
@@ -303,7 +357,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
         f'[JacMove] delta_x={[f"{v:.6f}" for v in delta_x[:3]]}, S={[f"{v:.4f}" for v in singular_values]}')
 
     # Damped pseudoinverse
-    lam = 0.00001
+    lam = config.JACOBIAN_DAMPING
     U, S, Vt = np.linalg.svd(J)
     S_inv = S / (S ** 2 + lam ** 2)
     J_pinv = Vt.T @ np.diag(S_inv) @ U.T
@@ -322,7 +376,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
         return False
 
     # Clamp large joint steps
-    max_joint_step = 0.05  # rad
+    max_joint_step = config.JACOBIAN_MAX_JOINT_STEP  # rad
     if max_dq > max_joint_step:
         delta_q *= max_joint_step / max_dq
         robot_controller.get_logger().warning(f'[JacMove] Clamped {max_dq:.5f} → {max_joint_step:.2f} rad')
@@ -346,7 +400,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
     pt1.velocities = [0.0]*n
     pt1.accelerations = [0.0]*n
     # Scale duration: cubic spline peak vel = 1.5 * max_dq / T → T = 1.5 * max_dq / (vel * limit)
-    duration_s = max(0.05, 1.5 * max_dq / (max(0.01, vel_scaling) * 3.0))
+    duration_s = max(config.JACOBIAN_MIN_DURATION_S, 1.5 * max_dq / (max(0.01, vel_scaling) * 3.0))
     pt1.time_from_start = Duration(sec=0, nanosec=int(duration_s * 1e9))
 
     traj_msg.points = [pt0, pt1]
@@ -390,7 +444,7 @@ def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generat
         rs.joint_state = js
         req = GetStateValidity.Request()
         req.robot_state = rs
-        req.group_name = 'fairino5_v6_group'
+        req.group_name = config.PLANNING_GROUP
         return req
 
     def _log_contacts(label, response):
@@ -406,10 +460,8 @@ def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generat
             robot_controller.get_logger().warning(
                 f'[JacMove] {label} invalid but no contact details returned')
 
-    _SAFETY_WALL_NAMES = {
-        'wall_x_min', 'wall_x_max', 'wall_y_min', 'wall_y_max', 'wall_z_min', 'wall_z_max'
-    }
-    _EE_LINKS = {'ee_link', 'wrist3_link', 'wrist2_link', 'wrist1_link', 'forearm_link'}
+    _SAFETY_WALL_NAMES = config.SAFETY_WALL_NAMES
+    _EE_LINKS = config.WALL_BYPASS_LINKS
 
     def _is_ee_wall_contact_only(resp):
         """Return True if the only contacts are ee_link ↔ safety-wall objects.

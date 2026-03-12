@@ -10,6 +10,7 @@ tau_external = tau_measured - tau_expected
 
 import numpy as np
 from collections import deque
+import config
 
 from .inverse_dynamics_model import InverseDynamicsModel
 
@@ -23,7 +24,7 @@ class ExternalTorqueEstimator:
     reduce sensor noise.
     """
 
-    def __init__(self, model: InverseDynamicsModel, filter_alpha: float = 0.7):
+    def __init__(self, model: InverseDynamicsModel, filter_alpha: float = config.COLLISION_FILTER_ALPHA):
         """
         Args:
             model: Inverse dynamics model for computing expected torques.
@@ -37,8 +38,8 @@ class ExternalTorqueEstimator:
         self._previous = np.zeros(n)
         self._rate = np.zeros(n)
 
-        self.expected_torque_history = deque(maxlen=100)
-        self.external_torque_history = deque(maxlen=100)
+        self.expected_torque_history = deque(maxlen=config.COLLISION_HISTORY_BUFFER)
+        self.external_torque_history = deque(maxlen=config.COLLISION_HISTORY_BUFFER)
 
     @property
     def num_joints(self) -> int:
