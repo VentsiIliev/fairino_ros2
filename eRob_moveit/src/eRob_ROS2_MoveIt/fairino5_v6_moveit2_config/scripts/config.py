@@ -87,6 +87,8 @@ MOTION_QUEUE_MAX_SIZE = 10
 EXECUTOR_GOAL_POS_TOL_RAD = 0.01
 EXECUTOR_TIME_MULTIPLIER  = 2.0
 EXECUTOR_TIME_MIN_S       = 5.0
+PATH_APPROACH_THRESHOLD_MM = 100.0  # plan-first if first waypoint is farther than this
+
 
 # ── Trajectory Optimization ────────────────────────────────────
 RUCKIG_SAMPLE_DT_S    = 0.008   # 8ms = 125 Hz
