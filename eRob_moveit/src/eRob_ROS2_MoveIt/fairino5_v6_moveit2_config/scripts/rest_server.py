@@ -26,6 +26,7 @@ import config
 LOG_FILE = config.REST_LOG
 logger = logging.getLogger("fairino_rest_server")
 logger.setLevel(logging.INFO)
+
 if not logger.handlers:
     file_handler = logging.FileHandler(LOG_FILE)
     formatter = logging.Formatter(

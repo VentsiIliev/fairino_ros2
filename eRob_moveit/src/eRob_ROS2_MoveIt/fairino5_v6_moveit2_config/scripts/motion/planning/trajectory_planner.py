@@ -1,14 +1,21 @@
 """
 Trajectory Planner
 ==================
-MoveIt /compute_cartesian_path response handler and re-exports for callers.
+Shared request builder and MoveIt /compute_cartesian_path response handler.
+
+Public utilities:
+  _build_cartesian_request()  — builds a GetCartesianPath.Request with all
+                                 common fields; callers pass only the differences
+                                 (poses, max_step, vel/acc scaling, optional
+                                 start_state, optional avoid_collisions flag).
 
 Data flow for a normal Cartesian move:
   caller (single_target / trajectory)
-      → sends GetCartesianPath request (async)
-      → _cartesian_path_response()          ← triggered by ROS2 service response
-          → apply_ipp_totg / apply_ruckig   (time parameterization, async)
-              → on_time_param_done()         ← triggered by /apply_ipp response
+      → _build_cartesian_request()           ← assembles GetCartesianPath.Request
+      → cart_path_client.call_async(request)
+      → _cartesian_path_response()           ← triggered by ROS2 service response
+          → apply_ipp_totg / apply_ruckig    (time parameterization, async)
+              → on_time_param_done()          ← triggered by /apply_ipp response
                   → _send_trajectory_to_controller()
 
 Data flow for sub-5mm Jacobian fallback:
@@ -20,16 +27,77 @@ Data flow for sub-5mm Jacobian fallback:
                   → _on_both_done()          ← called when BOTH results arrive
                       → _send_trajectory_to_controller()
 """
+from copy import deepcopy
 
-from .planner_utils import TIME_PARAMETERIZATION, _set_result, _is_stale
+from .planner_utils import TIME_PARAMETERIZATION, _set_result, _is_stale, _begin_execution
 from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collision
 from .jacobian_move import _jacobian_fallback_move
 from ..execution.trajectory_optimization import apply_ipp_totg, apply_ruckig_service
 from ..execution.trajectory_executor import _send_trajectory_to_controller
+from moveit_msgs.srv import GetCartesianPath
 import config
 
 
 # ─── Main path-planning response handler ─────────────────────────────────────
+
+def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix='[Plan]'):
+    """
+    Apply TOTG or Ruckig time parameterization and dispatch to the hardware controller.
+
+    Eliminates the duplicated on_time_param_done + TOTG/Ruckig dispatch pattern
+    that previously appeared in both _cartesian_path_response and
+    _execute_pending_trajectory.
+
+    Args:
+        rc:          RobotController node
+        trajectory:  MoveIt RobotTrajectory (untimed joint-space waypoints)
+        vel_scaling: velocity scaling factor (0–1)
+        acc_scaling: acceleration scaling factor (0–1)
+        gen:         plan_generation token for staleness detection
+        log_prefix:  log tag, e.g. '[Cartesian Path]' or '[EXECUTE_PATH]'
+    """
+    def on_done(result):
+        if _is_stale(rc, gen):
+            rc.get_logger().info(f'{log_prefix} Stale TOTG response discarded')
+            return
+        if result is None:
+            rc.get_logger().error(f'{log_prefix} Time parameterization failed')
+            _set_result(rc, -7)
+            return
+        with rc.lock:
+            rc.last_move_result = 0
+        _send_trajectory_to_controller(rc, result.joint_trajectory)
+
+    if TIME_PARAMETERIZATION == "RUCKIG":
+        apply_ruckig_service(rc, trajectory, vel_scaling, acc_scaling, callback=on_done)
+    else:
+        apply_ipp_totg(rc, trajectory, vel_scaling, acc_scaling, callback=on_done)
+
+
+def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
+                              start_state=None, avoid_collisions=True):
+    req = GetCartesianPath.Request()
+    req.header.frame_id               = config.BASE_LINK
+    req.group_name                    = config.PLANNING_GROUP
+    req.link_name                     = config.EE_LINK
+    req.waypoints                     = poses
+    req.max_step                      = max_step
+    req.jump_threshold                = 0.0
+    req.avoid_collisions              = avoid_collisions
+    req.max_velocity_scaling_factor   = vel_scaling
+    req.max_acceleration_scaling_factor = acc_scaling
+
+    if start_state is not None:
+        req.start_state = start_state
+    elif rc.current_joint_state is not None:
+        state = deepcopy(rc.current_joint_state)
+        state.header.stamp = rc.get_clock().now().to_msg()
+        req.start_state.joint_state = state
+        req.start_state.is_diff = False
+    else:
+        rc.get_logger().warning('[Plan] No current joint state — trajectory may mismatch')
+    return req
+
 
 def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None):
     """
@@ -143,40 +211,8 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         # ── Normal multi-point trajectory: apply time parameterization ────────
         # TOTG or Ruckig adds velocity/acceleration/jerk profiles to the raw
         # joint-space waypoints returned by MoveIt (which have no timing).
-        # Both services are async; on_time_param_done is their shared callback.
-        def on_time_param_done(result_trajectory):
-            """
-            Callback triggered when the /apply_ipp (TOTG) or Ruckig service responds
-            with a fully time-parameterized trajectory.
-
-            Triggered by: apply_ipp_totg() or apply_ruckig_service() internal callback
-                          after the C++ ipp_helper / ruckig_helper node responds.
-
-            On success: dispatches the trajectory to the hardware controller.
-            On failure (result_trajectory is None): sets result=-7 and aborts.
-            """
-            if _is_stale(robot_controller, generation):
-                robot_controller.get_logger().info('[Cartesian Path] Stale TOTG response discarded (preempted)')
-                return
-
-            if result_trajectory is None:
-                robot_controller.get_logger().error(
-                    '[Cartesian Path] Time parameterization failed - aborting execution')
-                _set_result(robot_controller, -7)
-                return
-
-            # Record success before handing off to executor (which will clear
-            # is_executing only when the hardware controller confirms completion)
-            with robot_controller.lock:
-                robot_controller.last_move_result = 0
-            _send_trajectory_to_controller(robot_controller, result_trajectory.joint_trajectory)
-
-        if TIME_PARAMETERIZATION == "RUCKIG":
-            apply_ruckig_service(robot_controller, trajectory, vel_scaling, acc_scaling,
-                                 callback=on_time_param_done)
-        else:  # "TOTG" (default)
-            apply_ipp_totg(robot_controller, trajectory, vel_scaling, acc_scaling,
-                           callback=on_time_param_done)
+        _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
+                          generation, log_prefix='[Cartesian Path]')
 
     except Exception as e:
         robot_controller.get_logger().error(f'[Cartesian Path] Service call failed: {e}')
@@ -187,6 +223,9 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
 # These names were previously defined directly in this file; they now live in
 # their respective submodules but are re-exported here for backwards compatibility.
 __all__ = [
+    '_apply_time_param',
+    '_build_cartesian_request',
+    '_begin_execution',
     'TIME_PARAMETERIZATION',
     '_set_result',
     '_is_stale',

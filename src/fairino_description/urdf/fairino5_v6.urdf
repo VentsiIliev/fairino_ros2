@@ -10,24 +10,30 @@
   </link>
 
     <!-- Mounting surface link -->
-    <link name="mounting_surface">
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://fairino_description/meshes/Cobot - Plot.stl"/>
-        </geometry>
-        <material name="mount_surface">
-          <color rgba="1 1 1 1.0"/>
-        </material>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://fairino_description/meshes/Cobot - Plot.stl"/>
-        </geometry>
-      </collision>
-    </link>
+<link name="mounting_surface">
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://fairino_description/meshes/Cobot - Plot.stl"/>
+    </geometry>
+    <material name="mount_surface"><color rgba="1 1 1 1.0"/></material>
+  </visual>
 
+  <!-- Plate: 25mm thick, top surface at Z=+0.002 (matches histogram spike) -->
+  <collision name="base_plate">
+    <origin xyz="-0.0634 0.1608 -0.0105" rpy="0 0 0"/>
+    <geometry><box size="0.9048 1.2167 0.0250"/></geometry>
+  </collision>
+
+  <!-- Tool changer: narrow column in -X/-Y corner, 358mm tall -->
+  <collision name="tool_changer">
+    <origin xyz="-0.2783 -0.3783 0.1990" rpy="0 0 0"/>
+    <geometry><box size="0.4764 0.1417 0.3579"/></geometry>
+  </collision>
+
+
+
+</link>
 
   <!-- Attach mounting surface to world -->
   <joint name="world_to_mount" type="fixed">

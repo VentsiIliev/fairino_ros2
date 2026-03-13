@@ -236,6 +236,55 @@ def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=Non
         callback(trajectory)
 
 
+def _handle_apply_ipp_response(robot_controller, fut, trajectory, callback, tag):
+    try:
+        response = fut.result()
+
+        if response is None:
+            robot_controller.get_logger().error(f'{tag} ✗ Response is None')
+            if callback: callback(None)
+            return
+
+        if not hasattr(response, 'trajectory'):
+            robot_controller.get_logger().error(f'{tag} ✗ Response has no trajectory attribute')
+            if callback: callback(None)
+            return
+
+        if not hasattr(response.trajectory, 'joint_trajectory'):
+            robot_controller.get_logger().error(f'{tag} ✗ Response.trajectory has no joint_trajectory attribute')
+            if callback: callback(None)
+            return
+
+        joint_traj = response.trajectory.joint_trajectory
+        num_points = len(joint_traj.points)
+
+        if num_points == 0:
+            robot_controller.get_logger().error(f'{tag} ✗ Empty trajectory')
+            if callback: callback(None)
+            return
+
+        robot_controller.get_logger().info(f'{tag} ✓ Generated {num_points} points')
+
+        has_timestamps = any(
+            pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0
+            for pt in joint_traj.points
+        )
+        if not has_timestamps:
+            robot_controller.get_logger().error(f'{tag} ✗ Response has no timestamps - INVALID trajectory')
+            if callback: callback(None)
+            return
+
+        trajectory.joint_trajectory = joint_traj
+        if callback:
+            callback(trajectory)
+
+    except Exception as e:
+        robot_controller.get_logger().error(f'{tag} ✗ Service call failed: {e}')
+        import traceback
+        robot_controller.get_logger().error(f'{tag} Traceback: {traceback.format_exc()}')
+        if callback: callback(None)
+
+
 def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):
     """Call the Ruckig service for jerk-limited trajectory smoothing (ASYNC).
 
@@ -264,78 +313,16 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
 
     robot_controller.get_logger().info('[Ruckig] ✓ Ruckig service is available')
 
-    request = ApplyIPP.Request()
-    request.trajectory = trajectory.joint_trajectory
-    request.max_velocity_scaling = float(vel_scaling)
-    request.max_acceleration_scaling = float(acc_scaling)
-
+    request = _build_apply_ipp_request(trajectory=trajectory,
+                                       vel_scaling=vel_scaling,
+                                       acc_scaling=acc_scaling)
     robot_controller.get_logger().info(
         f'[Ruckig] Requesting jerk-limited smoothing (vel={vel_scaling}, acc={acc_scaling})')
 
     # Call ASYNC to avoid blocking the executor
     future = robot_controller.ruckig_client.call_async(request)
-
-    # Handle response when ready
-    def handle_ruckig_response(fut):
-        try:
-            response = fut.result()
-
-            if response is None:
-                robot_controller.get_logger().error('[Ruckig] ✗ Response is None')
-                if callback:
-                    callback(None)
-                return
-
-            if not hasattr(response, 'trajectory'):
-                robot_controller.get_logger().error('[Ruckig] ✗ Response has no trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            if not hasattr(response.trajectory, 'joint_trajectory'):
-                robot_controller.get_logger().error('[Ruckig] ✗ Response.trajectory has no joint_trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            joint_traj = response.trajectory.joint_trajectory
-            num_points = len(joint_traj.points)
-
-            if num_points == 0:
-                robot_controller.get_logger().error('[Ruckig] ✗ Empty trajectory - Ruckig smoothing failed')
-                if callback:
-                    callback(None)
-                return
-
-            robot_controller.get_logger().info(
-                f'[Ruckig] ✓ Generated {num_points} jerk-limited points')
-
-            # Validate that timestamps are present
-            has_timestamps = False
-            for pt in joint_traj.points:
-                if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
-                    has_timestamps = True
-                    break
-
-            if not has_timestamps:
-                robot_controller.get_logger().error('[Ruckig] ✗ Response has no timestamps - INVALID trajectory')
-                if callback:
-                    callback(None)
-                return
-
-            # Success: Update trajectory with smoothed result
-            trajectory.joint_trajectory = joint_traj
-            if callback:
-                callback(trajectory)
-
-        except Exception as e:
-            robot_controller.get_logger().error(f'[Ruckig] ✗ Service call failed: {e}')
-            import traceback
-            robot_controller.get_logger().error(f'[Ruckig] Traceback: {traceback.format_exc()}')
-            if callback:
-                callback(None)
-
-    future.add_done_callback(handle_ruckig_response)
+    future.add_done_callback(
+        lambda f: _handle_apply_ipp_response(robot_controller, f, trajectory, callback, '[Ruckig]'))
 
 
 def apply_ipp_totg(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):
@@ -358,77 +345,23 @@ def apply_ipp_totg(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCA
 
     robot_controller.get_logger().info('[TOTG] ✓ IPP service is available')
 
-    request = ApplyIPP.Request()
-    request.trajectory = trajectory.joint_trajectory
-    request.max_velocity_scaling = float(vel_scaling)
-    request.max_acceleration_scaling = float(acc_scaling)
+    request = _build_apply_ipp_request(trajectory=trajectory,
+                                       vel_scaling=vel_scaling,
+                                       acc_scaling=acc_scaling)
 
     robot_controller.get_logger().info(
         f'[TOTG] Requesting time-optimal parameterization (vel={vel_scaling}, acc={acc_scaling})')
 
     # Call ASYNC to avoid blocking the executor
     future = robot_controller.ipp_client.call_async(request)
+    future.add_done_callback(
+        lambda f: _handle_apply_ipp_response(robot_controller, f, trajectory, callback, '[TOTG]'))
 
-    # Handle response when ready
-    def handle_ipp_response(fut):
-        try:
-            response = fut.result()
 
-            if response is None:
-                robot_controller.get_logger().error('[TOTG] ✗ Response is None')
-                if callback:
-                    callback(None)
-                return
-
-            # ✅ FIX: Extract JointTrajectory from RobotTrajectory response
-            if not hasattr(response, 'trajectory'):
-                robot_controller.get_logger().error('[TOTG] ✗ Response has no trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            # Response is RobotTrajectory, extract joint_trajectory
-            if not hasattr(response.trajectory, 'joint_trajectory'):
-                robot_controller.get_logger().error('[TOTG] ✗ Response.trajectory has no joint_trajectory attribute')
-                if callback:
-                    callback(None)
-                return
-
-            joint_traj = response.trajectory.joint_trajectory
-            num_points = len(joint_traj.points)
-
-            if num_points == 0:
-                robot_controller.get_logger().error('[TOTG] ✗ Empty trajectory - TOTG failed')
-                if callback:
-                    callback(None)
-                return
-
-            robot_controller.get_logger().info(
-                f'[TOTG] ✓ Generated {num_points} time-parameterized points')
-
-            # Validate that timestamps are present
-            has_timestamps = False
-            for pt in joint_traj.points:
-                if pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0:
-                    has_timestamps = True
-                    break
-
-            if not has_timestamps:
-                robot_controller.get_logger().error('[TOTG] ✗ Response has no timestamps - INVALID trajectory')
-                if callback:
-                    callback(None)
-                return
-
-            # ✅ Success: Update trajectory with time-parameterized result
-            trajectory.joint_trajectory = joint_traj
-            if callback:
-                callback(trajectory)
-
-        except Exception as e:
-            robot_controller.get_logger().error(f'[TOTG] ✗ Service call failed: {e}')
-            import traceback
-            robot_controller.get_logger().error(f'[TOTG] Traceback: {traceback.format_exc()}')
-            if callback:
-                callback(None)
-
-    future.add_done_callback(handle_ipp_response)
+def _build_apply_ipp_request(trajectory, vel_scaling, acc_scaling) -> ApplyIPP.Request:
+    """Helper to build ApplyIPP request from trajectory and scaling factors."""
+    request = ApplyIPP.Request()
+    request.trajectory = trajectory.joint_trajectory
+    request.max_velocity_scaling = float(vel_scaling)
+    request.max_acceleration_scaling = float(acc_scaling)
+    return request

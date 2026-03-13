@@ -152,11 +152,11 @@ def _diagnose_start_collision(robot_controller):
     logger = robot_controller.get_logger()
 
     # Reuse a single persistent client to avoid repeated service lookup overhead
-    if not hasattr(robot_controller, '_diag_validity_client'):
-        robot_controller._diag_validity_client = robot_controller.create_client(
+    if not hasattr(robot_controller, '_state_validity_client'):
+        robot_controller._state_validity_client = robot_controller.create_client(
             GetStateValidity, '/check_state_validity')
 
-    if not robot_controller._diag_validity_client.wait_for_service(timeout_sec=0.5):
+    if not robot_controller._state_validity_client.wait_for_service(timeout_sec=0.5):
         logger.warning('[CollisionDiag] /check_state_validity unavailable')
         return
 
@@ -196,4 +196,4 @@ def _diagnose_start_collision(robot_controller):
         else:
             logger.error('[CollisionDiag] Start state invalid but no contact details returned')
 
-    robot_controller._diag_validity_client.call_async(req).add_done_callback(_cb)
+    robot_controller._state_validity_client.call_async(req).add_done_callback(_cb)
