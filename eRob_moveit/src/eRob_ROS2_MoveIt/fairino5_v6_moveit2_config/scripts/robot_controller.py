@@ -21,7 +21,7 @@ from safety.safety_wall_manager import SafetyWallManager
 from safety.collision_detection import create_dynamics_collision_detector
 from status.robot_monitor import RobotMonitor
 from status.robot_status_publisher import RobotStatusPublisher
-from motion.motion_queue import MotionQueue
+from motion.execution.motion_queue import MotionQueue
 from utils.workspace_extractor import _extract_workspace_from_urdf
 # All tunable constants live in config.py
 from config import (
@@ -35,7 +35,6 @@ from config import (
     STATUS_PUBLISH_RATE_HZ,
     WS_EXTRACT_MAX_RETRIES,
     WS_EXTRACT_RETRY_DELAY,
-    MONITOR_WAIT_TIMEOUT_S,
     ACTION_FOLLOW_TRAJECTORY,
     SERVICE_CARTESIAN_PATH,
     SERVICE_APPLY_IPP,
@@ -273,20 +272,12 @@ class RobotController(Node):
     def execute(self, strategy):
         return strategy.execute(self)
 
-    def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN',
-                            tool_transform=None, allow_preempt=False):
+    def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
+                            tool_transform=None):
         from motion.strategies import SingleTargetStrategy
         return self.execute(SingleTargetStrategy(
-            x_mm, y_mm, z_mm, rx, ry, rz,
-            vel_scale, acc_scale, planner_id, tool_transform, allow_preempt))
-
-    def jog_cartesian(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0, vel_scale=0.1, acc_scale=0.1):
-        from motion.jog_controller import jog_cartesian
-        return jog_cartesian(self, dx_mm, dy_mm, dz_mm, vel_scale, acc_scale)
-
-    def send_path_cartesian(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
-        from motion.strategies import PathStrategy
-        return self.execute(PathStrategy(waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling))
+            x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
+            tool_transform=tool_transform))
 
     def _on_collision_detected(self):
         """Callback when collision detector triggers."""

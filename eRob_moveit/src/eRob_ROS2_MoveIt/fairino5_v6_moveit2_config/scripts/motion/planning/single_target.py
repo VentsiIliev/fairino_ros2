@@ -70,7 +70,8 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
 # Internal execution
 # ------------------------------------------------------------------------------
 
-def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling):
+def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling,
+                          tool_transform=None):
     """
     Execute a single-point Cartesian move (move_cartesian / move_liner).
 
@@ -96,10 +97,12 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         robot_controller.get_logger().error('[Single Point] compute_cartesian_path not available')
         return -2
 
+    T_tool_effective = tool_transform if tool_transform is not None else robot_controller.T_tool
+
     waypoints = []
     for i, (x_mm, y_mm, z_mm, rx, ry, rz) in enumerate(waypoints_full):
         T_tcp = TransformationUtils.pose_to_transform([x_mm, y_mm, z_mm, rx, ry, rz])
-        T_ee = TransformationUtils.remove_tcp_offset(T_tcp, robot_controller.T_tool)
+        T_ee = TransformationUtils.remove_tcp_offset(T_tcp, T_tool_effective)
         ee_pos = T_ee[:3, 3]
         ee_quat = TransformationUtils.matrix_to_quaternion(T_ee[:3, :3])
 
@@ -191,8 +194,8 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
 # Public entry point
 # ------------------------------------------------------------------------------
 
-def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale, planner_id='LIN',
-                        tool_transform=None, allow_preempt=False):
+def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
+                        tool_transform=None):
     """
     Send a single-point Cartesian goal. If the robot is already executing,
     the new goal is silently ignored — no preemption, no queuing.
@@ -216,5 +219,6 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
         f'[MOVE] [{start_wp[0]:.1f}, {start_wp[1]:.1f}, {start_wp[2]:.1f}, RZ={start_wp[5]:.1f}°]'
         f' → [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}, RZ={rz:.1f}°]')
 
-    return _execute_single_point(robot_controller, start_wp, target_wp, vel_scale, acc_scale)
+    return _execute_single_point(robot_controller, start_wp, target_wp, vel_scale, acc_scale,
+                                 tool_transform=tool_transform)
 

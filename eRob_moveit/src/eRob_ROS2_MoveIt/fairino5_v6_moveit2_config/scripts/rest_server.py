@@ -81,39 +81,28 @@ def start_rest_server(
     # Routes
     # ------------------------------------------------------------------
 
+    MOTION_ERROR_DESCRIPTIONS = {
+        -1:  "Busy / invalid input / generic error",
+        -2:  "MoveIt service unavailable",
+        -3:  "Safety violation: target outside workspace",
+        -4:  "No current robot position available",
+        -5:  "Motion queue full",
+        -6:  "Path planning failed: MoveIt returned no trajectory",
+        -7:  "Time parameterization failed (TOTG/Ruckig)",
+        -8:  "Jacobian fallback path planning failed",
+        -9:  "Near-singularity detected",
+        -10: "Collision detected during Jacobian check",
+    }
+
+    def motion_error_response(result):
+        description = MOTION_ERROR_DESCRIPTIONS.get(result, f"Unknown error code {result}")
+        http_status = 503 if result in (-2, -5) else 400 if result == -3 else 500
+        return jsonify({"result": result, "success": False, "error": description}), http_status
+
     @app.route("/health", methods=["GET"])
     def health():
         return jsonify({"status": "ok", "ros2_active": robot is not None})
 
-    @app.route("/move/cartesian", methods=["POST"])
-    def move_cartesian():
-        data = request.json
-        position = data.get("position")
-
-        if not position or len(position) != 6:
-            return jsonify({"error": "Invalid position format"}), 400
-
-        result = robot.move_liner(
-            position,
-            tool=data.get("tool", 0),
-            user=0,
-            vel=data.get("vel", config.DEFAULT_VEL_PERCENT),
-            acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
-        )
-
-        # Handle queue and error responses
-        if result > 0:
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
-        elif result == 0:
-            return jsonify({"result": result, "success": True, "queued": False}), 200
-        elif result == -5:
-            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
-        elif result == -2:
-            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
-        elif result == -3:
-            return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
-        else:
-            return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
 
 
     @app.route("/move/linear", methods=["POST"])
@@ -124,6 +113,8 @@ def start_rest_server(
         if not position or len(position) != 6:
             return jsonify({"error": "Invalid position format"}), 400
 
+        logger.info(f"Received move/linera/ request with data {data}")
+
         result = robot.move_liner(
             position,
             tool=data.get("tool", 0),
@@ -132,19 +123,14 @@ def start_rest_server(
             acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
         )
 
-        # Handle queue and error responses
         if result > 0:
+            logger.debug(f"move_linear queued with result {result}")
             return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
         elif result == 0:
+            logger.debug(f"move_linear queued with result {result}")
             return jsonify({"result": result, "success": True, "queued": False}), 200
-        elif result == -5:
-            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
-        elif result == -2:
-            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
-        elif result == -3:
-            return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
         else:
-            return jsonify({"result": result, "success": False, "error": f"Move failed with code {result}"}), 500
+            return motion_error_response(result)
 
 
     @app.route("/execute/path", methods=["POST"])
@@ -172,37 +158,29 @@ def start_rest_server(
         if acc > 1.0:
             acc = acc / 100.0
         robot.node.get_logger().info(f"Executing path with {len(path)} waypoints, vel={vel}, acc={acc}")
-        result = robot.execute_path(
-            path,
-            rx=data.get("rx"),
-            ry=data.get("ry"),
-            rz=data.get("rz"),
-            vel=vel,
-            acc=acc,
-            blocking=data.get("blocking", False),
-        )
 
-        # Handle queue responses
+        try:
+            result = robot.execute_path(
+                path,
+                rx=data.get("rx"),
+                ry=data.get("ry"),
+                rz=data.get("rz"),
+                vel=vel,
+                acc=acc,
+                blocking=data.get("blocking", False),
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            robot.node.get_logger().error(f"Error executing path: {e}")
+            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
+
         if result > 0:
-            # Queued successfully
-            return jsonify({
-                "result": result,
-                "success": True,
-                "queued": True,
-                "queue_position": result
-            }), 202  # 202 Accepted (queued for processing)
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
         elif result == 0:
-            # Executing immediately
             return jsonify({"result": result, "success": True, "queued": False}), 200
-        elif result == -5:
-            return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
-        # Handle other error codes
-        elif result == -2:
-            return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
-        elif result == -3:
-            return jsonify({"result": result, "success": False, "error": "Safety violation: waypoint outside workspace"}), 400
-        elif result != 0:
-            return jsonify({"result": result, "success": False, "error": f"Path execution failed with code {result}"}), 500
+        else:
+            return motion_error_response(result)
 
 
     @app.route("/position/current", methods=["GET"])
@@ -293,14 +271,8 @@ def start_rest_server(
                 return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
             elif result == 0:
                 return jsonify({"result": result, "success": True}), 200
-            elif result == -2:
-                return jsonify({"result": result, "success": False, "error": "MoveIt service unavailable"}), 503
-            elif result == -3:
-                return jsonify({"result": result, "success": False, "error": "Safety violation"}), 400
-            elif result == -5:
-                return jsonify({"result": result, "success": False, "error": "Motion queue is full"}), 503
             else:
-                return jsonify({"result": result, "success": False, "error": f"Jog failed with code {result}"}), 500
+                return motion_error_response(result)
 
         except Exception as e:
             robot.node.get_logger().error(f"Jog endpoint error: {e}")

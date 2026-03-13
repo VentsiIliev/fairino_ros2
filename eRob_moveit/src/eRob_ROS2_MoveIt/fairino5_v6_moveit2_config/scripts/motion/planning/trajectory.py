@@ -160,6 +160,10 @@ def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_s
         _diagnose_fk_mismatch(robot_controller, waypoints[0], robot_controller.current_joint_state)
 
     robot_controller.get_logger().info('[Cartesian Path] Requesting cartesian path computation...')
+    with robot_controller.lock:
+        robot_controller.is_executing = True
+        robot_controller.plan_generation += 1
+        gen = robot_controller.plan_generation
     future = robot_controller.cart_path_client.call_async(request)
-    future.add_done_callback(lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling))
+    future.add_done_callback(lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
     return 0  # Request submitted successfully

@@ -158,12 +158,7 @@ class MonitorWindow(QWidget):
         self.move_linear_button.clicked.connect(self.send_move_linear_command)
         button_layout.addWidget(self.move_linear_button)
 
-        # Cartesian (PTP) motion button
-        self.move_cartesian_button = QPushButton('Move Cartesian (PTP)')
-        self.move_cartesian_button.setStyleSheet(
-            'QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; }')
-        self.move_cartesian_button.clicked.connect(self.send_move_cartesian_command)
-        button_layout.addWidget(self.move_cartesian_button)
+
 
         control_layout.addLayout(button_layout, 3, 0, 1, 6)
 
@@ -420,50 +415,12 @@ class MonitorWindow(QWidget):
             self.move_linear_button.setText('Invalid Input!')
             QTimer.singleShot(1000, self.reset_linear_button)
 
-    def send_move_cartesian_command(self):
-        """Move robot using PTP (Point-to-Point) motion - joint space, fastest but curved path"""
-        try:
-            x = float(self.x_input.text())
-            y = float(self.y_input.text())
-            z = float(self.z_input.text())
-            rx = float(self.rx_input.text())
-            ry = float(self.ry_input.text())
-            rz = float(self.rz_input.text())
-
-            vel_scaling = float(self.path_vel_input.text())
-            acc_scaling = float(self.path_acc_input.text())
-
-            vel_percent = max(0.0, min(1.0, vel_scaling)) * 100.0
-            acc_percent = max(0.0, min(1.0, acc_scaling)) * 100.0
-
-            self.robot.move_cartesian(
-                position=[x, y, z, rx, ry, rz],
-                vel=vel_percent,
-                acc=acc_percent
-            )
-
-            self.move_cartesian_button.setStyleSheet(
-                'QPushButton { background-color: #FFA500; color: white; font-weight: bold; padding: 10px; }')
-            self.move_cartesian_button.setText('Moving PTP...')
-            QTimer.singleShot(2000, self.reset_cartesian_button)
-        except ValueError:
-            self.move_cartesian_button.setStyleSheet(
-                'QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 10px; }')
-            self.move_cartesian_button.setText('Invalid Input!')
-            QTimer.singleShot(1000, self.reset_cartesian_button)
-
     def reset_linear_button(self):
         """Reset the linear motion button to the default state"""
         self.move_linear_button.setStyleSheet(
             'QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 10px; }')
         self.move_linear_button.setText('Move Linear (LIN)')
 
-    def reset_cartesian_button(self):
-        """Reset the cartesian (PTP) motion button to the default state"""
-        self.move_cartesian_button.setStyleSheet(
-            'QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; }')
-        self.move_cartesian_button.setText('Move Cartesian (PTP)')
-        self.auto_update_position = True
 
     def add_waypoint(self):
         try:

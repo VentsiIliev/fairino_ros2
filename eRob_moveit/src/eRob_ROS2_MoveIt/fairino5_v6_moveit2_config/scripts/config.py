@@ -73,6 +73,8 @@ DEFAULT_ORIENTATION  = [180.0, 0.0, 0.0]   # fallback TCP rx/ry/rz (deg)
 # ── Motion Planning ────────────────────────────────────────────
 CARTESIAN_MIN_FRACTION  = 0.9     # MoveIt min success fraction
 JACOBIAN_FALLBACK_MM    = 0.1     # delta threshold to use Jacobian bypass
+JACOBIAN_FALLBACK_MIN_FRACTION = 0.99  # min fraction to attempt Jacobian fallback (≤1-pt branch)
+JACOBIAN_FALLBACK_MIN_DELTA_MM = 0.1   # min delta to attempt Jacobian fallback; below = already at target
 JACOBIAN_MAX_JOINT_STEP = 0.05    # rad, clamp per joint
 JACOBIAN_MIN_DURATION_S = 0.05    # min trajectory duration
 JACOBIAN_DAMPING        = 1e-5    # pseudoinverse damping

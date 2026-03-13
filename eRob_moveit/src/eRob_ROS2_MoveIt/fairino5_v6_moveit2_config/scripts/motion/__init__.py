@@ -1,2 +1,1 @@
-"""Motion control modules for robot trajectory planning and execution."""
-__all__ = ['TrajectoryPlanner', 'JogController']
+"""Motion control subpackages: planning/ and execution/."""

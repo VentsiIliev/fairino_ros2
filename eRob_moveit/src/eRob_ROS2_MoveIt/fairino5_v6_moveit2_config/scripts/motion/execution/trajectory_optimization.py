@@ -20,7 +20,7 @@ def _load_joint_limits_from_config():
     # Try to find the config file
     config_paths = [
         # Source path
-        os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'joint_limits.yaml'),
+        os.path.join(os.path.dirname(__file__), '../..', '..', 'config', 'joint_limits.yaml'),
         # Install path (via ament)
     ]
 
