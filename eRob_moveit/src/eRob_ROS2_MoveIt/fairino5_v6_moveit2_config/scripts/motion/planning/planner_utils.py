@@ -31,6 +31,8 @@ def _set_result(rc, code):
     with rc.lock:
         rc.is_executing = False
         rc.last_move_result = code
+    if hasattr(rc, 'motion_queue'):
+        rc.motion_queue.mark_current_complete(code)
 
 
 def _begin_execution(rc):

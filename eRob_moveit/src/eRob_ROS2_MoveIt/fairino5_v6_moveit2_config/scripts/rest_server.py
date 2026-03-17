@@ -122,6 +122,7 @@ def start_rest_server(
             user=0,
             vel=data.get("vel", config.DEFAULT_VEL_PERCENT),
             acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
+            blocking=data.get("blocking", True),
         )
 
         if result > 0:
@@ -176,10 +177,11 @@ def start_rest_server(
             robot.node.get_logger().error(f"Error executing path: {e}")
             return jsonify({"result": -1, "success": False, "error": str(e)}), 500
 
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
         if result > 0:
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
         elif result == 0:
-            return jsonify({"result": result, "success": True, "queued": False}), 200
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
         else:
             return motion_error_response(result)
 

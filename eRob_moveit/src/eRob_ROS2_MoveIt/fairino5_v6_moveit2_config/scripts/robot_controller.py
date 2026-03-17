@@ -124,6 +124,7 @@ class RobotController(Node):
         self.is_executing = False
         self.plan_generation = 0
         self.last_move_result = 0  # 0=success, negative=error/skip (set by async callbacks)
+        self.last_submitted_task_id = None
 
         self.urdf_path = '/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf'
 
@@ -287,7 +288,12 @@ class RobotController(Node):
             self.stop_motion()
 
     def _controller_status_callback(self, msg):
-        """Monitor controller action status and track active goals."""
+        """Monitor controller action status for side effects only.
+
+        Normal motion lifecycle cleanup is owned by the trajectory result callback.
+        Clearing active goal state here races with the async result future and makes
+        successful completions look like stale/cancelled goals.
+        """
 
         for status in msg.status_list:
             if status.status in [GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING]:
@@ -296,10 +302,8 @@ class RobotController(Node):
                     self.collision_detector.arm()
             elif status.status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
                                    GoalStatus.STATUS_CANCELED]:
-                if self.active_controller_goal is not None:
-                    self.active_controller_goal = None
-                self.is_executing = False
-                # Only disarm if not in "always armed" mode
+                # Result callback owns active goal + execution cleanup. Only handle
+                # detector state here to avoid racing normal completion.
                 if not self.collision_always_armed:
                     self.collision_detector.disarm()
 
@@ -406,6 +410,9 @@ class RobotController(Node):
                 self.plan_generation += 1
             self.is_executing = False
             self.last_move_result = -1
+
+        if stopped:
+            self.motion_queue.mark_current_complete(-1)
 
         if self.execution_lock.locked():
             self.execution_lock.release()

@@ -14,6 +14,23 @@ class MotionQueue:
         self.lock = Lock()
         self.current_task = None
         self.task_id_counter = 0
+        self.last_completed_task_id = None
+        self.last_completed_result = None
+
+    def allocate_task_id(self):
+        with self.lock:
+            self.task_id_counter += 1
+            return self.task_id_counter
+
+    def start_immediate_task(self, task_id):
+        with self.lock:
+            self.current_task = {
+                'id': task_id,
+                'function': None,
+                'args': [],
+                'kwargs': {},
+                'submitted_at': time.time(),
+            }
 
     def submit(self, task_function, task_args=None, task_kwargs=None):
         """
@@ -73,10 +90,15 @@ class MotionQueue:
             return {
                 'queue_size': len(self.queue),
                 'current_task_id': self.current_task['id'] if self.current_task else None,
+                'last_completed_task_id': self.last_completed_task_id,
+                'last_completed_result': self.last_completed_result,
                 'max_size': self.max_size
             }
 
-    def mark_current_complete(self):
-        """Mark current task as complete."""
+    def mark_current_complete(self, result=0):
+        """Mark current task as complete and record its result."""
         with self.lock:
+            if self.current_task is not None:
+                self.last_completed_task_id = self.current_task['id']
+                self.last_completed_result = result
             self.current_task = None

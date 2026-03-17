@@ -21,12 +21,20 @@ def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling,
         )
         if isinstance(result, tuple):
             task_id, position = result
+            robot_controller.last_submitted_task_id = task_id
             robot_controller.get_logger().info(f'[Queue] Motion queued at position {position} (task #{task_id})')
             return position
         else:
             robot_controller.get_logger().error(f'[Queue] Queue is full!')
             return result
-    return _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+
+    task_id = robot_controller.motion_queue.allocate_task_id()
+    robot_controller.last_submitted_task_id = task_id
+    robot_controller.motion_queue.start_immediate_task(task_id)
+    result = _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+    if result != 0:
+        robot_controller.motion_queue.mark_current_complete(result)
+    return result
 
 
 def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):

@@ -120,6 +120,15 @@ def _controller_goal_response(robot_controller, future):
 
 def _controller_goal_result(robot_controller, future):
     """Handle controller goal completion."""
+    cancelled_or_stale = False
+    with robot_controller.lock:
+        if robot_controller.active_controller_goal is None:
+            cancelled_or_stale = True
+
+    if cancelled_or_stale:
+        robot_controller.get_logger().warning('[Controller] Ignoring result for cancelled/stale trajectory goal')
+        return
+
     try:
         result = future.result().result
         if result.error_code == 0:
@@ -142,7 +151,7 @@ def _controller_goal_result(robot_controller, future):
         if lock_released:
             with robot_controller.lock:
                 robot_controller.is_executing = False
-            robot_controller.motion_queue.mark_current_complete()
+            robot_controller.motion_queue.mark_current_complete(robot_controller.last_move_result)
             _process_next_queued_task(robot_controller)
 
 

@@ -65,6 +65,8 @@ class RobotStatusPublisher:
             'is_available': not is_executing,
             'queue_size': queue_status['queue_size'],
             'current_task_id': queue_status['current_task_id'],
+            'last_completed_task_id': queue_status['last_completed_task_id'],
+            'last_completed_result': queue_status['last_completed_result'],
             'timestamp': self.node.get_clock().now().to_msg().sec,
             'collision_detected': collision_status.get('state', 'CLEAR') in ['DETECTED', 'RECOVERING'],
             'collision_state': collision_status.get('state', 'CLEAR'),
@@ -93,6 +95,8 @@ class RobotStatusPublisher:
             'is_available': not is_executing,
             'queue_size': queue_status['queue_size'],
             'current_task_id': queue_status['current_task_id'],
+            'last_completed_task_id': queue_status['last_completed_task_id'],
+            'last_completed_result': queue_status['last_completed_result'],
             'max_queue_size': queue_status['max_size']
         }
 
