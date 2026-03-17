@@ -62,7 +62,7 @@ class SafetyWallManager:
             MarkerArray, config.TOPIC_SAFETY_WALLS, 10
         )
 
-        # Create timer for periodic marker publishing
+        # Create a timer for periodic marker publishing
         self.marker_timer = self.node.create_timer(
             marker_publish_interval,
             self._publish_markers_callback
