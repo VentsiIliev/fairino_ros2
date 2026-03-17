@@ -1,0 +1,25 @@
+move_group:
+  ros__parameters:
+    # Planning Scene Monitor settings to speed up startup
+    planning_scene_monitor_options:
+      name: "planning_scene_monitor"
+      robot_description: "robot_description"
+      joint_state_topic: "/joint_states"
+      attached_collision_object_topic: "/attached_collision_object"
+      publish_planning_scene_topic: "/planning_scene"
+      monitored_planning_scene_topic: "/monitored_planning_scene"
+      wait_for_initial_state_timeout: 5.0
+    # Reduce collision mesh complexity
+    robot_description_planning:
+      shape_transform_cache_lookup_wait_time: 0.0
+    # Faster collision detection
+    collision_detection:
+      contacts_max_neighbors: 50  # Reduced from default (usually 100+)
+      max_contacts: 10  # Reduced from default
+      max_contacts_per_pair: 3  # Reduced from default
+    planning_scene_monitor:
+      publish_planning_scene: true
+      publish_geometry_updates: true
+      publish_state_updates: true
+      publish_transforms_updates: true
+      publish_planning_scene_hz: 10.0  # Reduced from default 30Hz
