@@ -2,6 +2,8 @@
 
 
 class MotionStrategy:
+    queueable = True
+
     def execute(self, robot_controller) -> int:
         raise NotImplementedError
 
@@ -21,8 +23,9 @@ class SingleTargetStrategy(MotionStrategy):
 
     def execute(self, robot_controller) -> int:
         from .planning.single_target import send_cartesian_goal
+        planner_context = getattr(robot_controller, "planner_context", robot_controller)
         return send_cartesian_goal(
-            robot_controller,
+            planner_context,
             self.x_mm, self.y_mm, self.z_mm,
             self.rx, self.ry, self.rz,
             self.vel_scale, self.acc_scale,
@@ -40,7 +43,8 @@ class PathStrategy(MotionStrategy):
 
     def execute(self, robot_controller) -> int:
         from .planning.trajectory import send_path_cartesian
+        planner_context = getattr(robot_controller, "planner_context", robot_controller)
         return send_path_cartesian(
-            robot_controller,
+            planner_context,
             self.waypoints_mm, self.rx, self.ry, self.rz,
             self.vel_scaling, self.acc_scaling)

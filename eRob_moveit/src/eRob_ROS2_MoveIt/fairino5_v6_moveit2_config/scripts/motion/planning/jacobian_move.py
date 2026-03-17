@@ -14,6 +14,11 @@ from .planner_utils import _set_result, _is_stale
 from ..execution.trajectory_executor import _send_trajectory_to_controller
 
 
+_JACOBIAN_NOOP_POSITION_TOL_M = 1e-5  # 0.01 mm
+_JACOBIAN_NOOP_ORIENTATION_TOL_RAD = 1e-5
+_JACOBIAN_NOOP_JOINT_TOL_RAD = 1e-5
+
+
 def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scaling, generation):
     """
     Execute a short Cartesian move directly via Jacobian pseudoinverse, bypassing
@@ -82,6 +87,10 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
         T = T @ trans(0, 0, config.DH_D5) @ rotx(-np.pi / 2) @ rotz(q[5])
         return T
 
+    def _rotation_angle(R):
+        tr = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
+        return float(np.arccos(tr))
+
     n = 6
     js = robot_controller.current_joint_state
     if js is None or len(js.position) < n:
@@ -141,10 +150,35 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
     max_dq = np.max(np.abs(delta_q))
     robot_controller.get_logger().info(f'[JacMove] Δq={[f"{v:.5f}" for v in delta_q]} (max={max_dq:.5f})')
 
-    if max_dq < 1e-5:
-        # Effectively zero joint motion — near singularity or step too small to resolve
+    if max_dq < _JACOBIAN_NOOP_JOINT_TOL_RAD:
+        # Compare the requested target pose with the robot's current pose to distinguish:
+        # - true no-op request (already at target) -> success
+        # - meaningful micro move that collapsed numerically -> keep singularity/error
+        p_start = np.array([p0.x, p0.y, p0.z], dtype=float)
+        p_target = np.array([p1.x, p1.y, p1.z], dtype=float)
+        requested_position_delta = float(np.linalg.norm(p_target - p_start))
+
+        q_target = q0 + delta_q
+        T_target = _fk(q_target)
+        achieved_position_delta = float(np.linalg.norm(T_target[:3, 3] - T0[:3, 3]))
+        achieved_orientation_delta = _rotation_angle(T_target[:3, :3] @ T0[:3, :3].T)
+
+        if (
+            requested_position_delta <= _JACOBIAN_NOOP_POSITION_TOL_M
+            and achieved_position_delta <= _JACOBIAN_NOOP_POSITION_TOL_M
+            and achieved_orientation_delta <= _JACOBIAN_NOOP_ORIENTATION_TOL_RAD
+        ):
+            robot_controller.get_logger().info(
+                '[JacMove] Requested target already satisfied '
+                f'(Δx={requested_position_delta * 1000.0:.6f}mm, maxΔq={max_dq:.2e}) — treating as no-op success')
+            _set_result(robot_controller, 0)
+            return True
+
         robot_controller.get_logger().warning(
-            f'[JacMove] Near-zero Δq (max={max_dq:.2e}) — near singularity or step too small, skipping')
+            '[JacMove] Near-zero Δq for unresolved target '
+            f'(reqΔx={requested_position_delta * 1000.0:.6f}mm, '
+            f'achievedΔx={achieved_position_delta * 1000.0:.6f}mm, '
+            f'achievedΔR={achieved_orientation_delta:.2e}rad, maxΔq={max_dq:.2e})')
         _set_result(robot_controller, -9)
         return False
 
@@ -219,11 +253,9 @@ def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generat
     import threading
 
     # Reuse a single persistent validity client
-    if not hasattr(robot_controller, '_state_validity_client'):
-        robot_controller._state_validity_client = robot_controller.create_client(
-            GetStateValidity, '/check_state_validity')
+    state_validity_client = robot_controller.get_state_validity_client()
 
-    if not robot_controller._state_validity_client.wait_for_service(timeout_sec=0.3):
+    if not state_validity_client.wait_for_service(timeout_sec=0.3):
         # Service unavailable — fall back to SafetyWallManager pre-checks only
         robot_controller.get_logger().warning(
             '[JacMove] /check_state_validity unavailable — relying on SafetyWallManager only')
@@ -384,5 +416,5 @@ def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generat
         _on_both_done()
 
     # Fire both validity checks simultaneously — they run in parallel
-    robot_controller._state_validity_client.call_async(_make_request(q_mid)).add_done_callback(_cb_mid)
-    robot_controller._state_validity_client.call_async(_make_request(q_end)).add_done_callback(_cb_end)
+    state_validity_client.call_async(_make_request(q_mid)).add_done_callback(_cb_mid)
+    state_validity_client.call_async(_make_request(q_end)).add_done_callback(_cb_end)

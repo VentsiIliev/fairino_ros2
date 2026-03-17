@@ -102,3 +102,13 @@ class MotionQueue:
                 self.last_completed_task_id = self.current_task['id']
                 self.last_completed_result = result
             self.current_task = None
+
+    def wait_for_task(self, task_id, timeout_s, poll_interval_s=0.05):
+        """Wait until the given task becomes the last completed task."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            with self.lock:
+                if self.last_completed_task_id == task_id:
+                    return self.last_completed_result
+            time.sleep(poll_interval_s)
+        return None

@@ -33,12 +33,9 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
     """
     logger = robot_controller.get_logger()
 
-    if not hasattr(robot_controller, '_fk_client'):
-        robot_controller._fk_client = robot_controller.create_client(
-            GetPositionFK, '/compute_fk'
-        )
+    fk_client = robot_controller.get_fk_client()
 
-    if not robot_controller._fk_client.wait_for_service(timeout_sec=1.0):
+    if not fk_client.wait_for_service(timeout_sec=1.0):
         logger.warning('[FK Diagnostic] /compute_fk service not available')
         return
 
@@ -51,7 +48,7 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
 
     try:
         import time
-        future = robot_controller._fk_client.call_async(fk_request)
+        future = fk_client.call_async(fk_request)
 
         # Busy-wait poll: spin_until_future_complete() cannot be called from
         # within a ROS2 callback (would deadlock the single-threaded executor).
@@ -152,11 +149,9 @@ def _diagnose_start_collision(robot_controller):
     logger = robot_controller.get_logger()
 
     # Reuse a single persistent client to avoid repeated service lookup overhead
-    if not hasattr(robot_controller, '_state_validity_client'):
-        robot_controller._state_validity_client = robot_controller.create_client(
-            GetStateValidity, '/check_state_validity')
+    state_validity_client = robot_controller.get_state_validity_client()
 
-    if not robot_controller._state_validity_client.wait_for_service(timeout_sec=0.5):
+    if not state_validity_client.wait_for_service(timeout_sec=0.5):
         logger.warning('[CollisionDiag] /check_state_validity unavailable')
         return
 
@@ -196,4 +191,4 @@ def _diagnose_start_collision(robot_controller):
         else:
             logger.error('[CollisionDiag] Start state invalid but no contact details returned')
 
-    robot_controller._state_validity_client.call_async(req).add_done_callback(_cb)
+    state_validity_client.call_async(req).add_done_callback(_cb)

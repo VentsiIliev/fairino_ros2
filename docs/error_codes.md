@@ -19,6 +19,38 @@ These codes are returned by `RobotController`, `FairinoRos2Robot`, and all motio
 | `-9` | Near-singularity detected | 500 Internal Server Error |
 | `-10` | Collision detected in Jacobian check | 500 Internal Server Error |
 
+## Trajectory Optimizer Selection
+
+Trajectory time parameterization is now selected through an optimizer strategy,
+not a planner-level `if/else` branch.
+
+Current options in:
+- [/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/config.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/config.py)
+
+Setting:
+
+```python
+TRAJECTORY_OPTIMIZER = "TOTG"   # or "RUCKIG"
+```
+
+Behavior:
+- `TOTG`
+  - uses `/apply_ipp`
+  - current default and known-good path
+- `RUCKIG`
+  - uses `/apply_ruckig`
+  - available behind the same planning flow but not the default
+
+Implementation seam:
+- optimizer strategy classes live in:
+  - [/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/execution/trajectory_optimizer.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/scripts/motion/execution/trajectory_optimizer.py)
+- `RobotController` builds the configured optimizer once at startup
+- planner code delegates to `robot_controller.trajectory_optimizer.optimize(...)`
+
+Result code `-7` still means:
+- the selected optimizer failed
+- this includes either TOTG or Ruckig failure
+
 ## Where Each Code Originates
 
 | Code | Source |
@@ -33,7 +65,39 @@ These codes are returned by `RobotController`, `FairinoRos2Robot`, and all motio
 | `-9` | `trajectory_planner.py` — manipulability below singularity threshold |
 | `-10` | `trajectory_planner.py` — collision object detected during Jacobian check |
 
+## Jacobian Micro-Move Behavior
+
+For sub-5mm single-target moves, the bridge may bypass MoveIt and use the Jacobian fallback path.
+
+Near-zero joint-space solutions are now split into two cases:
+
+- **No-op success**
+  - the requested target pose is already satisfied within a very tight tolerance
+  - the bridge returns success (`0`) and skips sending motion to the controller
+  - this is intended for cases such as two consecutive named positions resolving to the same pose
+
+- **True unresolved micro move / singularity**
+  - the requested target pose is still meaningfully different
+  - but the Jacobian solution collapses to near-zero joint motion
+  - the bridge returns `-9`
+
+This distinction prevents identical consecutive tool-change poses from failing while still preserving real micro-move requests such as `0.15 mm` Cartesian moves.
+
 ---
+
+## Queueing Policy
+
+- Queueable:
+  - `/move/linear`
+  - `/execute/path`
+- Not queueable:
+  - `/jog`
+- `/move/linear` and `/execute/path` share one server-side motion queue.
+  Their ordering is preserved across motion types, so a queued single-target move
+  will execute before a later queued path, and vice versa.
+- Queued tasks are stored as high-level motion requests and are planned when they
+  actually start executing. This avoids stale start-state planning when different
+  motion types are mixed in the queue.
 
 ## REST API Endpoints
 
@@ -41,7 +105,10 @@ Both `rest_server.py` (embedded) and `fairino_bridge_server.py` (standalone) exp
 
 ### Motion Endpoints — Response Shapes
 
-All motion endpoints (`/move/cartesian`, `/move/linear`, `/execute/path`, `/jog`) return the same structured responses:
+Queueable motion endpoints (`/move/cartesian`, `/move/linear`, `/execute/path`) may return queued responses.
+`/jog` never queues; if any motion is executing or pending, jog is rejected.
+
+Successful queued responses use the same shape:
 
 **Success — immediate (HTTP 200)**
 ```json
@@ -71,12 +138,14 @@ All motion endpoints (`/move/cartesian`, `/move/linear`, `/execute/path`, `/jog`
 
 ### `/stop` — Response Shape
 
-`stop_motion()` returns `0` if motion was actively cancelled, `-1` if nothing was running.
-Both cases return HTTP 200 — `-1` is informational, not an error.
+`/stop` now returns an explicit `stop_state` instead of overloading `success` alone.
+All cases return HTTP 200; callers should inspect `stop_state`.
 
 ```json
-{"stopped": true,  "result": 0,  "success": true}   // motion was cancelled
-{"stopped": false, "result": -1, "success": false}   // nothing was running
+{"stop_state": "STOPPED", "stopped": true,  "result": 0,  "success": true}   // motion was cancelled or queue was cleared
+{"stop_state": "NO_ACTIVE_MOTION", "stopped": false, "result": -1, "success": true}   // nothing was running
+{"stop_state": "STOP_REQUESTED_BUT_UNCONFIRMED", "stopped": false, "result": 1, "success": false, "error": "robot executing but no cancellable goal handle was available"}
+{"stop_state": "ERROR", "stopped": false, "result": -2, "success": false, "error": "..."}
 ```
 
 ### `/position/current` (GET) — Response Shape
@@ -101,7 +170,7 @@ Returns the current Cartesian velocity `[vx, vy, vz]` in mm/s published by the C
 > **Note:** `get_current_acceleration()` exists in `FairinoRos2Robot` but is not yet exposed
 > as a REST endpoint in either server. Add `/acceleration/current` if needed.
 
-### `/jog` — Input Validation
+### `/jog` — Input Validation And Busy Semantics
 
 `rest_server.py` validates `axis` and `direction` against `RobotAxis` / `Direction` enums
 and returns HTTP 400 with a descriptive error before calling the robot:
@@ -110,6 +179,8 @@ and returns HTTP 400 with a descriptive error before calling the robot:
 {"result": -1, "success": false, "error": "Invalid 'axis': 99"}   // HTTP 400
 {"result": -1, "success": false, "error": "Missing 'direction'"}  // HTTP 400
 ```
+
+If any queued or active motion exists, `/jog` returns a busy error instead of queueing.
 
 `fairino_bridge_server.py` does not validate enums — it passes raw values directly.
 

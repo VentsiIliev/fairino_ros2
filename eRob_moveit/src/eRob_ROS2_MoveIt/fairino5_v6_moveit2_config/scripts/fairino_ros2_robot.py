@@ -79,6 +79,15 @@ class FairinoRos2Robot:
             result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale,
                                                             tool_transform=tool_transform))
             if result != 0:
+                if blocking and result > 0:
+                    task_id = getattr(self.node, 'last_submitted_task_id', None)
+                    if task_id is not None:
+                        waited = self.node.motion_queue.wait_for_task(task_id, config.BLOCKING_MOVE_TIMEOUT_S)
+                        if waited is None:
+                            self.node.get_logger().error(
+                                f"[MOVE_LINER] Timed out waiting for queued move task #{task_id} to complete")
+                            return -1
+                        return waited
                 self.node.get_logger().info(f"[MOVE_LINER] execute() returned {result}")
                 return result
 
@@ -184,6 +193,15 @@ class FairinoRos2Robot:
             return result
 
         if result > 0:
+            if blocking:
+                task_id = getattr(self.node, 'last_submitted_task_id', None)
+                if task_id is not None:
+                    waited = self.node.motion_queue.wait_for_task(task_id, config.BLOCKING_MOVE_TIMEOUT_S)
+                    if waited is None:
+                        self.node.get_logger().error(
+                            f"[EXECUTE_PATH] Timed out waiting for queued path task #{task_id} to complete")
+                        return -1
+                    return waited
             # Positive = queued position (don't block on queued commands)
             self.node.get_logger().info(f"[EXECUTE_PATH] Command queued at position {result}")
             return result
@@ -306,8 +324,8 @@ class FairinoRos2Robot:
         if self.node is None or self.node.prev_cartesian is None:
             return -1
 
-        if self.node.is_motion_active():
-            self.node.get_logger().info('[JOG] Busy — ignoring')
+        if self.node.is_motion_active() or self.node.has_pending_motion():
+            self.node.get_logger().info('[JOG] Busy or queued motion pending — ignoring')
             return -1
 
         axis_val = axis.value if hasattr(axis, 'value') else axis
@@ -337,6 +355,7 @@ class FairinoRos2Robot:
             return self.node.send_cartesian_goal(
                 x_b, y_b, z_b, rx_b, ry_b, rz_b,
                 vel_scale=vel_scale, acc_scale=acc_scale,
+                queue_if_busy=False,
             )
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
@@ -390,12 +409,17 @@ class FairinoRos2Robot:
         Stops all current robot motion by cancelling active action goals.
 
         Returns:
-            int: 0 on success, -1 on error
+            dict: structured stop result from the controller node.
         """
         if self.node is None:
-            return -1
+            return {
+                "state": "ERROR",
+                "result": -2,
+                "success": False,
+                "stopped": False,
+                "error": "robot node not available",
+            }
 
-        # Cancel all active motion goals
         return self.node.stop_motion()
 
     def resetAllErrors(self):
@@ -409,4 +433,3 @@ class FairinoRos2Robot:
         """
         print("resetAllErrors called (not applicable in ROS2)")
         return 0
-

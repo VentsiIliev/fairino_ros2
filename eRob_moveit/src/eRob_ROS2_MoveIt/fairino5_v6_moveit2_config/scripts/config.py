@@ -91,6 +91,7 @@ PATH_APPROACH_THRESHOLD_MM = 100.0  # plan-first if first waypoint is farther th
 
 
 # ── Trajectory Optimization ────────────────────────────────────
+TRAJECTORY_OPTIMIZER = "TOTG"  # "TOTG" or "RUCKIG"
 RUCKIG_SAMPLE_DT_S    = 0.008   # 8ms = 125 Hz
 OPT_SERVICE_TIMEOUT_S = 5.0
 

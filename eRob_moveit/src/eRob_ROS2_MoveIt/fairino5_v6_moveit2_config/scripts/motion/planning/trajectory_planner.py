@@ -29,10 +29,9 @@ Data flow for sub-5mm Jacobian fallback:
 """
 from copy import deepcopy
 
-from .planner_utils import TIME_PARAMETERIZATION, _set_result, _is_stale, _begin_execution
+from .planner_utils import _set_result, _is_stale, _begin_execution
 from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collision
 from .jacobian_move import _jacobian_fallback_move
-from ..execution.trajectory_optimization import apply_ipp_totg, apply_ruckig_service
 from ..execution.trajectory_executor import _send_trajectory_to_controller
 from moveit_msgs.srv import GetCartesianPath
 import config
@@ -68,10 +67,13 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
             rc.last_move_result = 0
         _send_trajectory_to_controller(rc, result.joint_trajectory)
 
-    if TIME_PARAMETERIZATION == "RUCKIG":
-        apply_ruckig_service(rc, trajectory, vel_scaling, acc_scaling, callback=on_done)
-    else:
-        apply_ipp_totg(rc, trajectory, vel_scaling, acc_scaling, callback=on_done)
+    rc.trajectory_optimizer.optimize(
+        rc,
+        trajectory,
+        vel_scaling,
+        acc_scaling,
+        on_done,
+    )
 
 
 def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
@@ -133,7 +135,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
     """
     # Re-publish safety walls + ACM so MoveIt's scene is current for any
     # subsequent validity checks (e.g. _jacobian_check_and_execute)
-    robot_controller.safety_manager.force_update()
+    robot_controller.force_safety_update()
 
     if _is_stale(robot_controller, generation):
         robot_controller.get_logger().info('[Cartesian Path] Stale response discarded (preempted)')
@@ -153,7 +155,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
             robot_controller.get_logger().error(f'[Cartesian Path]   2. Path goes through collision/obstacles')
             robot_controller.get_logger().error(f'[Cartesian Path]   3. Joint limits would be exceeded')
 
-            if hasattr(robot_controller, 'prev_cartesian') and robot_controller.prev_cartesian is not None:
+            if robot_controller.prev_cartesian is not None:
                 curr = robot_controller.prev_cartesian
                 robot_controller.get_logger().error(
                     f'[Cartesian Path] Current: X={curr[0]:.1f} Y={curr[1]:.1f} Z={curr[2]:.1f} '
@@ -182,7 +184,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
                 _set_result(robot_controller, -6)
                 return
 
-            requested_delta_mm = getattr(robot_controller, '_last_requested_delta_mm', 0.0)
+            requested_delta_mm = robot_controller.get_last_requested_delta_mm()
 
             if requested_delta_mm <= config.JACOBIAN_FALLBACK_MIN_DELTA_MM:
                 # Robot is already at the target — no motion needed
@@ -195,7 +197,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
             # (MoveIt couldn't produce a multi-point trajectory for a short move)
             robot_controller.get_logger().warning(
                 f'[Cartesian Path] ≤1 point but delta={requested_delta_mm:.3f}mm — trying Jacobian fallback')
-            stored_wps = getattr(robot_controller, '_last_full_waypoints', None)
+            stored_wps = robot_controller.get_last_full_waypoints()
             if stored_wps:
                 ok = _jacobian_fallback_move(
                     robot_controller, stored_wps, vel_scaling, acc_scaling, generation)
@@ -226,7 +228,6 @@ __all__ = [
     '_apply_time_param',
     '_build_cartesian_request',
     '_begin_execution',
-    'TIME_PARAMETERIZATION',
     '_set_result',
     '_is_stale',
     '_diagnose_fk_mismatch',

@@ -124,13 +124,14 @@ def start_rest_server(
             acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
             blocking=data.get("blocking", True),
         )
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
 
         if result > 0:
             logger.debug(f"move_linear queued with result {result}")
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
         elif result == 0:
             logger.debug(f"move_linear queued with result {result}")
-            return jsonify({"result": result, "success": True, "queued": False}), 200
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
         else:
             return motion_error_response(result)
 
@@ -203,13 +204,22 @@ def start_rest_server(
     @app.route("/stop", methods=["POST"])
     def stop_motion():
         robot.node.get_logger().info("[rest_server.py] Stopping motion")
-        result = robot.stop_motion()
-        # robot.stop_motion() returns 0 on success, -1 on error
-        success = (result == 0)
+        stop_result = robot.stop_motion()
+        if not isinstance(stop_result, dict):
+            stop_result = {
+                "state": "ERROR",
+                "result": -2,
+                "success": False,
+                "stopped": False,
+                "error": f"Unexpected stop result type: {type(stop_result).__name__}",
+            }
         return jsonify({
-            "stopped": success,
-            "result": result,
-            "success": success
+            "stop_state": stop_result.get("state", "ERROR"),
+            "stopped": bool(stop_result.get("stopped", False)),
+            "result": stop_result.get("result", -2),
+            "success": bool(stop_result.get("success", False)),
+            "queue_cleared": int(stop_result.get("queue_cleared", 0)),
+            **({"error": stop_result["error"]} if stop_result.get("error") else {}),
         })
 
     @app.route("/workobject/set", methods=["POST"])
@@ -270,9 +280,7 @@ def start_rest_server(
             # Call jog
             result = robot.start_jog(axis, direction, step, vel, acc)
 
-            if result > 0:
-                return jsonify({"result": result, "success": True, "queued": True, "queue_position": result}), 202
-            elif result == 0:
+            if result == 0:
                 return jsonify({"result": result, "success": True}), 200
             else:
                 return motion_error_response(result)
@@ -294,4 +302,3 @@ def start_rest_server(
         sys.stdout = f
         sys.stderr = f
         app.run(host=host, port=port, threaded=True, use_reloader=False)
-

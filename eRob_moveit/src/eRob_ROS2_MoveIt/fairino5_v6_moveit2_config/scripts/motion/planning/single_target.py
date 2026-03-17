@@ -140,7 +140,7 @@ def _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_sc
 
 def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling):
     gen = _begin_execution(robot_controller)
-    future = robot_controller.cart_path_client.call_async(request)
+    future = robot_controller.request_cartesian_path(request)
     future.add_done_callback(
         lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
 
@@ -177,8 +177,8 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
 
     p0, p1  = poses[0].position, poses[-1].position
     delta_m = np.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2)
-    robot_controller._last_requested_delta_mm = delta_m * 1000.0
-    robot_controller._last_full_waypoints     = poses
+    robot_controller.set_last_requested_delta_mm(delta_m * 1000.0)
+    robot_controller.set_last_full_waypoints(poses)
 
     if delta_m < 0.005:
         return _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_scaling)
@@ -198,11 +198,7 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
     Send a single-point Cartesian goal. If the robot is already executing,
     the new goal is silently ignored — no preemption, no queuing.
     """
-    robot_controller.safety_manager.force_update()
-
-    if robot_controller.is_executing:
-        robot_controller.get_logger().warning('[MOVE] Already executing — ignoring new goal')
-        return -1
+    robot_controller.force_safety_update()
 
     current_cart = robot_controller.prev_cartesian
     if current_cart is None or len(current_cart) < 6:

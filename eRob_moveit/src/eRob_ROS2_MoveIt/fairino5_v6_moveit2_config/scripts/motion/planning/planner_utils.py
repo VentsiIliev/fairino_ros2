@@ -6,16 +6,6 @@ Shared constants and exit-path helpers used by trajectory_planner.py and jacobia
 Both modules import from here to avoid circular dependencies.
 """
 
-# ============ Trajectory Parameterization Selection ============
-# Options:
-#   "RUCKIG"  - Use Ruckig C++ service (jerk-limited, requires ruckig_helper node)
-#   "TOTG"    - Use TOTG C++ service (time-optimal, requires ipp_helper node)
-#
-# Ruckig provides smoother motion with S-curve profiles (3rd order)
-# TOTG is faster but has trapezoidal velocity profiles (2nd order)
-TIME_PARAMETERIZATION = "TOTG"
-
-
 def _set_result(rc, code):
     """
     Atomically clear the executing flag and record the final result code.
@@ -73,7 +63,7 @@ def _is_stale(rc, generation):
 
 
 def _require_cart_path_service(rc, tag):
-    if not rc.cart_path_client.wait_for_service(timeout_sec=1.0):
+    if not rc.wait_for_cartesian_path_service(timeout_sec=1.0):
         rc.get_logger().error(f'[{tag}] compute_cartesian_path service not available')
         return False
     return True
@@ -98,8 +88,7 @@ def _to_pose_list(robot_controller, waypoints_mm, T_tool, check_last_only=True):
         quat  = TransformationUtils.matrix_to_quaternion(T_ee[:3, :3])
 
         if (not check_last_only) or (i == last):
-            is_safe, msg = robot_controller.safety_manager.check_position_safety(
-                pos[0], pos[1], pos[2])
+            is_safe, msg = robot_controller.check_position_safety(pos[0], pos[1], pos[2])
             if not is_safe:
                 robot_controller.get_logger().error(f'[SAFETY] Waypoint rejected: {msg}')
                 return None, -3
@@ -111,4 +100,3 @@ def _to_pose_list(robot_controller, waypoints_mm, T_tool, check_last_only=True):
         pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat
         poses.append(pose)
     return poses, None
-

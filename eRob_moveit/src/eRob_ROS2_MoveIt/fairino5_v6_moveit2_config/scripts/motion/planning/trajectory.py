@@ -13,32 +13,15 @@ import config
 
 
 def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
-    robot_controller.safety_manager.force_update()
-    if robot_controller.is_executing:
-        result = robot_controller.motion_queue.submit(
-            task_function=_execute_path,
-            task_args=[robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling]
-        )
-        if isinstance(result, tuple):
-            task_id, position = result
-            robot_controller.last_submitted_task_id = task_id
-            robot_controller.get_logger().info(f'[Queue] Motion queued at position {position} (task #{task_id})')
-            return position
-        else:
-            robot_controller.get_logger().error(f'[Queue] Queue is full!')
-            return result
-
-    task_id = robot_controller.motion_queue.allocate_task_id()
-    robot_controller.last_submitted_task_id = task_id
-    robot_controller.motion_queue.start_immediate_task(task_id)
+    robot_controller.force_safety_update()
     result = _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
     if result != 0:
-        robot_controller.motion_queue.mark_current_complete(result)
+        robot_controller.mark_current_motion_complete(result)
     return result
 
 
 def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
-    robot_controller._last_requested_delta_mm = 0.0
+    robot_controller.set_last_requested_delta_mm(0.0)
     num_waypoints = len(waypoints_mm)
     robot_controller.get_logger().info(f'[EXECUTE_PATH] Received path with {num_waypoints} waypoints')
     robot_controller.get_logger().info(f'[EXECUTE_PATH] Transforming waypoints from work object to base frame')
@@ -88,7 +71,7 @@ def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_s
     request = _build_cartesian_request(robot_controller, waypoints, max_step, vel_scaling, acc_scaling)
     robot_controller.get_logger().info(f'[Cartesian Path] max_step={max_step*1000:.1f}mm')
     gen = _begin_execution(robot_controller)
-    future = robot_controller.cart_path_client.call_async(request)
+    future = robot_controller.request_cartesian_path(request)
     future.add_done_callback(lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
     return 0
 
@@ -113,7 +96,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
 
     robot_controller.get_logger().info('[EXECUTE_PATH] Phase 1: IK query for first waypoint...')
     gen = _begin_execution(robot_controller)
-    ik_future = robot_controller.cart_path_client.call_async(ik_request)
+    ik_future = robot_controller.request_cartesian_path(ik_request)
 
     def on_ik_done(f):
         if _is_stale(robot_controller, gen):
@@ -150,7 +133,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
         robot_controller.get_logger().info(
             f'[EXECUTE_PATH] Phase 2: Planning {len(waypoints)}-waypoint path from wp[0] '
             f'(max_step={max_step*1000:.1f}mm)...')
-        plan_future = robot_controller.cart_path_client.call_async(plan_request)
+        plan_future = robot_controller.request_cartesian_path(plan_request)
         plan_future.add_done_callback(on_plan_done)
 
     def on_plan_done(f):
@@ -180,21 +163,16 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             f'[{first_wp_mm[0]:.1f}, {first_wp_mm[1]:.1f}, {first_wp_mm[2]:.1f}]')
 
         # Store trajectory for deferred execution
-        robot_controller._pending_path_trajectory = resp.solution
-        robot_controller._pending_path_vel_scaling = vel_scaling
-        robot_controller._pending_path_acc_scaling = acc_scaling
+        robot_controller.stage_pending_path(resp.solution, vel_scaling, acc_scaling)
 
         # Queue trajectory execution — fires after approach completes
-        robot_controller.motion_queue.submit(
-            task_function=_execute_pending_trajectory,
-            task_args=[robot_controller]
-        )
+        robot_controller.submit_motion_task(_execute_pending_trajectory, [robot_controller])
 
         # ── Phase 3: Approach first waypoint ───────────────────────────────
         current_cart = robot_controller.prev_cartesian
         if current_cart is None or len(current_cart) < 6:
             robot_controller.get_logger().error('[EXECUTE_PATH] Lost current position before approach — aborting')
-            robot_controller.motion_queue.clear()
+            robot_controller.clear_motion_queue()
             _set_result(robot_controller, -4)
             return
 
@@ -221,18 +199,18 @@ def _execute_pending_trajectory(robot_controller):
         robot_controller.get_logger().error(
             f'[EXECUTE_PATH] Approach failed (code={robot_controller.last_move_result}) — '
             f'discarding queued path execution')
-        robot_controller._pending_path_trajectory = None
+        robot_controller.clear_pending_path()
         return -1
 
-    trajectory = getattr(robot_controller, '_pending_path_trajectory', None)
-    vel_scaling = getattr(robot_controller, '_pending_path_vel_scaling', config.DEFAULT_VEL_SCALING)
-    acc_scaling = getattr(robot_controller, '_pending_path_acc_scaling', config.DEFAULT_ACC_SCALING)
+    trajectory, vel_scaling, acc_scaling = robot_controller.consume_pending_path()
+    if vel_scaling is None:
+        vel_scaling = config.DEFAULT_VEL_SCALING
+    if acc_scaling is None:
+        acc_scaling = config.DEFAULT_ACC_SCALING
 
     if trajectory is None:
         robot_controller.get_logger().error('[EXECUTE_PATH] No pending trajectory!')
         return -1
-
-    robot_controller._pending_path_trajectory = None  # consume
 
     num_pts = len(trajectory.joint_trajectory.points)
     robot_controller.get_logger().info(

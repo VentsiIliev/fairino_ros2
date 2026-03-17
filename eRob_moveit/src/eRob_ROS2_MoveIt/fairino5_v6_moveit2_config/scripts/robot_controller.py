@@ -20,8 +20,14 @@ from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
 from safety.collision_detection import create_dynamics_collision_detector
 from status.robot_monitor import RobotMonitor
+from status.robot_state_store import RobotStateStore
 from status.robot_status_publisher import RobotStatusPublisher
 from motion.execution.motion_queue import MotionQueue
+from motion.execution.motion_coordinator import MotionCoordinator
+from motion.execution.trajectory_executor import TrajectoryExecutor
+from motion.execution.trajectory_optimizer import build_trajectory_optimizer
+from motion.planning.planner_context import PlannerContext
+from motion.planning.planner_support_service import PlannerSupportService
 from utils.workspace_extractor import _extract_workspace_from_urdf
 # All tunable constants live in config.py
 from config import (
@@ -45,6 +51,7 @@ from config import (
     COLLISION_SUSTAINED_THRESHOLDS,
     COLLISION_CONFIRMATION_SAMPLES,
     COLLISION_RECOVERY_TIME_S,
+    TRAJECTORY_OPTIMIZER,
 )
 
 
@@ -58,11 +65,12 @@ class RobotController(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-        self.lock = Lock()
-        self.execution_lock = Lock()
 
         # Motion queue for sequential execution
         self.motion_queue = MotionQueue(max_size=MOTION_QUEUE_MAX_SIZE)
+        self._motion = MotionCoordinator(node=self, motion_queue=self.motion_queue)
+        self.lock = self._motion.lock
+        self.execution_lock = self._motion.execution_lock
 
         # Status publisher - broadcasts execution state and queue size
         self.status_publisher = RobotStatusPublisher(
@@ -114,17 +122,32 @@ class RobotController(Node):
         self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
         self.cart_path_client = self.create_client(GetCartesianPath, SERVICE_CARTESIAN_PATH)
         self.ipp_client = self.create_client(ApplyIPP, SERVICE_APPLY_IPP)
-
-        self.prev_cartesian = None
-        self.current_joint_state = None  # Store the latest joint state for trajectory planning
-
-        # Track active goal handles for motion cancellation
-        self.active_execute_send_future = None
-        self.active_controller_goal = None
-        self.is_executing = False
-        self.plan_generation = 0
-        self.last_move_result = 0  # 0=success, negative=error/skip (set by async callbacks)
-        self.last_submitted_task_id = None
+        self.trajectory_executor = TrajectoryExecutor(
+            node=self,
+            coordinator=self._motion,
+            motion_queue=self.motion_queue,
+            controller_client=self.controller_client,
+        )
+        self.trajectory_optimizer = build_trajectory_optimizer(
+            TRAJECTORY_OPTIMIZER,
+            node=self,
+            fallback_name="TOTG",
+        )
+        self.state_store = RobotStateStore()
+        self.planner_support = PlannerSupportService(node=self)
+        self.planner_context = PlannerContext(
+            node=self,
+            state_store=self.state_store,
+            motion_coordinator=self._motion,
+            motion_queue=self.motion_queue,
+            safety_manager=self.safety_manager,
+            cart_path_client=self.cart_path_client,
+            ipp_client=self.ipp_client,
+            trajectory_executor=self.trajectory_executor,
+            planner_support=self.planner_support,
+            trajectory_optimizer=self.trajectory_optimizer,
+        )
+        self.planner_context.T_tool = self.T_tool
 
         self.urdf_path = '/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf'
 
@@ -220,6 +243,7 @@ class RobotController(Node):
         self.T_tool = np.eye(4)
         self.T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
         self.T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
+        self.planner_context.T_tool = self.T_tool
 
         # Compose: wrist3 → ee_link → TCP
         if self.monitor is not None and self.T_ee_link is not None:
@@ -270,15 +294,15 @@ class RobotController(Node):
             self.get_logger().warning(f"Could not get TCP transform from tf: {e}")
             return np.eye(4)
 
-    def execute(self, strategy):
-        return strategy.execute(self)
+    def execute(self, strategy, queue_if_busy=True):
+        return self._motion.execute(strategy, queue_if_busy=queue_if_busy)
 
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                            tool_transform=None):
+                            tool_transform=None, queue_if_busy=True):
         from motion.strategies import SingleTargetStrategy
         return self.execute(SingleTargetStrategy(
             x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-            tool_transform=tool_transform))
+            tool_transform=tool_transform), queue_if_busy=queue_if_busy)
 
     def _on_collision_detected(self):
         """Callback when collision detector triggers."""
@@ -332,15 +356,14 @@ class RobotController(Node):
             )
 
         with self.lock:
-
-            if self.monitor is None:  # <-- guard added
-                return  # RobotMonitor not initialized yet
-
             if len(msg.position) < 6:
                 return
 
-            # Store current joint state for trajectory planning
+            # Joint-state caching must not depend on RobotMonitor readiness.
             self.current_joint_state = msg
+
+            if self.monitor is None:
+                return  # RobotMonitor not initialized yet
 
             # Get latest data from RobotMonitor (updated via topic subscriptions)
             data = self.monitor.get_latest_data()
@@ -359,82 +382,138 @@ class RobotController(Node):
 
     def get_latest_data(self):
         """Return a copy of the latest joint/cartesian data."""
-        with self.lock:
-            if hasattr(self, 'latest_data'):
-                return self.latest_data.copy()
-            else:
-                # Return empty/default structure if no data yet
+        return self.state_store.get_latest_data()
 
-                return None
+    def request_cartesian_path(self, request):
+        return self.planner_context.request_cartesian_path(request)
+
+    def wait_for_cartesian_path_service(self, timeout_sec=1.0):
+        return self.planner_context.wait_for_cartesian_path_service(timeout_sec=timeout_sec)
+
+    def force_safety_update(self):
+        self.planner_context.force_safety_update()
+
+    def check_position_safety(self, x, y, z):
+        return self.planner_context.check_position_safety(x, y, z)
+
+    def set_last_requested_delta_mm(self, value):
+        self.planner_context.set_last_requested_delta_mm(value)
+
+    def get_last_requested_delta_mm(self):
+        return self.planner_context.get_last_requested_delta_mm()
+
+    def set_last_full_waypoints(self, value):
+        self.planner_context.set_last_full_waypoints(value)
+
+    def get_last_full_waypoints(self):
+        return self.planner_context.get_last_full_waypoints()
+
+    def stage_pending_path(self, trajectory, vel_scaling, acc_scaling):
+        self.planner_context.stage_pending_path(trajectory, vel_scaling, acc_scaling)
+
+    def consume_pending_path(self):
+        return self.planner_context.consume_pending_path()
+
+    def clear_pending_path(self):
+        self.planner_context.clear_pending_path()
+
+    def submit_motion_task(self, task_function, task_args=None):
+        self.planner_context.submit_motion_task(task_function, task_args)
+
+    def mark_current_motion_complete(self, result):
+        self.planner_context.mark_current_motion_complete(result)
+
+    def clear_motion_queue(self):
+        self.planner_context.clear_motion_queue()
+
+    def get_fk_client(self):
+        return self.planner_context.get_fk_client()
+
+    def get_state_validity_client(self):
+        return self.planner_context.get_state_validity_client()
 
     def stop_motion(self):
-        """
-        Cancel all active motion goals (Controller only) and clear queue.
-
-        Returns:
-            int: 0 if motion was stopped, -1 if no active goals
-        """
-        self.get_logger().info('[STOP] Stopping motion called')
-        stopped = False
-        queue_cleared = 0
-
-        # Cancel pending send operation
-        future = self.active_execute_send_future
-        if future is not None:
-            self.get_logger().info('[STOP] Cancelling pending trajectory submission...')
-            try:
-                future.cancel()
-                self.active_execute_send_future = None
-                stopped = True
-                self.get_logger().info('[STOP] ✓ Pending submission cancelled')
-            except Exception as e:
-                self.get_logger().error(f'[STOP] Failed to cancel send future: {e}')
-
-        # Cancel the actual hardware controller goal (fairino5_controller)
-        if self.active_controller_goal is not None:
-            self.get_logger().info('[STOP] Cancelling active controller trajectory...')
-            try:
-                future = self.active_controller_goal.cancel_goal_async()
-                self.active_controller_goal = None
-                stopped = True
-                self.get_logger().warning('[STOP] ✓ Robot motion cancelled!')
-            except Exception as e:
-                self.get_logger().error(f'[STOP] Failed to cancel controller goal: {e}')
-
-        # Only invalidate pending plans when something was actually cancelled.
-        # Incrementing unconditionally (or based on is_executing) causes valid
-        # in-flight MoveIt responses to be discarded when stop_motion is called
-        # during the planning phase where no controller goal exists yet.
-        with self.lock:
-            if stopped:  # ← restore the condition
-                self.plan_generation += 1
-            self.is_executing = False
-            self.last_move_result = -1
-
-        if stopped:
-            self.motion_queue.mark_current_complete(-1)
-
-        if self.execution_lock.locked():
-            self.execution_lock.release()
-
-        # Clear motion queue
-        queue_cleared = self.motion_queue.clear()
-        if queue_cleared > 0:
-            self.get_logger().warning(f'[STOP] Cleared {queue_cleared} queued motions')
-
-        if stopped or queue_cleared > 0:
-            self.get_logger().warning('[STOP] 🛑 Robot motion stopped and queue cleared')
-            return 0  # Success
-        else:
-            self.get_logger().info('[STOP] No active motion to cancel')
-            return -1  # No motion was active
+        return self._motion.stop_motion()
 
     def is_motion_active(self):
         """Return True if any motion goal is active."""
-        return any([
-            self.active_controller_goal is not None,
-            self.active_execute_send_future is not None
-        ])
+        return self._motion.is_motion_active()
+
+    def has_pending_motion(self):
+        """Return True if any queued motion is waiting to execute."""
+        return self._motion.has_pending_motion()
+
+    @property
+    def active_execute_send_future(self):
+        return self._motion.active_execute_send_future
+
+    @active_execute_send_future.setter
+    def active_execute_send_future(self, value):
+        self._motion.active_execute_send_future = value
+
+    @property
+    def active_controller_goal(self):
+        return self._motion.active_controller_goal
+
+    @active_controller_goal.setter
+    def active_controller_goal(self, value):
+        self._motion.active_controller_goal = value
+
+    @property
+    def is_executing(self):
+        return self._motion.is_executing
+
+    @is_executing.setter
+    def is_executing(self, value):
+        self._motion.is_executing = value
+
+    @property
+    def plan_generation(self):
+        return self._motion.plan_generation
+
+    @plan_generation.setter
+    def plan_generation(self, value):
+        self._motion.plan_generation = value
+
+    @property
+    def last_move_result(self):
+        return self._motion.last_move_result
+
+    @last_move_result.setter
+    def last_move_result(self, value):
+        self._motion.last_move_result = value
+
+    @property
+    def last_submitted_task_id(self):
+        return self._motion.last_submitted_task_id
+
+    @last_submitted_task_id.setter
+    def last_submitted_task_id(self, value):
+        self._motion.last_submitted_task_id = value
+
+    @property
+    def prev_cartesian(self):
+        return self.state_store.get_prev_cartesian()
+
+    @prev_cartesian.setter
+    def prev_cartesian(self, value):
+        self.state_store.set_prev_cartesian(value)
+
+    @property
+    def current_joint_state(self):
+        return self.state_store.get_current_joint_state()
+
+    @current_joint_state.setter
+    def current_joint_state(self, value):
+        self.state_store.set_current_joint_state(value)
+
+    @property
+    def latest_data(self):
+        return self.state_store.get_latest_data()
+
+    @latest_data.setter
+    def latest_data(self, value):
+        self.state_store.set_latest_data(value)
 
     # ============ Collision Detection API ============
 
@@ -489,4 +568,3 @@ class RobotController(Node):
     def get_collision_status(self):
         """Get collision detector status for debugging."""
         return self.collision_detector.get_status()
-

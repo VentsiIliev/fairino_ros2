@@ -820,22 +820,30 @@ class MonitorWindow(QWidget):
     def stop_motion(self):
         """Stop all robot motion by cancelling active goals."""
         try:
-            result = self.robot.stop_motion()
+            result = self.robot.stop_motion() or {}
+            state = result.get('state', 'ERROR')
 
-            if result == 0:
-                # Motion was stopped successfully
+            if state == 'STOPPED':
                 self.stop_motion_btn.setStyleSheet(
                     'QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
                 self.stop_motion_btn.setText('STOPPED!')
                 print("Robot motion stopped successfully")
-            else:
-                # No active goals to stop
+            elif state == 'NO_ACTIVE_MOTION':
                 self.stop_motion_btn.setStyleSheet(
                     'QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
                 self.stop_motion_btn.setText('NO MOTION')
                 print("No active motion to stop")
+            elif state == 'STOP_REQUESTED_BUT_UNCONFIRMED':
+                self.stop_motion_btn.setStyleSheet(
+                    'QPushButton { background-color: #FFC107; color: black; font-weight: bold; padding: 10px; font-size: 14px; }')
+                self.stop_motion_btn.setText('STOP?')
+                print("Stop was requested but not confirmed")
+            else:
+                self.stop_motion_btn.setStyleSheet(
+                    'QPushButton { background-color: #9E9E9E; color: white; font-weight: bold; padding: 10px; font-size: 14px; }')
+                self.stop_motion_btn.setText('ERROR')
+                print(f"Error stopping motion: {result.get('error')}")
 
-            # Reset button after 1.5 seconds
             QTimer.singleShot(1500, self.reset_stop_button)
 
         except Exception as e:
