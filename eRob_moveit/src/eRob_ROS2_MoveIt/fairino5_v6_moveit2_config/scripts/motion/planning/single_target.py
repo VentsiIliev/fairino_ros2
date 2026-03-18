@@ -21,7 +21,16 @@ from .planner_utils import _set_result, _require_cart_path_service, _to_pose_lis
 import numpy as np
 import config
 
-def _compute_max_step(delta_m):
+
+_ORIENTATION_DIRECT_JACOBIAN_TOL_DEG = 0.5
+_ORIENTATION_ONLY_MOVE_STEP_M = 0.01
+
+
+def _wrapped_angle_delta_deg(start_deg, target_deg):
+    return abs(((target_deg - start_deg + 180.0) % 360.0) - 180.0)
+
+
+def _compute_max_step(delta_m, orientation_delta_deg=0.0):
     """
     Compute adaptive max_step for MoveIt's compute_cartesian_path.
 
@@ -33,28 +42,13 @@ def _compute_max_step(delta_m):
       • guarantee ≥3 trajectory points for TOTG
       • keep MoveIt planning time predictable
       • avoid excessive points for short linear moves
+      • avoid pathological planning time for orientation-dominant moves
 
     Constraints:
       min_step        = 0.5 mm   (0.0005 m)
       max_step_limit  = 25 mm    (0.025 m)
       min_segments    = 2        (ensures ≥3 points)
       target_segments = 6–8      (for typical single-point moves)
-
-    Behavior examples:
-
-    distance    chosen segments    resulting max_step    trajectory points
-    --------    ---------------    ------------------    -----------------
-      2 mm            2                1.0 mm                 3
-     10 mm            4                2.5 mm                 5
-     50 mm            6                8.3 mm                 7
-    100 mm            6               16.7 mm                 7
-    645 mm            6               107.5 mm*               7
-    (*clipped by max_step_limit → 25 mm)
-
-    Notes:
-      • Segments ≈ min(target_segments, max(min_segments, delta_m / desired_step))
-      • Keeps planning fast for straight-line moves
-      • Maintains ≥3 points for TOTG
 
     Returns
     -------
@@ -65,6 +59,13 @@ def _compute_max_step(delta_m):
     max_step_limit = 0.025  # 25 mm
     min_segments = 2        # ensures ≥3 points
     target_segments = 6     # reasonable for short linear moves
+
+    # Pure / near-pure orientation changes should not be planned with a tiny
+    # Cartesian sampling step derived from near-zero XYZ translation. That
+    # creates hundreds of unnecessary internal points and multi-second planning
+    # delays for simple wrist rotations.
+    if delta_m < 0.005 and orientation_delta_deg > _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG:
+        return _ORIENTATION_ONLY_MOVE_STEP_M
 
     # estimate segments to keep ~6 points max for single-point moves
     segments = max(min_segments, min(target_segments, int(np.ceil(delta_m / 0.01))))
@@ -177,15 +178,31 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
 
     p0, p1  = poses[0].position, poses[-1].position
     delta_m = np.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2)
+    orientation_delta_deg = max(
+        _wrapped_angle_delta_deg(start_wp[3], target_wp[3]),
+        _wrapped_angle_delta_deg(start_wp[4], target_wp[4]),
+        _wrapped_angle_delta_deg(start_wp[5], target_wp[5]),
+    )
     robot_controller.set_last_requested_delta_mm(delta_m * 1000.0)
     robot_controller.set_last_full_waypoints(poses)
 
-    if delta_m < 0.005:
+    if delta_m < 0.005 and orientation_delta_deg <= _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG:
         return _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_scaling)
+
+    if delta_m < 0.005:
+        robot_controller.get_logger().info(
+            f'[Single Point] Sub-5mm translation but orientation delta={orientation_delta_deg:.3f}° '
+            '— bypassing Jacobian direct and forcing MoveIt path')
+
+    max_step = _compute_max_step(delta_m, orientation_delta_deg)
+    if delta_m < 0.005 and orientation_delta_deg > _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG:
+        robot_controller.get_logger().info(
+            f'[Single Point] Orientation-dominant move: using coarse MoveIt eef_step={max_step:.4f}m '
+            f'for orientation delta={orientation_delta_deg:.3f}°')
 
     _dispatch_moveit(
         robot_controller,
-        _build_cartesian_request(robot_controller, poses, _compute_max_step(delta_m),
+        _build_cartesian_request(robot_controller, poses, max_step,
                                   vel_scaling, acc_scaling),
         vel_scaling, acc_scaling,
     )
