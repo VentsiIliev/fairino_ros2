@@ -1,0 +1,148 @@
+--- ROS2 Joint Trajectory Message ---
+
+header:
+stamp:
+sec: 1769781626       # Unix timestamp seconds when this message was created
+nanosec: 165050124    # Additional nanoseconds for precise timestamp
+frame_id: ''            # Coordinate frame ID (empty here)
+
+joint_names:
+
+* j1                     # Name of joint 1
+* j2                     # Name of joint 2
+* j3                     # Name of joint 3
+* j4                     # Name of joint 4
+* j5                     # Name of joint 5
+* j6                     # Name of joint 6
+
+reference:
+positions:
+
+* -1.9468076416290208  # Target position for joint 1
+* -1.261752328099687   # Target position for joint 2
+* 1.7371649321985279   # Target position for joint 3
+* -2.0349508168595913  # Target position for joint 4
+* -1.5705115017163127  # Target position for joint 5
+* -0.20126284003396286 # Target position for joint 6
+  velocities:
+* 0.0                   # Target velocity for joint 1
+* 0.0                   # Target velocity for joint 2
+* 0.0                   # Target velocity for joint 3
+* 0.0                   # Target velocity for joint 4
+* 0.0                   # Target velocity for joint 5
+* 0.0                   # Target velocity for joint 6
+  accelerations:
+* 0.0                   # Target acceleration for joint 1
+* 0.0                   # Target acceleration for joint 2
+* 0.0                   # Target acceleration for joint 3
+* 0.0                   # Target acceleration for joint 4
+* 0.0                   # Target acceleration for joint 5
+* 0.0                   # Target acceleration for joint 6
+  effort: []              # Target effort (torque) - empty
+  time_from_start:
+  sec: 535               # Time from trajectory start (seconds)
+  nanosec: 639996355     # Additional nanoseconds
+
+feedback:
+positions:
+
+* -1.9468000516199138  # Actual measured joint 1 position
+* -1.261741009665054   # Actual measured joint 2 position
+* 1.7371725222076346   # Actual measured joint 3 position
+* -2.0349508168595913  # Actual measured joint 4 position
+* -1.5705001832816796  # Actual measured joint 5 position
+* -0.2012590450294095  # Actual measured joint 6 position
+  velocities:
+* 0.0                   # Measured velocity joint 1
+* 0.00037288957398477757 # Measured velocity joint 2
+* 0.0003862070587334648  # Measured velocity joint 3
+* -0.0003862070588000866 # Measured velocity joint 4
+* 0.0                     # Measured velocity joint 5
+* 0.0                     # Measured velocity joint 6
+  accelerations:
+* 0.0                     # Measured acceleration joint 1
+* 0.03729366012902003     # Measured acceleration joint 2
+* 0.03862557655855052     # Measured acceleration joint 3
+* -0.0772464214802639     # Measured acceleration joint 4
+* -0.03728909164142839    # Measured acceleration joint 5
+* 0.037954968275463456    # Measured acceleration joint 6
+  effort: []                # Measured effort - empty
+  time_from_start:
+  sec: 535                 # Timestamp of feedback seconds
+  nanosec: 639996685       # Timestamp of feedback nanoseconds
+
+error:
+positions:
+
+* -7.5900091069946996e-06  # Position error joint 1 (ref - feedback)
+* -1.1318434632867636e-05  # Position error joint 2
+* -7.590009106772655e-06   # Position error joint 3
+* 0.0                       # Position error joint 4
+* -1.131843463308968e-05   # Position error joint 5
+* -3.795004553358572e-06   # Position error joint 6
+  velocities:
+* 0.0                       # Velocity error joint 1
+* 0.0                       # Velocity error joint 2
+* 0.0                       # Velocity error joint 3
+* 0.0                       # Velocity error joint 4
+* 0.0                       # Velocity error joint 5
+* 0.0                       # Velocity error joint 6
+  accelerations:
+* 0.0                       # Acceleration error joint 1
+* 0.0                       # Acceleration error joint 2
+* 0.0                       # Acceleration error joint 3
+* 0.0                       # Acceleration error joint 4
+* 0.0                       # Acceleration error joint 5
+* 0.0                       # Acceleration error joint 6
+  effort: []                  # Effort error - empty
+  time_from_start:
+  sec: 0                     # Error timestamp seconds (not set)
+  nanosec: 0                 # Error timestamp nanoseconds (not set)
+
+output:
+positions:
+
+* -1.9468076416290208  # Final joint command 1 position
+* -1.261752328099687   # Final joint command 2
+* 1.7371649321985279   # Final joint command 3
+* -2.0349508168595913  # Final joint command 4
+* -1.5705115017163127  # Final joint command 5
+* -0.20126284003396286 # Final joint command 6
+  velocities: []          # Final velocity command - empty
+  accelerations: []       # Final acceleration command - empty
+  effort: []              # Final effort command - empty
+  time_from_start:
+  sec: 0                 # Output timestamp seconds (not set)
+  nanosec: 0             # Output timestamp nanoseconds (not set)
+
+multi_dof_joint_names: [] # Multi-DOF joint names (empty)
+multi_dof_reference:
+transforms: []          # Multi-DOF target transforms
+velocities: []          # Multi-DOF target velocities
+accelerations: []       # Multi-DOF target accelerations
+time_from_start:
+sec: 0
+nanosec: 0
+multi_dof_feedback:
+transforms: []          # Multi-DOF feedback transforms
+velocities: []
+accelerations: []
+time_from_start:
+sec: 0
+nanosec: 0
+multi_dof_error:
+transforms: []          # Multi-DOF error transforms
+velocities: []
+accelerations: []
+time_from_start:
+sec: 0
+nanosec: 0
+multi_dof_output:
+transforms: []          # Multi-DOF output transforms
+velocities: []
+accelerations: []
+time_from_start:
+sec: 0
+nanosec: 0
+
+speed_scaling_factor: 1.0  # Global speed scaling factor (1 = 100% speed)

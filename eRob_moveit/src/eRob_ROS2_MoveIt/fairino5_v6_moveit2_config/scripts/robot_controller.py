@@ -443,6 +443,9 @@ class RobotController(Node):
     def get_fk_client(self):
         return self.planner_context.get_fk_client()
 
+    def get_ik_client(self):
+        return self.planner_context.get_ik_client()
+
     def get_state_validity_client(self):
         return self.planner_context.get_state_validity_client()
 

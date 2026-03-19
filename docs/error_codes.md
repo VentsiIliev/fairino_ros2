@@ -18,6 +18,7 @@ These codes are returned by `RobotController`, `FairinoRos2Robot`, and all motio
 | `-8` | Jacobian fallback failed | 500 Internal Server Error |
 | `-9` | Near-singularity detected | 500 Internal Server Error |
 | `-10` | Collision detected in Jacobian check | 500 Internal Server Error |
+| `-11` | Cartesian path planning failed (target unreachable, collision, or joint-limit constraint) | 400 Bad Request |
 
 ## Trajectory Optimizer Selection
 
@@ -55,15 +56,16 @@ Result code `-7` still means:
 
 | Code | Source |
 |------|--------|
-| `-2` | `trajectory_planner.py` — `/compute_cartesian_path` service call timeout/unavailable |
+| `-2` | `planner_utils.py` / `trajectory.py` / `single_target.py` — `/compute_cartesian_path` or IK service call timeout/unavailable |
 | `-3` | `safety_wall_manager.py` — waypoint outside workspace mesh boundary |
 | `-4` | `robot_monitor.py` — no cached position yet from `/cartesian_position` |
 | `-5` | `motion_queue.py` — queue at capacity (10 tasks) |
-| `-6` | `trajectory_planner.py` — MoveIt returns empty or < 1% complete path |
-| `-7` | `trajectory_optimization.py` — `/apply_ipp` service fails |
-| `-8` | `trajectory_planner.py` — Jacobian-based fallback path also fails |
-| `-9` | `trajectory_planner.py` — manipulability below singularity threshold |
-| `-10` | `trajectory_planner.py` — collision object detected during Jacobian check |
+| `-6` | `trajectory_planner.py` (`_cartesian_path_response`) — MoveIt returns empty or < 1% complete path |
+| `-7` | `trajectory_optimization.py` — `/apply_ipp` or `/apply_ruckig` service fails |
+| `-8` | `single_target.py` (`_execute_jacobian_move`) — Jacobian-based fallback path also fails |
+| `-9` | `jacobian_move.py` — near-zero Δq for unresolved target (near-singularity) |
+| `-10` | `jacobian_move.py` (`_jacobian_check_and_execute`) — real collision contact detected during Jacobian validity check |
+| `-11` | `trajectory_planner.py` / `trajectory.py` — fraction below threshold: target unreachable, collision, or joint-limit constraint |
 
 ## Jacobian Micro-Move Behavior
 
@@ -105,7 +107,7 @@ Both `rest_server.py` (embedded) and `fairino_bridge_server.py` (standalone) exp
 
 ### Motion Endpoints — Response Shapes
 
-Queueable motion endpoints (`/move/cartesian`, `/move/linear`, `/execute/path`) may return queued responses.
+Queueable motion endpoints (`/move/linear`, `/execute/path`) may return queued responses.
 `/jog` never queues; if any motion is executing or pending, jog is rejected.
 
 Successful queued responses use the same shape:
@@ -183,6 +185,31 @@ and returns HTTP 400 with a descriptive error before calling the robot:
 If any queued or active motion exists, `/jog` returns a busy error instead of queueing.
 
 `fairino_bridge_server.py` does not validate enums — it passes raw values directly.
+
+### `/reachability/pose` (POST) — Response Shape
+
+Checks whether a target pose is kinematically reachable and collision-free from a start pose.
+Uses IK + `/check_state_validity` without actually moving the robot.
+
+```json
+// HTTP 200 — reachable
+{
+  "success": true, "reachable": true, "reason": "ok", "fraction": 1.0,
+  "target_joint_state": {"name": [...], "position": [...]},
+  "start_position": [...], "target_position": [...]
+}
+
+// HTTP 409 — partial path
+{"success": true, "reachable": false, "reason": "cartesian_path_partial", "fraction": 0.6}
+
+// HTTP 400 — unreachable (IK failed, in collision, or outside workspace)
+{"success": true, "reachable": false, "reason": "target_pose_ik_failed", "fraction": 0.0, "result": -11}
+```
+
+Accepts optional `start_joint_state` payload `{"name": [...], "position": [...]}` to seed IK from a
+specific joint configuration instead of the current robot state.
+
+---
 
 ### `/workobject/set` — Response Shape
 

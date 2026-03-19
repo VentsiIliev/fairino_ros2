@@ -164,5 +164,8 @@ class PlannerContext:
     def get_fk_client(self):
         return self._planner_support.get_fk_client()
 
+    def get_ik_client(self):
+        return self._planner_support.get_ik_client()
+
     def get_state_validity_client(self):
         return self._planner_support.get_state_validity_client()

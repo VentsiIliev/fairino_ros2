@@ -27,6 +27,7 @@ TOPIC_SAFETY_WALLS           = '/safety_walls'
 
 # ── ROS2 Services / Actions ────────────────────────────────────
 SERVICE_CARTESIAN_PATH   = '/compute_cartesian_path'
+SERVICE_IK               = '/compute_ik'
 SERVICE_FK               = '/compute_fk'
 SERVICE_APPLY_IPP        = '/apply_ipp'
 SERVICE_STATE_VALIDITY   = '/check_state_validity'
@@ -71,9 +72,9 @@ DEFAULT_JERK_SCALING = 0.5     # Ruckig only
 DEFAULT_ORIENTATION  = [180.0, 0.0, 0.0]   # fallback TCP rx/ry/rz (deg)
 
 # ── Motion Planning ────────────────────────────────────────────
-CARTESIAN_MIN_FRACTION  = 0.9     # MoveIt min success fraction
+CARTESIAN_MIN_FRACTION  = 1     # MoveIt min success fraction
 JACOBIAN_FALLBACK_MM    = 0.1     # delta threshold to use Jacobian bypass
-JACOBIAN_FALLBACK_MIN_FRACTION = 0.99  # min fraction to attempt Jacobian fallback (≤1-pt branch)
+JACOBIAN_FALLBACK_MIN_FRACTION = 1  # min fraction to attempt Jacobian fallback (≤1-pt branch)
 JACOBIAN_FALLBACK_MIN_DELTA_MM = 0.1   # min delta to attempt Jacobian fallback; below = already at target
 JACOBIAN_MAX_JOINT_STEP = 0.05    # rad, clamp per joint
 JACOBIAN_MIN_DURATION_S = 0.05    # min trajectory duration
