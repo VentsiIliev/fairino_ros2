@@ -120,7 +120,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
 
     Failure paths:
         fraction < CARTESIAN_MIN_FRACTION → logs error, fires collision diagnostic,
-                                            sets result=-3, returns.
+                                            sets result=-11, returns.
         ≤1 trajectory point + fraction≈0  → planning failed entirely, result=-6.
         ≤1 trajectory point + fraction≈1
           + large delta                   → Jacobian fallback (_jacobian_fallback_move).
@@ -164,7 +164,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
             # Fire async collision diagnostic — does not affect result code
             _diagnose_start_collision(robot_controller)
 
-            _set_result(robot_controller, -3)
+            _set_result(robot_controller, -11)
             return
 
         # ── Trajectory retrieved ─────────────────────────────────────────────

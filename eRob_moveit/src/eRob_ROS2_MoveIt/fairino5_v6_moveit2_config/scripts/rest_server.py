@@ -93,11 +93,12 @@ def start_rest_server(
         -8:  "Jacobian fallback path planning failed",
         -9:  "Near-singularity detected",
         -10: "Collision detected during Jacobian check",
+        -11: "Cartesian path planning failed: target unreachable, collision, or joint-limit constraint",
     }
 
     def motion_error_response(result):
         description = MOTION_ERROR_DESCRIPTIONS.get(result, f"Unknown error code {result}")
-        http_status = 503 if result in (-2, -5) else 400 if result == -3 else 500
+        http_status = 503 if result in (-2, -5) else 400 if result in (-3, -11) else 500
         return jsonify({"result": result, "success": False, "error": description}), http_status
 
     @app.route("/health", methods=["GET"])
@@ -186,6 +187,25 @@ def start_rest_server(
         else:
             return motion_error_response(result)
 
+
+    @app.route("/safety/walls/enabled", methods=["GET"])
+    def safety_walls_enabled():
+        status = robot.get_safety_walls_status()
+        return jsonify({"enabled": bool(status.get("enabled", False))})
+
+    @app.route("/safety/walls/status", methods=["GET"])
+    def safety_walls_status():
+        return jsonify(robot.get_safety_walls_status())
+
+    @app.route("/safety/walls/enable", methods=["POST"])
+    def enable_safety_walls():
+        status = robot.enable_safety_walls()
+        return jsonify({"success": True, **status})
+
+    @app.route("/safety/walls/disable", methods=["POST"])
+    def disable_safety_walls():
+        status = robot.disable_safety_walls()
+        return jsonify({"success": True, **status})
 
     @app.route("/position/current", methods=["GET"])
     def get_position():

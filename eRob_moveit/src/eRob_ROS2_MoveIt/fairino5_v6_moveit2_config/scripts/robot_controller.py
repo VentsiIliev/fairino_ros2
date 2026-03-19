@@ -189,6 +189,20 @@ class RobotController(Node):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
 
+    def enable_safety_walls(self) -> dict:
+        """Enable safety walls and republish them to MoveIt/RViz."""
+        self.safety_manager.enable_safety()
+        return self.safety_manager.get_status()
+
+    def disable_safety_walls(self) -> dict:
+        """Disable safety walls and remove them from MoveIt/RViz."""
+        self.safety_manager.disable_safety()
+        return self.safety_manager.get_status()
+
+    def get_safety_walls_status(self) -> dict:
+        """Return current safety wall status."""
+        return self.safety_manager.get_status()
+
     def wait_for_monitor(self, timeout_sec=5.0):
         """Wait until RobotMonitor (TCP) is initialized."""
         import time

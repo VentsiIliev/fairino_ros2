@@ -112,7 +112,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
         if ik_resp.fraction < 0.99 or not traj.points:
             robot_controller.get_logger().error(
                 f'[EXECUTE_PATH] First waypoint unreachable (IK fraction={ik_resp.fraction:.2f}) — aborting, robot stays put')
-            _set_result(robot_controller, -3)
+            _set_result(robot_controller, -11)
             return
 
         ik_joints = traj.points[-1]
@@ -153,7 +153,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             robot_controller.get_logger().error(
                 f'[EXECUTE_PATH] Planning failed ({fraction*100:.1f}%) — NOT moving to first waypoint')
             _diagnose_start_collision(robot_controller)
-            _set_result(robot_controller, -3)
+            _set_result(robot_controller, -11)
             return  # ← robot has not moved at all
 
         num_pts = len(resp.solution.joint_trajectory.points)

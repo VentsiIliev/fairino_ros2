@@ -171,17 +171,78 @@ class SafetyWallManager:
             f'[SafetyWallManager] Published safety walls + ACM '
             f'(bypass links: {sorted(self.acm_bypass_links)})')
 
+    def clear_from_planning_scene(self):
+        """Remove safety walls from MoveIt planning scene and clear RViz markers."""
+        ps = PlanningScene()
+        ps.is_diff = True
+
+        for wall_name in config.SAFETY_WALL_NAMES:
+            co = CollisionObject()
+            co.id = wall_name
+            co.header.frame_id = config.BASE_LINK
+            co.operation = CollisionObject.REMOVE
+            ps.world.collision_objects.append(co)
+
+        ps.allowed_collision_matrix = self._create_wall_acm()
+        self.planning_scene_pub.publish(ps)
+
+        clear_markers = MarkerArray()
+        for i, _ in enumerate(config.SAFETY_WALL_NAMES):
+            marker = Marker()
+            marker.header.frame_id = config.BASE_LINK
+            marker.ns = 'safety_walls'
+            marker.id = i
+            marker.action = Marker.DELETE
+            clear_markers.markers.append(marker)
+        self.safety_walls_pub.publish(clear_markers)
+
+        self.node.get_logger().info('[SafetyWallManager] Cleared safety walls from planning scene and RViz')
+
     def force_update(self):
         """
         Force immediate update of planning scene (for critical operations).
 
         Publishes collision objects and waits briefly to ensure MoveIt processes them.
         """
-        self.publish_to_planning_scene()
+        if self.safety_enabled:
+            self.publish_to_planning_scene()
+        else:
+            self.clear_from_planning_scene()
         # Give MoveIt time to process the planning scene update
         # The node is spinning in a background thread, so we just need to wait
         # for the message to propagate through ROS2 and be processed by move_group
         time.sleep(0.05)  # 50ms should be enough for local communication
+
+    def enable_safety(self):
+        """Enable safety prechecks and republish safety walls to MoveIt/RViz."""
+        if self.safety_enabled:
+            self.node.get_logger().info('[SafetyWallManager] Safety walls already enabled')
+            return
+        self.safety_enabled = True
+        self.force_update()
+        self.node.get_logger().info('[SafetyWallManager] Safety walls enabled')
+
+    def disable_safety(self):
+        """Disable safety prechecks and remove safety walls from MoveIt/RViz."""
+        if not self.safety_enabled:
+            self.node.get_logger().info('[SafetyWallManager] Safety walls already disabled')
+            return
+        self.safety_enabled = False
+        self.force_update()
+        self.node.get_logger().info('[SafetyWallManager] Safety walls disabled')
+
+    def is_enabled(self) -> bool:
+        """Return whether safety wall checks are enabled."""
+        return bool(self.safety_enabled)
+
+    def get_status(self) -> dict:
+        """Return current safety wall status for REST/reporting."""
+        return {
+            'enabled': bool(self.safety_enabled),
+            'workspace': self.get_workspace_bounds(),
+            'margin_m': float(self.safety_margin),
+            'acm_bypass_links': sorted(self.acm_bypass_links),
+        }
 
     def get_workspace_bounds(self) -> dict:
         """
@@ -205,27 +266,8 @@ class SafetyWallManager:
         """
         self.safety_workspace = workspace.copy()
         self.walls_marker_array = None  # Invalidate marker cache
-        self.publish_to_planning_scene()
+        self.force_update()
         self.node.get_logger().info('[SafetyWallManager] Workspace boundaries updated')
-
-    def enable_safety(self):
-        """Enable safety boundary checks."""
-        self.safety_enabled = True
-        self.node.get_logger().info('[SafetyWallManager] Safety checks ENABLED')
-
-    def disable_safety(self):
-        """Disable safety boundary checks (use with caution!)."""
-        self.safety_enabled = False
-        self.node.get_logger().warning('[SafetyWallManager] Safety checks DISABLED - use with caution!')
-
-    def is_enabled(self) -> bool:
-        """
-        Check if safety is enabled.
-
-        Returns:
-            bool: True if safety checks are enabled
-        """
-        return self.safety_enabled
 
     # ========== Private Methods ==========
 
@@ -359,7 +401,7 @@ class SafetyWallManager:
 
     def _publish_markers_callback(self):
         """Timer callback for periodic marker publishing to keep them visible in RViz."""
-        if not self.safety_workspace:
+        if not self.safety_enabled or not self.safety_workspace:
             return
 
         if self.walls_marker_array is None:

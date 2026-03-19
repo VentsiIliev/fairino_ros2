@@ -220,6 +220,24 @@ class FairinoRos2Robot:
 
         return 0
 
+    def enable_safety_walls(self):
+        """Enable safety walls in the ROS controller."""
+        if self.node is None:
+            return {"enabled": False, "error": "Robot controller unavailable"}
+        return self.node.enable_safety_walls()
+
+    def disable_safety_walls(self):
+        """Disable safety walls in the ROS controller."""
+        if self.node is None:
+            return {"enabled": False, "error": "Robot controller unavailable"}
+        return self.node.disable_safety_walls()
+
+    def get_safety_walls_status(self):
+        """Return safety wall status from the ROS controller."""
+        if self.node is None:
+            return {"enabled": False, "error": "Robot controller unavailable"}
+        return self.node.get_safety_walls_status()
+
     # ---------------- Status Methods ----------------
     def get_current_position(self):
         """
