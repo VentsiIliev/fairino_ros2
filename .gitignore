@@ -2,3 +2,6 @@
 /install/
 /log/
 *.pyc
+.idea/
+__pycache__/
+.ai/
