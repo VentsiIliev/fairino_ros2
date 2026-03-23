@@ -16,6 +16,8 @@ This package contains:
   - the main ROS node (`velocity_monitor`) that owns MoveIt service clients, motion queueing, safety walls, and monitoring state
 - `scripts/rest_server.py`
   - Flask REST bridge exposing motion, stop, status, safety-wall control, and reachability validation
+- `scripts/rest_api_support.py`
+  - REST-only helpers for motion error mapping, jog payload parsing, and pose reachability validation
 - `scripts/fairino_ros2_robot.py`
   - robot-style wrapper used by the REST layer; converts workobject/user/tool inputs into node execution requests
 
@@ -24,6 +26,7 @@ This package contains:
 ```text
 REST client
   -> rest_server.py
+    -> rest_api_support.py for request parsing / validation helpers
     -> FairinoRos2Robot
       -> RobotController
         -> motion.strategies

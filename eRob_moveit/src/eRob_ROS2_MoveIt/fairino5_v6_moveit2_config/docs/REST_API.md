@@ -29,6 +29,7 @@ Payload:
 ```
 
 Behavior:
+- request parsing and default filling live in `rest_api_support.py`
 - applies workobject transform
 - plans Cartesian motion
 - may execute immediately or queue
@@ -49,6 +50,8 @@ Payload fields:
 - `vel`
 - `acc`
 - `blocking`
+
+Request parsing also lives in `rest_api_support.py`, including nested-path flattening and velocity/acceleration normalization.
 
 ### `GET /safety/walls/enabled`
 Returns:
@@ -121,6 +124,9 @@ Return bridge motion/status summary.
 ### `POST /jog`
 Jog one axis in a direction by a configured step.
 
+Request parsing and normalization live in `rest_api_support.py`, not in `rest_server.py`.
+Current normalization keeps the bridge's historical Z-axis sign inversion behavior.
+
 ## Motion Result Codes
 
 Common result codes returned by the bridge:
@@ -137,4 +143,4 @@ Common result codes returned by the bridge:
 - `-11`
   - planning or reachability failure
 
-See `MOTION_ERROR_DESCRIPTIONS` in `rest_server.py` for the current full mapping.
+See `MOTION_ERROR_DESCRIPTIONS` in `rest_api_support.py` for the current full mapping.

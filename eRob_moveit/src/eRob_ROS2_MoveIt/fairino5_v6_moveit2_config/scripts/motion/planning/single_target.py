@@ -24,6 +24,7 @@ import config
 
 _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG = 0.5
 _ORIENTATION_ONLY_MOVE_STEP_M = 0.01
+_SHORT_MOVE_ORIENTATION_INTERP_MM = 80.0
 
 
 def _wrapped_angle_delta_deg(start_deg, target_deg):
@@ -111,14 +112,27 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
     else:
         segments = 4  # 5 points total (hard cap)
 
+    interpolate_orientation = distance_mm <= _SHORT_MOVE_ORIENTATION_INTERP_MM
+    drx = target_mm[3] - start_mm[3]
+    dry = target_mm[4] - start_mm[4]
+    drz = ((target_mm[5] - start_mm[5] + 180.0) % 360.0) - 180.0
+
     waypoints = []
     for i in range(1, segments):
         t = i / segments
+        if interpolate_orientation:
+            rx = start_mm[3] + t * drx
+            ry = start_mm[4] + t * dry
+            rz = start_mm[5] + t * drz
+        else:
+            rx, ry, rz = target_mm[3], target_mm[4], target_mm[5]
         waypoints.append([
             start_mm[0] + t * dx,
             start_mm[1] + t * dy,
             start_mm[2] + t * dz,
-            target_mm[3], target_mm[4], target_mm[5],
+            rx,
+            ry,
+            rz,
         ])
     waypoints.append(list(target_mm))
     return waypoints

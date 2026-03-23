@@ -8,6 +8,7 @@ fairino5_v6_moveit2_config/
 │   ├── main.py
 │   ├── robot_controller.py
 │   ├── rest_server.py
+│   ├── rest_api_support.py
 │   ├── fairino_ros2_robot.py
 │   ├── config.py
 │   ├── motion/
@@ -90,6 +91,11 @@ The REST server can run in:
 - embedded mode
   - reuses an existing `RobotController`
 
+`rest_api_support.py` holds the non-routing REST helpers:
+- motion error to HTTP mapping
+- jog payload parsing / normalization
+- pose reachability validation via IK + state validity
+
 ## Motion Flow
 
 ### Single target
@@ -134,6 +140,7 @@ REST /execute/path
   - thin strategy wrappers for single-point and path requests
 - `motion/planning/single_target.py`
   - planning entry for single Cartesian targets
+  - adaptive waypoints interpolate both position and orientation so rotation-heavy jog targets do not appear as rotate-then-translate moves
 - `motion/planning/trajectory.py`
   - planning entry for multi-waypoint Cartesian paths
 - `motion/planning/trajectory_planner.py`

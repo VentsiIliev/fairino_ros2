@@ -4,27 +4,24 @@ ROS2 Bridge Server - Exposes FairinoRos2Robot via REST API
 """
 import logging
 import sys
-import os
-from copy import deepcopy
-
 import threading
 import time
-from flask import Flask, request, jsonify
-import numpy as np
-from PIL import Image, ImageDraw
-from scipy.interpolate import interp1d
-from moveit_msgs.msg import MoveItErrorCodes, RobotState
 
+from flask import Flask, jsonify, request
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 
 from robot_controller import RobotController
 from fairino_ros2_robot import FairinoRos2Robot
 from utils.work_object import WorkObject
-from enums import RobotAxis, Direction
 import config
-from motion.planning.trajectory_planner import _build_cartesian_request
-from motion.planning.planner_utils import _to_pose_list
+from rest_api_support import (
+    motion_error_response,
+    parse_execute_path_request,
+    parse_jog_request,
+    parse_move_linear_request,
+    validate_pose_from_start,
+)
 
 
 LOG_FILE = config.REST_LOG
@@ -86,163 +83,6 @@ def start_rest_server(
     # Routes
     # ------------------------------------------------------------------
 
-    MOTION_ERROR_DESCRIPTIONS = {
-        -1:  "Busy / invalid input / generic error",
-        -2:  "MoveIt service unavailable",
-        -3:  "Safety violation: target outside workspace",
-        -4:  "No current robot position available",
-        -5:  "Motion queue full",
-        -6:  "Path planning failed: MoveIt returned no trajectory",
-        -7:  "Time parameterization failed (TOTG/Ruckig)",
-        -8:  "Jacobian fallback path planning failed",
-        -9:  "Near-singularity detected",
-        -10: "Collision detected during Jacobian check",
-        -11: "Cartesian path planning failed: target unreachable, collision, or joint-limit constraint",
-    }
-
-    def motion_error_response(result):
-        description = MOTION_ERROR_DESCRIPTIONS.get(result, f"Unknown error code {result}")
-        http_status = 503 if result in (-2, -5) else 400 if result in (-3, -11) else 500
-        return jsonify({"result": result, "success": False, "error": description}), http_status
-
-    def _wait_future(future, timeout_s=10.0):
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            if future.done():
-                return future.result()
-            time.sleep(0.01)
-        raise TimeoutError(f"Timed out waiting for MoveIt service response after {timeout_s:.1f}s")
-
-    def _request_ik_for_pose(pose, timeout_s=3.0, seed_joint_state=None):
-        """!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        # the  timeout_s provided here overrides the timeout set in kinematics.yaml !!!"""
-
-        ik_client = node.get_ik_client()
-        if ik_client is None or not ik_client.wait_for_service(timeout_sec=1.0):
-            raise TimeoutError('IK service unavailable')
-
-        from moveit_msgs.srv import GetPositionIK
-
-        req = GetPositionIK.Request()
-        req.ik_request.group_name = config.PLANNING_GROUP
-        req.ik_request.ik_link_name = config.EE_LINK
-        req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
-        req.ik_request.pose_stamped.header.stamp = node.get_clock().now().to_msg()
-        req.ik_request.pose_stamped.pose = pose
-        req.ik_request.avoid_collisions = False
-        req.ik_request.timeout.sec = int(timeout_s)
-        req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1_000_000_000)
-
-        if seed_joint_state is not None:
-            state = deepcopy(seed_joint_state)
-            state.header.stamp = node.get_clock().now().to_msg()
-            req.ik_request.robot_state.joint_state = state
-            req.ik_request.robot_state.is_diff = False
-        elif node.current_joint_state is not None:
-            state = deepcopy(node.current_joint_state)
-            state.header.stamp = node.get_clock().now().to_msg()
-            req.ik_request.robot_state.joint_state = state
-            req.ik_request.robot_state.is_diff = False
-
-        future = ik_client.call_async(req)
-        return _wait_future(future, timeout_s=timeout_s + 1.0)
-
-    def _check_state_validity(joint_names, joint_positions, timeout_s=2.0):
-        state_validity_client = node.get_state_validity_client()
-        if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=1.0):
-            raise TimeoutError('State validity service unavailable')
-
-        from moveit_msgs.srv import GetStateValidity
-        from sensor_msgs.msg import JointState
-
-        req = GetStateValidity.Request()
-        js = JointState()
-        js.name = list(joint_names)
-        js.position = list(joint_positions)
-        req.robot_state.joint_state = js
-        req.group_name = config.PLANNING_GROUP
-
-        future = state_validity_client.call_async(req)
-        return _wait_future(future, timeout_s=timeout_s + 1.0)
-
-    def _validate_pose_from_start(start_position, target_position, tool=0, user=0, start_joint_state_payload=None):
-        if len(start_position) != 6 or len(target_position) != 6:
-            return {"reachable": False, "reason": "invalid_pose_format", "fraction": 0.0}
-
-        tool_transform = node.get_tool_transform(int(tool))
-        start_base = robot.apply_workobject(start_position, user_id=int(user))
-        target_base = robot.apply_workobject(target_position, user_id=int(user))
-
-        target_poses, err = _to_pose_list(node, [target_base], tool_transform, check_last_only=True)
-        if err:
-            return {"reachable": False, "reason": "target_pose_safety_rejected", "fraction": 0.0, "result": err}
-
-        start_joint_state = None
-        if isinstance(start_joint_state_payload, dict):
-            start_names = list(start_joint_state_payload.get("name", []) or [])
-            start_positions = list(start_joint_state_payload.get("position", []) or [])
-            if start_names and start_positions and len(start_names) == len(start_positions):
-                from sensor_msgs.msg import JointState
-                start_joint_state = JointState()
-                start_joint_state.name = start_names
-                start_joint_state.position = start_positions
-
-        if start_joint_state is None:
-            start_poses, err = _to_pose_list(node, [start_base], tool_transform, check_last_only=True)
-            if err:
-                return {"reachable": False, "reason": "start_pose_safety_rejected", "fraction": 0.0, "result": err}
-
-            try:
-                start_ik_resp = _request_ik_for_pose(start_poses[0], timeout_s=2.0)
-            except Exception as exc:
-                return {"reachable": False, "reason": f"ik_service_error: {exc}", "fraction": 0.0, "result": -2}
-
-            start_ik_error = int(getattr(getattr(start_ik_resp, "error_code", None), "val", 0))
-            start_solution = getattr(start_ik_resp, "solution", None)
-            start_joint_state = getattr(start_solution, "joint_state", None)
-            start_positions = list(getattr(start_joint_state, "position", [])) if start_joint_state is not None else []
-            start_names = list(getattr(start_joint_state, "name", [])) if start_joint_state is not None else []
-            if start_ik_error != MoveItErrorCodes.SUCCESS or not start_positions or not start_names:
-                return {"reachable": False, "reason": "start_pose_ik_failed", "fraction": 0.0, "result": -11}
-
-        try:
-            target_ik_resp = _request_ik_for_pose(
-                target_poses[0],
-                timeout_s=0.1,
-                seed_joint_state=start_joint_state,
-            )
-        except Exception as exc:
-            return {"reachable": False, "reason": f"ik_service_error: {exc}", "fraction": 0.0, "result": -2}
-
-        target_ik_error = int(getattr(getattr(target_ik_resp, "error_code", None), "val", 0))
-        target_solution = getattr(target_ik_resp, "solution", None)
-        target_joint_state = getattr(target_solution, "joint_state", None)
-        target_positions = list(getattr(target_joint_state, "position", [])) if target_joint_state is not None else []
-        target_names = list(getattr(target_joint_state, "name", [])) if target_joint_state is not None else []
-        if target_ik_error != MoveItErrorCodes.SUCCESS or not target_positions or not target_names:
-            return {"reachable": False, "reason": "target_pose_ik_failed", "fraction": 0.0, "result": -11}
-
-        try:
-            validity_resp = _check_state_validity(target_names, target_positions, timeout_s=2.0)
-        except Exception as exc:
-            return {"reachable": False, "reason": f"state_validity_error: {exc}", "fraction": 0.0, "result": -2}
-
-        reachable = bool(getattr(validity_resp, "valid", False))
-        reason = "ok" if reachable else "target_state_in_collision"
-        return {
-            "reachable": reachable,
-            "reason": reason,
-            "fraction": 1.0 if reachable else 0.0,
-            "num_points": 1,
-            "result": 0 if reachable else -11,
-            "start_position": start_base,
-            "target_position": target_base,
-            "target_joint_state": {
-                "name": target_names,
-                "position": target_positions,
-            } if reachable else None,
-        }
-
     @app.route("/health", methods=["GET"])
     def health():
         return jsonify({"status": "ok", "ros2_active": robot is not None})
@@ -251,21 +91,20 @@ def start_rest_server(
 
     @app.route("/move/linear", methods=["POST"])
     def move_linear():
-        data = request.json
-        position = data.get("position")
+        try:
+            payload = parse_move_linear_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
-        if not position or len(position) != 6:
-            return jsonify({"error": "Invalid position format"}), 400
-
-        logger.info(f"Received move/linera/ request with data {data}")
+        logger.info(f"Received move/linera/ request with data {request.json}")
 
         result = robot.move_liner(
-            position,
-            tool=data.get("tool", 0),
-            user=0,
-            vel=data.get("vel", config.DEFAULT_VEL_PERCENT),
-            acc=data.get("acc", config.DEFAULT_ACC_PERCENT),
-            blocking=data.get("blocking", True),
+            payload["position"],
+            tool=payload["tool"],
+            user=payload["user"],
+            vel=payload["vel"],
+            acc=payload["acc"],
+            blocking=payload["blocking"],
         )
         task_id = getattr(robot.node, 'last_submitted_task_id', None)
 
@@ -281,39 +120,23 @@ def start_rest_server(
 
     @app.route("/execute/path", methods=["POST"])
     def execute_path():
-        data = request.json
-        path = data.get("path")
+        try:
+            payload = parse_execute_path_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
-        if not path:
-            return jsonify({"error": "No path provided"}) , 400
-
-        # Flatten path if it's nested (client sends [[[waypoints]]])
-        if path and isinstance(path, list) and len(path) > 0:
-            if isinstance(path[0], list) and len(path[0]) > 0 and isinstance(path[0][0], list):
-                # Path is nested: [[[wp1], [wp2], ...]] -> flatten to [[wp1], [wp2], ...]
-                path = path[0]
-                logger.info(f"Flattened nested path, now has {len(path)} waypoints")
-
-        # Ensure vel and acc are floats and normalize to 0.0-1.0 range
-        vel = float(data.get("vel", config.DEFAULT_VEL_SCALING))
-        acc = float(data.get("acc", config.DEFAULT_ACC_SCALING))
-
-        # If values are > 1.0, assume they're percentages (0-100) and convert to scaling factors (0.0-1.0)
-        if vel > 1.0:
-            vel = vel / 100.0
-        if acc > 1.0:
-            acc = acc / 100.0
-        robot.node.get_logger().info(f"Executing path with {len(path)} waypoints, vel={vel}, acc={acc}")
+        robot.node.get_logger().info(
+            f"Executing path with {len(payload['path'])} waypoints, vel={payload['vel']}, acc={payload['acc']}")
 
         try:
             result = robot.execute_path(
-                path,
-                rx=data.get("rx"),
-                ry=data.get("ry"),
-                rz=data.get("rz"),
-                vel=vel,
-                acc=acc,
-                blocking=data.get("blocking", False),
+                payload["path"],
+                rx=payload["rx"],
+                ry=payload["ry"],
+                rz=payload["rz"],
+                vel=payload["vel"],
+                acc=payload["acc"],
+                blocking=payload["blocking"],
             )
         except Exception as e:
             import traceback
@@ -368,7 +191,7 @@ def start_rest_server(
         if not start_position or len(start_position) != 6:
             return jsonify({"error": "Invalid or unavailable start_position"}), 400
 
-        result = _validate_pose_from_start(
+        result = validate_pose_from_start(node, robot, 
             start_position=start_position,
             target_position=target_position,
             tool=data.get("tool", 0),
@@ -427,51 +250,17 @@ def start_rest_server(
 
     @app.route("/jog", methods=["POST"])
     def jog():
-        data = request.json
-
         try:
-            # Validate axis
-            axis_val = data.get("axis", None)
-            if axis_val is None:
-                return jsonify({"result": -1, "success": False, "error": "Missing 'axis'"}), 400
-            try:
-                axis = RobotAxis(axis_val)
-            except ValueError:
-                return jsonify({"result": -1, "success": False, "error": f"Invalid 'axis': {axis_val}"}), 400
-
-            # Validate direction
-            dir_val = data.get("direction", None)
-            if dir_val is None:
-                return jsonify({"result": -1, "success": False, "error": "Missing 'direction'"}), 400
-            try:
-                direction = Direction(dir_val)
-            except ValueError:
-                return jsonify({"result": -1, "success": False, "error": f"Invalid 'direction': {dir_val}"}), 400
-
-            # Validate step, vel, acc
-            try:
-                step = float(data.get("step"))
-                vel = float(data.get("vel"))
-                acc = float(data.get("acc"))
-            except (TypeError, ValueError):
-                return jsonify({"result": -1, "success": False, "error": "Invalid step/vel/acc"}), 400
-
-            """ Z AXIS JOG INVERSION HANDLING """
-            # Invert Z axis
-            if axis == RobotAxis.Z:
-                step = -step
-
-            # Call jog
+            axis, direction, step, vel, acc = parse_jog_request(request.json)
             result = robot.start_jog(axis, direction, step, vel, acc)
-
             if result == 0:
                 return jsonify({"result": result, "success": True}), 200
-            else:
-                return motion_error_response(result)
-
-        except Exception as e:
-            robot.node.get_logger().error(f"Jog endpoint error: {e}")
-            return jsonify({"result": -1, "success": False, "error": str(e)})
+            return motion_error_response(result)
+        except ValueError as exc:
+            return jsonify({"result": -1, "success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            robot.node.get_logger().error(f"Jog endpoint error: {exc}")
+            return jsonify({"result": -1, "success": False, "error": str(exc)})
 
     # ------------------------------------------------------------------
     # Run server
