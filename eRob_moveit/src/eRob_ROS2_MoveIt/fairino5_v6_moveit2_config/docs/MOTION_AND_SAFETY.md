@@ -129,3 +129,36 @@ In `scripts/config.py`:
 - Queueing preserves mixed ordering between immediate point moves and path moves.
 - Stopping motion can also clear queued tasks.
 - Workobjects are applied before planning, so REST/user-frame targets are not always base-frame targets.
+
+## Known Issue And Current Policy
+
+### Issue found in single-target Cartesian planning
+
+We reproduced a failure mode on short single-target linear moves where:
+- the requested TCP line was geometrically valid
+- the start state was collision-free
+- the endpoint was reachable
+- but `compute_cartesian_path` still returned a partial fraction for the move
+
+The failing cases were traced to the structural pre-interpolation layer in `motion/planning/single_target.py`.
+
+Before the Cartesian request was sent to MoveIt, the planner inserted exact intermediate poses on the requested line. Although those points were on the same geometric line, they were still treated by MoveIt as hard waypoint constraints.
+
+That changed the planning problem from:
+- one continuous `A -> B` Cartesian interpolation
+
+into:
+- a sequence of anchored subproblems such as `A -> mid -> B`
+
+For short moves, that over-constrained the nonlinear IK continuation and could make a move fail even when the equivalent `A -> B` request succeeded.
+
+### Current policy
+
+Single-target planning currently uses:
+- micro moves: Jacobian direct path
+- normal single-target linear moves: start/end Cartesian poses only
+- multi-waypoint paths: explicit path waypoints as requested
+
+For normal single-target linear moves, MoveIt now performs the Cartesian interpolation internally from the start pose to the end pose without additional structural waypoint anchors from our side.
+
+This is a deliberate temporary policy because it avoids the short-move failure mode above.

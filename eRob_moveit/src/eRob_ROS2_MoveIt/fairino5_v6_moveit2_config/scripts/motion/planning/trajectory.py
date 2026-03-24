@@ -162,6 +162,27 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             f'Queuing execution, approaching wp[0]: '
             f'[{first_wp_mm[0]:.1f}, {first_wp_mm[1]:.1f}, {first_wp_mm[2]:.1f}]')
 
+        if num_pts <= 1:
+            robot_controller.get_logger().info(
+                '[EXECUTE_PATH] Planned path collapsed to a single point at wp[0] — '
+                'skipping deferred Phase 3 and executing only the approach move')
+
+            current_cart = robot_controller.prev_cartesian
+            if current_cart is None or len(current_cart) < 6:
+                robot_controller.get_logger().error(
+                    '[EXECUTE_PATH] Lost current position before approach — aborting')
+                _set_result(robot_controller, -4)
+                return
+
+            _execute_single_point(
+                robot_controller,
+                start_wp=list(current_cart[:6]),
+                target_wp=[first_wp_mm[0], first_wp_mm[1], first_wp_mm[2], rx, ry, rz],
+                vel_scaling=vel_scaling,
+                acc_scaling=acc_scaling,
+            )
+            return
+
         # Store trajectory for deferred execution
         robot_controller.stage_pending_path(resp.solution, vel_scaling, acc_scaling)
 
@@ -215,6 +236,12 @@ def _execute_pending_trajectory(robot_controller):
     num_pts = len(trajectory.joint_trajectory.points)
     robot_controller.get_logger().info(
         f'[EXECUTE_PATH] Phase 3: Executing pre-planned trajectory ({num_pts} pts)')
+
+    if num_pts <= 1:
+        robot_controller.get_logger().info(
+            '[EXECUTE_PATH] Pending trajectory has <=1 point — nothing left to execute after approach')
+        _set_result(robot_controller, 0)
+        return 0
 
     gen = _begin_execution(robot_controller)
     _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,

@@ -148,6 +148,28 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
 
         # ── Partial / zero path ──────────────────────────────────────────────
         if fraction < config.CARTESIAN_MIN_FRACTION:
+            requested_delta_mm = robot_controller.get_last_requested_delta_mm()
+            stored_wps = robot_controller.get_last_full_waypoints() or []
+            if (
+                0.0 < requested_delta_mm <= config.SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM
+                and 2 <= len(stored_wps) <= 5
+                and fraction > 0.0
+            ):
+                robot_controller.get_logger().warning(
+                    '[Cartesian Path] Partial fraction on short single-target move '
+                    f'(fraction={fraction * 100:.1f}%, delta={requested_delta_mm:.3f}mm) — '
+                    'trying Jacobian fallback'
+                )
+                ok = _jacobian_fallback_move(
+                    robot_controller,
+                    stored_wps,
+                    vel_scaling,
+                    acc_scaling,
+                    generation,
+                )
+                if ok:
+                    return
+
             robot_controller.get_logger().error(
                 f'[Cartesian Path] Only {fraction * 100:.1f}% of path could be computed')
             robot_controller.get_logger().error(f'[Cartesian Path] Possible reasons:')

@@ -140,7 +140,9 @@ REST /execute/path
   - thin strategy wrappers for single-point and path requests
 - `motion/planning/single_target.py`
   - planning entry for single Cartesian targets
-  - adaptive waypoints interpolate both position and orientation so rotation-heavy jog targets do not appear as rotate-then-translate moves
+  - true micro-moves use the Jacobian path
+  - normal single-target linear moves currently send only start/end Cartesian poses into MoveIt and let `compute_cartesian_path` do the interpolation
+  - structural pre-interpolation is intentionally disabled for normal single-target moves because exact intermediate waypoint anchors were found to over-constrain short Cartesian moves
 - `motion/planning/trajectory.py`
   - planning entry for multi-waypoint Cartesian paths
 - `motion/planning/trajectory_planner.py`

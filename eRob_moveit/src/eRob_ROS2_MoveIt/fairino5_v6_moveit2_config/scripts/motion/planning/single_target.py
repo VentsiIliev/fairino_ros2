@@ -6,7 +6,7 @@ Internal path: _execute_single_point → _to_pose_list → _dispatch_moveit
 Request build: _build_cartesian_request  (shared, lives in trajectory_planner)
 
 Generates adaptive intermediate waypoints between current pose and target so
-that TOTG always receives ≥3 trajectory points. Safety check is performed only
+that TOTG always receives >=3 trajectory points. Safety check is performed only
 on the final target (start = current robot pos; intermediates are linearly
 interpolated between two already-validated endpoints).
 """
@@ -17,6 +17,7 @@ from .trajectory_planner import (
     _build_cartesian_request,
     _begin_execution,
 )
+from moveit_msgs.msg import RobotState
 from .planner_utils import _set_result, _require_cart_path_service, _to_pose_list
 import numpy as np
 import config
@@ -25,6 +26,7 @@ import config
 _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG = 0.5
 _ORIENTATION_ONLY_MOVE_STEP_M = 0.01
 _SHORT_MOVE_ORIENTATION_INTERP_MM = 80.0
+_SHORT_MOVE_ORIENTATION_INTERP_MIN_DELTA_DEG = 1.0
 
 
 def _wrapped_angle_delta_deg(start_deg, target_deg):
@@ -32,90 +34,42 @@ def _wrapped_angle_delta_deg(start_deg, target_deg):
 
 
 def _compute_max_step(delta_m, orientation_delta_deg=0.0):
-    """
-    Compute adaptive max_step for MoveIt's compute_cartesian_path.
+    min_step = 0.0005
+    max_step_limit = 0.025
+    min_segments = 2
+    target_segments = 6
 
-    max_step controls internal interpolation resolution:
-      • smaller step → denser sampling, more IK calls & collision checks
-      • larger step → faster planning but risk undersampling
-
-    Goal:
-      • guarantee ≥3 trajectory points for TOTG
-      • keep MoveIt planning time predictable
-      • avoid excessive points for short linear moves
-      • avoid pathological planning time for orientation-dominant moves
-
-    Constraints:
-      min_step        = 0.5 mm   (0.0005 m)
-      max_step_limit  = 25 mm    (0.025 m)
-      min_segments    = 2        (ensures ≥3 points)
-      target_segments = 6–8      (for typical single-point moves)
-
-    Returns
-    -------
-    float
-        max_step in meters for compute_cartesian_path
-    """
-    min_step = 0.0005       # 0.5 mm
-    max_step_limit = 0.025  # 25 mm
-    min_segments = 2        # ensures ≥3 points
-    target_segments = 6     # reasonable for short linear moves
-
-    # Pure / near-pure orientation changes should not be planned with a tiny
-    # Cartesian sampling step derived from near-zero XYZ translation. That
-    # creates hundreds of unnecessary internal points and multi-second planning
-    # delays for simple wrist rotations.
     if delta_m < 0.005 and orientation_delta_deg > _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG:
         return _ORIENTATION_ONLY_MOVE_STEP_M
 
-    # estimate segments to keep ~6 points max for single-point moves
     segments = max(min_segments, min(target_segments, int(np.ceil(delta_m / 0.01))))
-
-    # compute step size
     step = delta_m / segments
-
-    # clamp to allowed bounds
     return float(np.clip(step, min_step, max_step_limit))
 
 
 def _generate_adaptive_waypoints(start_mm, target_mm):
-    """
-    Generate a minimal set of structural waypoints for MoveIt.
-
-    Notes:
-      • Only generates intermediates to guarantee ≥3 trajectory points.
-      • MoveIt internal max_step handles further interpolation.
-      • Sub-1mm moves are handled by Jacobian fallback (no waypoints needed).
-
-    distance    intermediates  total waypoints sent to MoveIt
-    --------    -------------  ------------------------------
-      < 1 mm        0                  2  (start + target)
-      1–10 mm      1                  3
-     10–50 mm      2                  4
-    > 50 mm        3                  5  (hard cap)
-
-    start_mm / target_mm: [x, y, z, rx, ry, rz] in mm
-    Returns list of intermediate + final waypoints (not including start)
-    """
     dx = target_mm[0] - start_mm[0]
     dy = target_mm[1] - start_mm[1]
     dz = target_mm[2] - start_mm[2]
     distance_mm = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
 
-    # Determine number of intermediates
     if distance_mm < 1.0:
-        segments = 1  # 2 points total
+        segments = 1
     elif distance_mm < 10.0:
-        segments = 2  # 3 points total
+        segments = 2
     elif distance_mm < 50.0:
-        segments = 3  # 4 points total
+        segments = 3
     else:
-        segments = 4  # 5 points total (hard cap)
+        segments = 4
 
-    interpolate_orientation = distance_mm <= _SHORT_MOVE_ORIENTATION_INTERP_MM
     drx = target_mm[3] - start_mm[3]
     dry = target_mm[4] - start_mm[4]
     drz = ((target_mm[5] - start_mm[5] + 180.0) % 360.0) - 180.0
+    orientation_delta_deg = max(abs(drx), abs(dry), abs(drz))
+    interpolate_orientation = (
+        distance_mm <= _SHORT_MOVE_ORIENTATION_INTERP_MM
+        and orientation_delta_deg >= _SHORT_MOVE_ORIENTATION_INTERP_MIN_DELTA_DEG
+    )
 
     waypoints = []
     for i in range(1, segments):
@@ -138,11 +92,7 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
     return waypoints
 
 
-
 def _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_scaling):
-    # Sub-5mm: compute_cartesian_path costs ~250ms fixed overhead regardless of step size.
-    # Jacobian is accurate to <0.01mm for 5mm steps (~2ms + ~5ms collision check).
-    # Each call reads fresh joint state so linearisation errors do not accumulate.
     robot_controller.get_logger().info(
         f'[Single Point] Sub-5mm ({delta_m * 1000:.3f}mm): Jacobian direct (skip MoveIt)')
     gen = _begin_execution(robot_controller)
@@ -160,27 +110,87 @@ def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling):
         lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
 
 
+def _resolve_start_state(robot_controller, start_pose):
+    """Resolve a joint-space start state that matches the current Cartesian start pose."""
+    from copy import deepcopy
+    from moveit_msgs.srv import GetPositionIK
+    import time
+
+    ik_client = robot_controller.get_ik_client()
+    if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.5):
+        robot_controller.get_logger().warning(
+            '[Single Point] IK start-state sync unavailable — using live joint state')
+        return None
+
+    req = GetPositionIK.Request()
+    req.ik_request.group_name = config.PLANNING_GROUP
+    req.ik_request.ik_link_name = config.EE_LINK
+    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
+    req.ik_request.pose_stamped.pose = start_pose
+    req.ik_request.avoid_collisions = False
+    req.ik_request.timeout.sec = 1
+    req.ik_request.timeout.nanosec = 0
+
+    if robot_controller.current_joint_state is not None:
+        seed = deepcopy(robot_controller.current_joint_state)
+        seed.header.stamp = robot_controller.get_clock().now().to_msg()
+        req.ik_request.robot_state.joint_state = seed
+        req.ik_request.robot_state.is_diff = False
+
+    future = ik_client.call_async(req)
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        if future.done():
+            break
+        time.sleep(0.01)
+
+    if not future.done():
+        robot_controller.get_logger().warning(
+            '[Single Point] IK start-state sync timed out — using live joint state')
+        return None
+
+    try:
+        resp = future.result()
+    except Exception as exc:
+        robot_controller.get_logger().warning(
+            f'[Single Point] IK start-state sync failed: {exc} — using live joint state')
+        return None
+
+    solution = getattr(resp, "solution", None)
+    joint_state = getattr(solution, "joint_state", None)
+    positions = list(getattr(joint_state, "position", []) or [])
+    names = list(getattr(joint_state, "name", []) or [])
+    if len(positions) < 6 or not names:
+        robot_controller.get_logger().warning(
+            '[Single Point] IK start-state sync returned no usable joint solution — using live joint state')
+        return None
+
+    start_state = RobotState()
+    start_state.joint_state.name = names
+    start_state.joint_state.position = positions
+    start_state.is_diff = False
+    robot_controller.get_logger().info(
+        '[Single Point] Using IK-synchronized start state for Cartesian planning')
+    return start_state
+
+
 def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling,
                           tool_transform=None):
-    """
-    Execute a single-point Cartesian move (move_cartesian / move_liner).
-
-    Generates adaptive intermediate waypoints between start_wp and target_wp so
-    that TOTG always receives enough trajectory points, even for sub-mm moves.
-    Safety check is performed only on the target (start = current robot position).
-
-    start_wp / target_wp: [x_mm, y_mm, z_mm, rx, ry, rz]
-    """
-    adaptive     = _generate_adaptive_waypoints(start_wp, target_wp)
-    waypoints_mm = [start_wp] + adaptive
-
-    dx  = target_wp[0] - start_wp[0]
-    dy  = target_wp[1] - start_wp[1]
-    dz  = target_wp[2] - start_wp[2]
+    dx = target_wp[0] - start_wp[0]
+    dy = target_wp[1] - start_wp[1]
+    dz = target_wp[2] - start_wp[2]
     distance_mm = (dx * dx + dy * dy + dz * dz) ** 0.5
+    adaptive = _generate_adaptive_waypoints(start_wp, target_wp)
+    # Exact intermediate Cartesian anchors can over-constrain MoveIt's nonlinear
+    # IK continuation on short single-target moves. For normal linear moves we
+    # therefore pass only start/end and let compute_cartesian_path interpolate
+    # internally. Structural waypoints remain only for true micro moves.
+    use_structural_waypoints = distance_mm < 5.0
+    waypoints_mm = [start_wp] + adaptive if use_structural_waypoints else [start_wp, target_wp]
     robot_controller.get_logger().info(
         f'[Single Point] {len(waypoints_mm)} waypoints (Δ={distance_mm:.3f}mm, '
-        f'{len(adaptive)} intermediates)')
+        f'{len(waypoints_mm) - 1} segments, structural_waypoints={use_structural_waypoints})')
 
     if not _require_cart_path_service(robot_controller, 'Single Point'):
         return -2
@@ -190,7 +200,7 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
     if err:
         return err
 
-    p0, p1  = poses[0].position, poses[-1].position
+    p0, p1 = poses[0].position, poses[-1].position
     delta_m = np.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2)
     orientation_delta_deg = max(
         _wrapped_angle_delta_deg(start_wp[3], target_wp[3]),
@@ -214,21 +224,25 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
             f'[Single Point] Orientation-dominant move: using coarse MoveIt eef_step={max_step:.4f}m '
             f'for orientation delta={orientation_delta_deg:.3f}°')
 
+    start_state = _resolve_start_state(robot_controller, poses[0])
     _dispatch_moveit(
         robot_controller,
-        _build_cartesian_request(robot_controller, poses, max_step,
-                                  vel_scaling, acc_scaling),
-        vel_scaling, acc_scaling,
+        _build_cartesian_request(
+            robot_controller,
+            poses,
+            max_step,
+            vel_scaling,
+            acc_scaling,
+            start_state=start_state,
+        ),
+        vel_scaling,
+        acc_scaling,
     )
     return 0
 
 
 def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
                         tool_transform=None):
-    """
-    Send a single-point Cartesian goal. If the robot is already executing,
-    the new goal is silently ignored — no preemption, no queuing.
-    """
     robot_controller.force_safety_update()
 
     current_cart = robot_controller.prev_cartesian
@@ -236,7 +250,7 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
         robot_controller.get_logger().error('[MOVE] No current position available, cannot plan path')
         return -4
 
-    start_wp  = list(current_cart[:6])
+    start_wp = list(current_cart[:6])
     target_wp = [x_mm, y_mm, z_mm, rx, ry, rz]
 
     robot_controller.get_logger().info(

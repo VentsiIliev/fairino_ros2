@@ -181,11 +181,25 @@ class FairinoRos2Robot:
         self.node.get_logger().info(f"[EXECUTE_PATH] First waypoint: {waypoints_xyz[0]}")
         self.node.get_logger().info(f"[EXECUTE_PATH] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
 
-        # ✅ ALWAYS use compute_cartesian_path for consistency
-        # Controller's spline interpolation + TOTG provides smooth continuous motion
-        self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
-        from motion.strategies import PathStrategy
-        result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc))
+        # A single waypoint is not a real path. Route it through the single-target
+        # pipeline so adaptive interpolation / micro-move Jacobian fallback are applied
+        # before MoveIt + TOTG are involved.
+        if len(waypoints_xyz) == 1:
+            self.node.get_logger().info(
+                "[EXECUTE_PATH] Single waypoint detected — delegating to single-target planner"
+            )
+            from motion.strategies import SingleTargetStrategy
+
+            target = waypoints_xyz[0]
+            result = self.node.execute(
+                SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel, acc)
+            )
+        else:
+            # ✅ ALWAYS use compute_cartesian_path for consistency
+            # Controller's spline interpolation + TOTG provides smooth continuous motion
+            self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
+            from motion.strategies import PathStrategy
+            result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc))
 
         # Return error code if planning/submission failed
         if result < 0:

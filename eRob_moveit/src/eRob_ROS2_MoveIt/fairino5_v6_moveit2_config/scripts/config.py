@@ -76,6 +76,7 @@ CARTESIAN_MIN_FRACTION  = 1     # MoveIt min success fraction
 JACOBIAN_FALLBACK_MM    = 0.1     # delta threshold to use Jacobian bypass
 JACOBIAN_FALLBACK_MIN_FRACTION = 1  # min fraction to attempt Jacobian fallback (≤1-pt branch)
 JACOBIAN_FALLBACK_MIN_DELTA_MM = 0.1   # min delta to attempt Jacobian fallback; below = already at target
+SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM = 2.0  # allow Jacobian recovery only for true micro-moves
 JACOBIAN_MAX_JOINT_STEP = 0.05    # rad, clamp per joint
 JACOBIAN_MIN_DURATION_S = 0.05    # min trajectory duration
 JACOBIAN_DAMPING        = 1e-5    # pseudoinverse damping
