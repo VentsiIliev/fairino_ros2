@@ -35,9 +35,6 @@ def generate_launch_description():
     )
 
     demo_ld.add_action(SetEnvironmentVariable(name="DISPLAY", value=os.environ["DISPLAY"]))
-    demo_ld.add_action(SetEnvironmentVariable(name="LIBGL_ALWAYS_SOFTWARE", value="1"))
-    demo_ld.add_action(SetEnvironmentVariable(name="MESA_GL_VERSION_OVERRIDE", value="3.3"))
-    demo_ld.add_action(SetEnvironmentVariable(name="LIBGL_DRI3_DISABLE", value="1"))
     demo_ld.add_action(SetEnvironmentVariable(name="OGRE_RTT_MODE", value="Copy"))
 
     if ld_library_path:
