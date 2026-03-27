@@ -1,0 +1,37 @@
+ROBOT_BACKEND: zeroerr
+DEFAULT_WORKOBJECT:
+- 0
+- 0
+- 0
+- 0
+- 0
+- 16
+NUM_JOINTS: 6
+JOINT_NAMES:
+- Joint_1
+- Joint_2
+- Joint_3
+- Joint_4
+- Joint_5
+- Joint_6
+PLANNING_GROUP: manipulator
+BASE_LINK: base_link
+EE_LINK: tcp
+WRIST_LINK: tool0
+COLLISION_TIP_LINK: tool0
+URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm.urdf
+ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
+TOOL_REGISTRY:
+  TOOL_0:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+TOOL_ID_MAP:
+  0: TOOL_0
+REST_LOG: /tmp/zeroerr_rest_server.log
+MARKER_PUBLISH_INTERVAL_S: 30.0
+
+SAFETY_WALLS_ENABLED: false

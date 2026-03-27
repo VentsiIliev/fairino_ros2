@@ -54,7 +54,7 @@ def generate_launch_description():
 
     # Launch IPP helper node for TOTG trajectory optimization (2nd order)
     ipp_helper_node = Node(
-        package='fairino5_v6_moveit2_config',
+        package='erob_moveit_runtime',
         executable='ipp_helper',
         name='ipp_helper',
         output='screen',
@@ -69,7 +69,7 @@ def generate_launch_description():
 
     # Launch Ruckig helper node for jerk-limited trajectory smoothing (3rd order)
     ruckig_helper_node = Node(
-        package='fairino5_v6_moveit2_config',
+        package='erob_moveit_runtime',
         executable='ruckig_helper',
         name='ruckig_helper',
         output='screen',
@@ -82,49 +82,34 @@ def generate_launch_description():
     )
     demo_ld.add_action(ruckig_helper_node)
 
-    # Launch C++ robot state publisher for actual TCP position from robot
-    robot_state_publisher_node = Node(
+    # Fairino-specific state publisher: TCP position from /nonrt_state_data
+    # (joint vel/acc + Cartesian vel/acc from shared base class)
+    fairino_state_publisher_node = Node(
         package='fairino5_v6_moveit2_config',
-        executable='robot_state_publisher',
-        name='robot_state_publisher_cpp',
+        executable='fairino_state_publisher.py',
+        name='fairino_state_publisher',
         output='screen'
     )
-    demo_ld.add_action(robot_state_publisher_node)
-
-    # # Launch GUI as an ROS2 node with delay to wait for controllers
-    # velocity_monitor_gui = Node(
-    #     package='fairino5_v6_moveit2_config',
-    #     executable='main.py',
-    #     name='velocity_monitor',
-    #     output='screen',
-    #     emulate_tty=True
-    # )
-    #
-    # # Delay GUI launch by 3 seconds (reduced from 8s - faster planner loading)
-    # delayed_gui = TimerAction(
-    #     period=10.0,
-    #     actions=[velocity_monitor_gui]
-    # )
-    #
-    # demo_ld.add_action(delayed_gui)
+    demo_ld.add_action(fairino_state_publisher_node)
 
     # Launch GUI as a ROS2 node (velocity monitor)
     velocity_monitor_gui = Node(
-        package='fairino5_v6_moveit2_config',
+        package='erob_moveit_runtime',
         executable='main.py',
+        additional_env={'EROB_CONFIG_PACKAGE': 'fairino5_v6_moveit2_config'},
         name='velocity_monitor',
         output='screen',
         emulate_tty=True
     )
 
-    # Launch GUI **only after robot_state_publisher_cpp node starts**
+    # Launch GUI only after the state publisher node starts
     from launch.actions import RegisterEventHandler
     from launch.event_handlers import OnProcessStart
 
     demo_ld.add_action(
         RegisterEventHandler(
             OnProcessStart(
-                target_action=robot_state_publisher_node,
+                target_action=fairino_state_publisher_node,
                 on_start=[velocity_monitor_gui]
             )
         )

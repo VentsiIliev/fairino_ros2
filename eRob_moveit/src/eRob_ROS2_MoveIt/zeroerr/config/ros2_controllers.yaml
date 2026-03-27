@@ -1,0 +1,49 @@
+# This config file is used by ros2_control
+controller_manager:
+  ros__parameters:
+    update_rate: 200          # Hz — halves JTC splines cost; EtherCAT HW thread runs independently
+    realtime_priority: 80     # FIFO priority for controller_manager RT thread
+    use_sim_time: false
+    manipulator_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+manipulator_controller:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    interpolation_method: "splines"
+    allow_integration_in_goal_trajectories: true
+    allow_nonzero_velocity_at_trajectory_end: true
+    allow_partial_joints_goal: false
+    open_loop_control: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 200.0
+    # Enable trajectory point velocities for continuous motion
+    command_joint_names:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    # Relaxed constraints to prevent jitter
+    constraints:
+      goal_time: 0.0
+      stopped_velocity_tolerance: 0.2
+      Joint_1: {trajectory: 0.0, goal: 0.1}
+      Joint_2: {trajectory: 0.0, goal: 0.1}
+      Joint_3: {trajectory: 0.0, goal: 0.1}
+      Joint_4: {trajectory: 0.0, goal: 0.1}
+      Joint_5: {trajectory: 0.0, goal: 0.1}
+      Joint_6: {trajectory: 0.0, goal: 0.1}

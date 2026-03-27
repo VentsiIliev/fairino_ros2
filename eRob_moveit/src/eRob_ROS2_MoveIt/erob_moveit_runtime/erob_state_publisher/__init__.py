@@ -1,0 +1,1 @@
+# erob_state_publisher — shared base class for robot-specific state publishers
