@@ -303,6 +303,20 @@ def start_rest_server(
             robot.node.get_logger().error(f"Jog endpoint error: {exc}")
             return jsonify({"result": -1, "success": False, "error": str(exc)})
 
+    @app.route("/drag/enable", methods=["POST"])
+    def enable_drag():
+        result = node.enable_drag_mode()
+        return jsonify({"success": True, **result})
+
+    @app.route("/drag/disable", methods=["POST"])
+    def disable_drag():
+        result = node.disable_drag_mode()
+        return jsonify({"success": True, **result})
+
+    @app.route("/drag/status", methods=["GET"])
+    def drag_status():
+        return jsonify(node.get_drag_mode_status())
+
     # ------------------------------------------------------------------
     # Run server
     # ------------------------------------------------------------------

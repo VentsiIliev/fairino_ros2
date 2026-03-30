@@ -1,12 +1,21 @@
 from moveit_configs_utils import MoveItConfigsBuilder
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, SetEnvironmentVariable
+from launch.actions import ExecuteProcess, RegisterEventHandler, SetEnvironmentVariable, TimerAction
+from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+import shutil
 
 
 def generate_launch_description():
+    terminal_prefix = None
+    if os.environ.get("ZEROERR_COLLISION_MONITOR_TERMINAL", "0") == "1":
+        terminal = shutil.which("x-terminal-emulator") or shutil.which("xterm")
+        if terminal:
+            terminal_prefix = f"{terminal} -e"
+    launch_collision_gui = os.environ.get("ZEROERR_COLLISION_MONITOR_GUI", "0") == "1"
+
     moveit_config = (
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
         .to_moveit_configs()
@@ -52,6 +61,18 @@ def generate_launch_description():
         cmd=["ros2", "run", "controller_manager", "spawner", "manipulator_controller"],
         output="screen",
     )
+    load_drag_effort_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_effort_controller"],
+        output="screen",
+    )
+    load_drag_torque_offset_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_torque_offset_controller"],
+        output="screen",
+    )
+    load_drag_mode_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_mode_controller"],
+        output="screen",
+    )
 
     wait_for_op_process = ExecuteProcess(
         cmd=[wait_for_slaves_op],
@@ -63,6 +84,64 @@ def generate_launch_description():
         },
     )
 
+    ethercat_sdo_server = Node(
+        package="ethercat_manager",
+        executable="ethercat_sdo_srv_server",
+        name="ethercat_sdo_srv_server",
+        output="screen",
+    )
+
+    collision_monitor_kwargs = {
+        "package": "zeroerr",
+        "executable": "zeroerr_collision_monitor.py",
+        "name": "zeroerr_collision_monitor",
+        "output": "screen",
+        "parameters": [{
+            "slave_count": 6,
+            "poll_period_sec": 0.1,
+            "confirm_cycles": 3,
+            "print_table": False,
+            "use_inverse_dynamics": True,
+            "dynamics_estimator_mode": "momentum_observer",
+            "measured_torque_source": "current_based_torque",
+            "joint_models": [
+                "eRob80H100T",
+                "eRob80H100T",
+                "eRob80H100T",
+                "eRob70H100T",
+                "eRob70H100T",
+                "eRob70H100T",
+            ],
+            "model_names": ["eRob70H100T", "eRob80H100T"],
+            "model_rated_current_ma": [3500.0, 5500.0],
+            "model_output_torque_constant_nm_per_a": [4.76, 8.475],
+            "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "urdf_path": os.path.join(package_path, "config", "erob_arm.urdf"),
+            "base_link": "base_link",
+            "tip_link": "tool0",
+            "num_joints": 6,
+            "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
+            "filter_alpha": 0.7,
+            "include_gravity": False,
+        }],
+    }
+    if terminal_prefix:
+        collision_monitor_kwargs["prefix"] = terminal_prefix
+        collision_monitor_kwargs["parameters"][0]["print_table"] = True
+
+    zeroerr_collision_monitor = Node(**collision_monitor_kwargs)
+    launch_actions = [zeroerr_collision_monitor]
+    if launch_collision_gui:
+        launch_actions.append(
+            Node(
+                package="zeroerr",
+                executable="zeroerr_collision_monitor_gui.py",
+                name="zeroerr_collision_monitor_gui",
+                output="screen",
+            )
+        )
+
     return LaunchDescription([
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
         SetEnvironmentVariable("MESA_GL_VERSION_OVERRIDE", "3.3"),
@@ -73,5 +152,15 @@ def generate_launch_description():
         ros2_control_node,
         load_joint_state_broadcaster,
         load_manipulator_controller,
+        load_drag_effort_controller,
+        load_drag_torque_offset_controller,
+        load_drag_mode_controller,
+        ethercat_sdo_server,
         wait_for_op_process,
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=wait_for_op_process,
+                on_exit=[TimerAction(period=12.0, actions=launch_actions)],
+            )
+        ),
     ])

@@ -69,6 +69,12 @@ class MoveItRobotBackend(IRobotBackend):
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True):
         if len(position) != 6:
             return -1
+        if self.node is not None and not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[MOVE_LINER] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
             position_base = self.apply_workobject(position, user_id=user)
             tool_transform = self.node.get_tool_transform(tool)
@@ -118,6 +124,12 @@ class MoveItRobotBackend(IRobotBackend):
         """
         if not path or self.node is None:
             return -1
+        if not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[EXECUTE_PATH] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
 
@@ -349,6 +361,12 @@ class MoveItRobotBackend(IRobotBackend):
 
     # ---------------- Jog / Control / Misc ----------------
     def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc):
+        if self.node is not None and not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[JOG] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
         self.node.get_logger().info(
             f"Starting jog: axis={axis}, direction={direction}, step={step}mm, vel={vel}%, acc={acc}%"
         )

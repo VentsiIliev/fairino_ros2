@@ -24,6 +24,7 @@ MOTION_ERROR_DESCRIPTIONS = {
     -9:  "Near-singularity detected",
     -10: "Collision detected during Jacobian check",
     -11: "Cartesian path planning failed: target unreachable, collision, or joint-limit constraint",
+    -12: "Hardware not ready: EtherCAT slave not in OP",
 }
 
 

@@ -5,6 +5,9 @@ find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS
   scripts/zeroerr_state_publisher.py
+  scripts/zeroerr_error_monitor.py
+  scripts/zeroerr_collision_monitor.py
+  scripts/zeroerr_collision_monitor_gui.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

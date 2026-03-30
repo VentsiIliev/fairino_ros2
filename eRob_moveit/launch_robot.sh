@@ -31,7 +31,8 @@ cleanup_stale_zeroerr_processes() {
     "ros2 launch zeroerr"
     "WaitForSlavesOp.sh"
     "zeroerr_state_publisher.py"
-    "main.py"
+    "/erob_moveit_runtime/.*/main.py"
+    "/lib/erob_moveit_runtime/main.py"
     "ipp_helper"
     "ruckig_helper"
   )
@@ -66,7 +67,8 @@ cleanup_stale_fairino_processes() {
     "/opt/ros/.*/controller_manager/ros2_control_node"
     "/opt/ros/.*/moveit_ros_move_group/move_group"
     "/opt/ros/.*/rviz2/rviz2"
-    "main.py"
+    "/erob_moveit_runtime/.*/main.py"
+    "/lib/erob_moveit_runtime/main.py"
     "fairino_state_publisher.py"
     "ipp_helper"
     "ruckig_helper"
@@ -189,6 +191,8 @@ launch_zeroerr() {
   local minimal_launch_file="${ZEROERR_MINIMAL_LAUNCH_FILE:-ethercat_only.launch.py}"
   local ethercat_script="${ZEROERR_ETHERCAT_SCRIPT:-}"
   local slave_monitor_script="${ZEROERR_SLAVE_MONITOR_SCRIPT:-}"
+  local collision_monitor_terminal="${ZEROERR_COLLISION_MONITOR_TERMINAL:-0}"
+  local collision_monitor_gui="${ZEROERR_COLLISION_MONITOR_GUI:-0}"
 
   if [[ "${profile}" == "ethercat_only" ]]; then
     launch_file="${minimal_launch_file}"
@@ -200,6 +204,10 @@ launch_zeroerr() {
   if [[ -n "${ethercat_script}" ]]; then
     if [[ -x "${ethercat_script}" ]]; then
       echo "Resetting ZeroErr EtherCAT master: ${ethercat_script}"
+      ZEROERR_ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}" \
+      ZEROERR_ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-}" \
+      ZEROERR_PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-}" \
+      ZEROERR_NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}" \
       PREP_ONLY=1 "${ethercat_script}" || true
     else
       echo "ZeroErr EtherCAT script is not executable: ${ethercat_script}" >&2
@@ -209,12 +217,18 @@ launch_zeroerr() {
   echo "Launching ZeroErr stack (${profile}): ${package} ${launch_file}"
   ZEROERR_ROS_PID=""
   ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
-  setsid ros2 launch "${package}" "${launch_file}" &
+  ZEROERR_COLLISION_MONITOR_TERMINAL="${collision_monitor_terminal}" \
+    ZEROERR_COLLISION_MONITOR_GUI="${collision_monitor_gui}" \
+    setsid ros2 launch "${package}" "${launch_file}" &
   ZEROERR_ROS_PID=$!
   trap cleanup_zeroerr EXIT INT TERM HUP
 
   if [[ -n "${ethercat_script}" && -x "${ethercat_script}" ]]; then
     echo "Applying ZeroErr RT setup: ${ethercat_script}"
+    ZEROERR_ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}" \
+    ZEROERR_ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-}" \
+    ZEROERR_PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-}" \
+    ZEROERR_NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}" \
     POSTSTART_ONLY=1 "${ethercat_script}" || true
   fi
 

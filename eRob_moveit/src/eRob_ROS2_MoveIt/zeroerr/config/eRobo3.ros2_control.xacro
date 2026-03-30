@@ -9,10 +9,17 @@
                 <plugin>ethercat_driver/EthercatDriver</plugin>
                 <param name="master_id">0</param>
                 <param name="control_frequency">1000</param>
+                <param name="freeze_on_slave_fault">true</param>
                 <param name="timeout">1000000000</param>
             </hardware>
             <joint name="Joint_1">
                 <command_interface name="position">
+                </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
                 </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
@@ -20,6 +27,11 @@
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err1">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
@@ -31,12 +43,23 @@
             <joint name="Joint_2">
                 <command_interface name="position">
                 </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
+                </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
                 <command_interface name="disable_set"/>
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err2">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
@@ -48,12 +71,23 @@
             <joint name="Joint_3">
                 <command_interface name="position">
                 </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
+                </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
                 <command_interface name="disable_set"/>
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err3">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
@@ -65,12 +99,23 @@
             <joint name="Joint_4">
                 <command_interface name="position">
                 </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
+                </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
                 <command_interface name="disable_set"/>
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err4">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
@@ -82,12 +127,23 @@
             <joint name="Joint_5">
                 <command_interface name="position">
                 </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
+                </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
                 <command_interface name="disable_set"/>
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err5">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
@@ -99,12 +155,23 @@
             <joint name="Joint_6">
                 <command_interface name="position">
                 </command_interface>
+                <command_interface name="mode_of_operation">
+                </command_interface>
+                <command_interface name="effort">
+                </command_interface>
+                <command_interface name="torque_offset">
+                </command_interface>
                 <command_interface name="reset_fault"/>
                 <command_interface name="enable_set"/>
                 <command_interface name="disable_set"/>
                 <state_interface name="position"/>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+                <state_interface name="motor_actual_current"/>
+                <state_interface name="following_error_actual"/>
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
                 <ec_module name="zero_err6">
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>

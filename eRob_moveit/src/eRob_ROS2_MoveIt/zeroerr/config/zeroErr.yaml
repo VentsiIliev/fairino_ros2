@@ -17,22 +17,24 @@ rpdo: #PxPDO = receive PDO Mapping
       - {index: 0x607a, sub_index: 0, type: int32, command_interface: position, default: .nan, factor: 83442.867648821, offset: 0}
       #target position
       - {index: 0x60ff, sub_index: 0, type: int32, default: 0, factor: 166885.735297642}        #target velocity
-      - {index: 0x6071, sub_index: 0, type: int16, default: 0, factor: 2.0} 	#target torque
+      - {index: 0x6071, sub_index: 0, type: int16, command_interface: effort, default: 0, factor: 2.0} 	#target torque
       - {index: 0x6072, sub_index: 0, type: uint16, default: 10000} 	# Max torque
+      - {index: 0x60B2, sub_index: 0, type: int16, command_interface: torque_offset, default: 0, factor: 2.0} 	# Torque offset / feed forward
       - {index: 0x6040, sub_index: 0, type: uint16, default: 15} 	# Control word (set to 0x000F to request Enable Operation immediately)
-      - {index: 0x6060, sub_index: 0, type: uint8, default: 8} 	# Control operation
+      - {index: 0x6060, sub_index: 0, type: uint8, command_interface: mode_of_operation, default: 8} 	# Control operation
       - {index: 0xf0ff, sub_index: 0, type: uint8} 	# Dummy byte
 
 tpdo:  #TxPDO = transmit PDO Mapping
   - index: 0x1a00
     channels:
       - {index: 0x6064, sub_index: 0, type: int32, state_interface: position, factor: 0.000011984247763, offset: 0} #Position actual value	
-      - {index: 0x60F4, sub_index: 0, type: int32}	#Position Following error actual value
+      - {index: 0x60F4, sub_index: 0, type: int32, state_interface: following_error_actual}	#Position Following error actual value
       - {index: 0x606c, sub_index: 0, type: int32, state_interface: velocity, factor: 0.0000059921238815 } 	# Velocity actual value
       - {index: 0x6077, sub_index: 0, type: int16, state_interface: effort, factor: 1.0 } 	# Torque actual value
-      - {index: 0x6041, sub_index: 0, type: uint16}	# State word
-      - {index: 0x603f, sub_index: 0, type: uint16}	# Error code
-      - {index: 0x6061, sub_index: 0, type: uint8}        # Mode of operation display
+      - {index: 0x6078, sub_index: 0, type: int16, state_interface: motor_actual_current, factor: 1.0 } 	# Motor actual current
+      - {index: 0x6041, sub_index: 0, type: uint16, state_interface: statusword}	# State word
+      - {index: 0x603f, sub_index: 0, type: uint16, state_interface: error_code}	# Error code
+      - {index: 0x6061, sub_index: 0, type: uint8, state_interface: mode_display}        # Mode of operation display
       - {index: 0xf0ff, sub_index: 0, type: uint8}        # dummy byte
 sm:  # Sync Manager
   - {index: 0, type: output, pdo: ~, watchdog: disable}

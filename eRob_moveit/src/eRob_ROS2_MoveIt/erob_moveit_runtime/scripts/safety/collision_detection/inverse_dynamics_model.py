@@ -48,6 +48,18 @@ class InverseDynamicsModel(ABC):
     def num_joints(self) -> int:
         """Number of joints in the model."""
 
+    def compute_mass_matrix(self, positions: np.ndarray) -> np.ndarray:
+        """Optional joint-space inertia matrix."""
+        raise NotImplementedError
+
+    def compute_bias_torque(
+        self,
+        positions: np.ndarray,
+        velocities: np.ndarray
+    ) -> np.ndarray:
+        """Optional Coriolis/gravity bias torque."""
+        raise NotImplementedError
+
 
 class KDLInverseDynamicsModel(InverseDynamicsModel):
     """
@@ -121,6 +133,7 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
 
         grav = gravity if self._include_gravity else np.zeros(3)
         self.id_solver = PyKDL.ChainIdSolver_RNE(self.kdl_chain, PyKDL.Vector(*grav))
+        self.dyn_solver = PyKDL.ChainDynParam(self.kdl_chain, PyKDL.Vector(*grav))
 
         if self.logger:
             self.logger.info(f'[KDLInverseDynamicsModel] KDL chain loaded: {base_link} -> {tip_link}')
@@ -164,3 +177,46 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
             return np.zeros(self._num_joints)
 
         return np.array([tau[i] for i in range(self._num_joints)])
+
+    def compute_mass_matrix(self, positions: np.ndarray) -> np.ndarray:
+        """Compute the joint-space inertia matrix M(q)."""
+        q = PyKDL.JntArray(self._num_joints)
+        for i in range(self._num_joints):
+            q[i] = positions[i]
+
+        mass = PyKDL.JntSpaceInertiaMatrix(self._num_joints)
+        result = self.dyn_solver.JntToMass(q, mass)
+        if result < 0:
+            if self.logger:
+                self.logger.warning('[KDLInverseDynamicsModel] KDL mass matrix solve failed')
+            return np.eye(self._num_joints)
+
+        out = np.zeros((self._num_joints, self._num_joints))
+        for i in range(self._num_joints):
+            for j in range(self._num_joints):
+                out[i, j] = mass[i, j]
+        return out
+
+    def compute_bias_torque(
+        self,
+        positions: np.ndarray,
+        velocities: np.ndarray
+    ) -> np.ndarray:
+        """Compute C(q,dq)dq + g(q) using KDL dynamics helpers."""
+        q = PyKDL.JntArray(self._num_joints)
+        dq = PyKDL.JntArray(self._num_joints)
+        coriolis = PyKDL.JntArray(self._num_joints)
+        gravity = PyKDL.JntArray(self._num_joints)
+
+        for i in range(self._num_joints):
+            q[i] = positions[i]
+            dq[i] = velocities[i]
+
+        coriolis_result = self.dyn_solver.JntToCoriolis(q, dq, coriolis)
+        gravity_result = self.dyn_solver.JntToGravity(q, gravity)
+        if coriolis_result < 0 or gravity_result < 0:
+            if self.logger:
+                self.logger.warning('[KDLInverseDynamicsModel] KDL bias torque solve failed')
+            return np.zeros(self._num_joints)
+
+        return np.array([coriolis[i] + gravity[i] for i in range(self._num_joints)])

@@ -2,8 +2,10 @@
 set -euo pipefail
 # EtherCAT RT startup — supports PREP_ONLY=1 or POSTSTART_ONLY=1.
 
-ISOLATED_CORES="14,15"
-ISOLATED_MASK="0xC000"
+ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-14,15}"
+ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-0xC000}"
+PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-0}"
+NON_RT_CORES="${ZEROERR_NON_RT_CORES:-0-13}"
 RT_PRIORITY=90
 NIC="enp3s0"
 PREP_ONLY="${PREP_ONLY:-0}"
@@ -112,28 +114,28 @@ pin_ros2_control() {
 
   if [ -n "$ros2_ctrl_pid" ]; then
     sudo taskset -cp $ISOLATED_CORES $ros2_ctrl_pid > /dev/null 2>&1
-    sudo chrt -f -p $RT_PRIORITY $ros2_ctrl_pid > /dev/null 2>&1
-    echo "  ros2_control_node PID $ros2_ctrl_pid → cores $ISOLATED_CORES, FIFO $RT_PRIORITY"
+    echo "  ros2_control_node PID $ros2_ctrl_pid → cores $ISOLATED_CORES"
     for tid in $(ls /proc/$ros2_ctrl_pid/task/ 2>/dev/null); do
       sudo taskset -cp $ISOLATED_CORES $tid > /dev/null 2>&1
-      sudo chrt -f -p $RT_PRIORITY $tid > /dev/null 2>&1
     done
-    echo "  All threads of ros2_control_node set to cores $ISOLATED_CORES, FIFO $RT_PRIORITY"
+    echo "  All threads of ros2_control_node set to cores $ISOLATED_CORES"
 
     # Try kernel-enforced cpuset cgroup — prevents threads from self-reassigning cores
     pin_to_cpuset_cgroup "$ros2_ctrl_pid" || true
 
-    # Background: re-pin every 0.5s for 60s — fallback for threads that escape the cgroup
+    # Background: keep re-pinning in case ROS 2 / DDS spawns threads late or threads escape.
     (
-      for _ in $(seq 1 120); do
+      while true; do
         sleep 0.5
         [ -d "/proc/$ros2_ctrl_pid" ] || break
         for tid in $(ls /proc/$ros2_ctrl_pid/task/ 2>/dev/null); do
           sudo taskset -cp $ISOLATED_CORES $tid > /dev/null 2>&1
-          sudo chrt -f -p $RT_PRIORITY $tid > /dev/null 2>&1
         done
+
+        # Optionally keep known non-RT processes off the isolated cores as they come and go.
+        pin_non_rt_away 1
       done
-      echo "  [RT] Thread re-pin loop finished (60s)"
+      echo "  [RT] Thread re-pin loop finished"
     ) &
   else
     echo "  Warning: ros2_control_node not found after 30s"
@@ -148,9 +150,18 @@ pin_ros2_control() {
 }
 
 pin_non_rt_away() {
-  local non_rt_cores="0-13"
+  local quiet="${1:-0}"
+  local non_rt_cores="$NON_RT_CORES"
   local procs=(move_group rviz2 zeroerr_state_publisher ipp_helper ruckig_helper "main.py" spawner static_transform)
-  echo "Pinning non-RT ROS2 processes away from RT cores (→ cores $non_rt_cores)..."
+  if [ "$PIN_NON_RT_AWAY" != "1" ]; then
+    if [ "$quiet" != "1" ]; then
+      echo "Leaving non-RT ROS2 processes unpinned."
+    fi
+    return 0
+  fi
+  if [ "$quiet" != "1" ]; then
+    echo "Pinning non-RT ROS2 processes away from RT cores (→ cores $non_rt_cores)..."
+  fi
   local proc=""
   for proc in "${procs[@]}"; do
     for pid in $(pgrep -f "$proc" 2>/dev/null || true); do
