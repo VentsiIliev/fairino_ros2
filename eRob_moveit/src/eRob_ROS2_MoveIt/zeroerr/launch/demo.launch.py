@@ -81,9 +81,19 @@ def generate_launch_description():
         cmd=["ros2", "run", "controller_manager", "spawner", "drag_mode_controller"],
         output="screen",
     )
+    drag_enable_set_spawner = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_enable_set_controller"],
+        output="screen",
+    )
+    drag_disable_set_spawner = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_disable_set_controller"],
+        output="screen",
+    )
     demo_ld.add_action(drag_effort_spawner)
     demo_ld.add_action(drag_torque_offset_spawner)
     demo_ld.add_action(drag_mode_spawner)
+    demo_ld.add_action(drag_enable_set_spawner)
+    demo_ld.add_action(drag_disable_set_spawner)
 
     ipp_helper_node = Node(
         package="erob_moveit_runtime",

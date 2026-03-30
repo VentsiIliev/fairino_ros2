@@ -27,6 +27,9 @@ INTERFACE_DEFAULTS = {
 
 DEFAULT_EFFORT_THRESHOLDS = [20.0, 20.0, 15.0, 8.0, 6.0, 4.0]
 DEFAULT_FOLLOWING_ERROR_THRESHOLDS = [4000.0, 4000.0, 3500.0, 2000.0, 1500.0, 1200.0]
+DEFAULT_COLLISION_CONFIG_PATH = str(
+    Path(__file__).resolve().parents[1] / "config" / "collision_monitor_config.json"
+)
 
 
 class ZeroErrCollisionMonitor(Node):
@@ -71,6 +74,7 @@ class ZeroErrCollisionMonitor(Node):
         self.declare_parameter("external_torque_thresholds", [12.0, 12.0, 10.0, 8.0, 6.0, 5.0])
         self.declare_parameter("filter_alpha", 0.7)
         self.declare_parameter("include_gravity", False)
+        self.declare_parameter("collision_config_path", DEFAULT_COLLISION_CONFIG_PATH)
 
         self._slave_count = int(self.get_parameter("slave_count").value)
         self._print_table = bool(self.get_parameter("print_table").value)
@@ -189,6 +193,11 @@ class ZeroErrCollisionMonitor(Node):
         if self._use_inverse_dynamics:
             self._init_inverse_dynamics_model()
 
+        self._collision_config_path = Path(
+            str(self.get_parameter("collision_config_path").value)
+        )
+        self._load_persisted_config()
+
         self._json_pub = self.create_publisher(String, "/zeroerr/collision_monitor/json", 10)
         self._table_pub = self.create_publisher(String, "/zeroerr/collision_monitor/table", 10)
         self._state_pub = self.create_publisher(
@@ -266,6 +275,59 @@ class ZeroErrCollisionMonitor(Node):
             )
             return
 
+        updated = self._apply_runtime_config(payload)
+        if updated:
+            try:
+                self._collision_config_path.parent.mkdir(parents=True, exist_ok=True)
+                self._collision_config_path.write_text(
+                    json.dumps(
+                        {
+                            "confirm_cycles": self._confirm_cycles,
+                            "effort_thresholds": [
+                                self._effort_thresholds[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "following_error_thresholds": [
+                                self._following_error_thresholds[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "external_torque_thresholds": [
+                                self._external_torque_thresholds[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "friction_coulomb_nm": [
+                                self._friction_coulomb_nm[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "friction_viscous_nm_per_rad_s": [
+                                self._friction_viscous_nm_per_rad_s[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "joint_models": [
+                                self._joint_models[joint_name]
+                                for joint_name in JOINT_NAMES[: self._slave_count]
+                            ],
+                            "friction_velocity_deadband_rad_s": self._friction_velocity_deadband_rad_s,
+                            "measured_torque_source": self._measured_torque_source,
+                            "dynamics_estimator_mode": self._dynamics_estimator_mode,
+                            "model_names": list(self._model_rated_current_ma.keys()),
+                            "model_rated_current_ma": list(self._model_rated_current_ma.values()),
+                            "model_output_torque_constant_nm_per_a": list(self._model_output_torque_constant.values()),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                self.get_logger().warning(
+                    f"[ZeroErrCollisionMonitor] Failed to persist config to {self._collision_config_path}: {exc}"
+                )
+            self.get_logger().info(
+                "[ZeroErrCollisionMonitor] Runtime config updated"
+            )
+
+    def _apply_runtime_config(self, payload: Dict[str, object]) -> bool:
         updated = False
         confirm_cycles = payload.get("confirm_cycles")
         if confirm_cycles is not None:
@@ -329,9 +391,22 @@ class ZeroErrCollisionMonitor(Node):
                     self._reinitialize_estimator()
                 updated = True
 
-        if updated:
+        return updated
+
+    def _load_persisted_config(self) -> None:
+        path = self._collision_config_path
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.get_logger().warning(
+                f"[ZeroErrCollisionMonitor] Failed to load persisted config from {path}: {exc}"
+            )
+            return
+        if self._apply_runtime_config(payload):
             self.get_logger().info(
-                "[ZeroErrCollisionMonitor] Runtime config updated"
+                f"[ZeroErrCollisionMonitor] Loaded persisted config from {path}"
             )
 
     def _apply_threshold_update(

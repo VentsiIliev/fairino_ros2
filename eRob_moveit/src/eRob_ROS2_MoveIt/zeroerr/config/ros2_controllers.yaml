@@ -12,6 +12,10 @@ controller_manager:
       type: forward_command_controller/ForwardCommandController
     drag_mode_controller:
       type: forward_command_controller/ForwardCommandController
+    drag_enable_set_controller:
+      type: forward_command_controller/ForwardCommandController
+    drag_disable_set_controller:
+      type: forward_command_controller/ForwardCommandController
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 manipulator_controller:
@@ -86,3 +90,25 @@ drag_mode_controller:
       - Joint_5
       - Joint_6
     interface_name: mode_of_operation
+
+drag_enable_set_controller:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    interface_name: enable_set
+
+drag_disable_set_controller:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    interface_name: disable_set

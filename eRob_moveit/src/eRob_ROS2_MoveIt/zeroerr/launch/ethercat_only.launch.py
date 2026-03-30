@@ -73,6 +73,14 @@ def generate_launch_description():
         cmd=["ros2", "run", "controller_manager", "spawner", "drag_mode_controller"],
         output="screen",
     )
+    load_drag_enable_set_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_enable_set_controller"],
+        output="screen",
+    )
+    load_drag_disable_set_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drag_disable_set_controller"],
+        output="screen",
+    )
 
     wait_for_op_process = ExecuteProcess(
         cmd=[wait_for_slaves_op],
@@ -155,6 +163,8 @@ def generate_launch_description():
         load_drag_effort_controller,
         load_drag_torque_offset_controller,
         load_drag_mode_controller,
+        load_drag_enable_set_controller,
+        load_drag_disable_set_controller,
         ethercat_sdo_server,
         wait_for_op_process,
         RegisterEventHandler(

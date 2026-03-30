@@ -6,6 +6,7 @@ import json
 import math
 import sys
 import time
+from pathlib import Path
 from typing import Dict
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -67,6 +69,10 @@ TABLE_COLUMNS = [
     "Dyn",
     "Reason",
 ]
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+COLLISION_CONFIG_PATH = CONFIG_DIR / "collision_monitor_config.json"
+DRAG_CONFIG_PATH = CONFIG_DIR / "drag_mode_config.json"
 
 
 class CollisionMonitorGuiNode(Node):
@@ -149,6 +155,12 @@ class CollisionMonitorWindow(QMainWindow):
         header.addWidget(self.stamp_label)
         layout.addLayout(header)
 
+        tabs = QTabWidget()
+        collision_tab = QWidget()
+        collision_layout = QVBoxLayout(collision_tab)
+        drag_tab = QWidget()
+        drag_layout_root = QVBoxLayout(drag_tab)
+
         threshold_group = QGroupBox("Detector Config")
         threshold_layout = QGridLayout(threshold_group)
         threshold_layout.addWidget(QLabel("Joint"), 0, 0)
@@ -204,7 +216,7 @@ class CollisionMonitorWindow(QMainWindow):
         self.baseline_status_label = QLabel("Baseline idle")
         self.baseline_status_label.setStyleSheet("color: #555;")
         threshold_layout.addWidget(self.baseline_status_label, 8, 2, 1, 2)
-        layout.addWidget(threshold_group)
+        collision_layout.addWidget(threshold_group)
 
         model_group = QGroupBox("Model Constants")
         model_layout = QGridLayout(model_group)
@@ -220,21 +232,7 @@ class CollisionMonitorWindow(QMainWindow):
                 edit.setMaximumWidth(120)
                 model_layout.addWidget(edit, row, column)
                 self.model_inputs[model_name][key] = edit
-        layout.addWidget(model_group)
-
-        drag_group = QGroupBox("Drag Mode")
-        drag_layout = QHBoxLayout(drag_group)
-        self.drag_enable_button = QPushButton("Enable Drag")
-        self.drag_enable_button.clicked.connect(self._enable_drag_mode)
-        drag_layout.addWidget(self.drag_enable_button)
-        self.drag_disable_button = QPushButton("Disable Drag")
-        self.drag_disable_button.clicked.connect(self._disable_drag_mode)
-        drag_layout.addWidget(self.drag_disable_button)
-        self.drag_status_label = QLabel("Unknown")
-        self.drag_status_label.setStyleSheet("font-weight: bold; color: #555;")
-        drag_layout.addWidget(self.drag_status_label)
-        drag_layout.addStretch()
-        layout.addWidget(drag_group)
+        collision_layout.addWidget(model_group)
 
         summary_group = QGroupBox("Detector Summary")
         summary_layout = QGridLayout(summary_group)
@@ -247,7 +245,7 @@ class CollisionMonitorWindow(QMainWindow):
             summary_layout.addWidget(QLabel(title), 0, column)
             summary_layout.addWidget(label, 1, column)
             self.summary_labels[key] = label
-        layout.addWidget(summary_group)
+        collision_layout.addWidget(summary_group)
 
         self.table = QTableWidget(6, len(TABLE_COLUMNS))
         self.table.setHorizontalHeaderLabels(TABLE_COLUMNS)
@@ -255,13 +253,81 @@ class CollisionMonitorWindow(QMainWindow):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.table.setAlternatingRowColors(True)
-        layout.addWidget(self.table)
+        collision_layout.addWidget(self.table)
 
         self.event_log = QTextEdit()
         self.event_log.setReadOnly(True)
-        self.event_log.setPlaceholderText("Collision event log")
+        self.event_log.setPlaceholderText("Collision and drag event log")
         self.event_log.setMinimumHeight(140)
-        layout.addWidget(self.event_log)
+        collision_layout.addWidget(self.event_log)
+
+        drag_group = QGroupBox("Drag Mode Control")
+        drag_layout = QHBoxLayout(drag_group)
+        self.drag_enable_button = QPushButton("Enable Drag")
+        self.drag_enable_button.clicked.connect(self._enable_drag_mode)
+        drag_layout.addWidget(self.drag_enable_button)
+        self.drag_disable_button = QPushButton("Disable Drag")
+        self.drag_disable_button.clicked.connect(self._disable_drag_mode)
+        drag_layout.addWidget(self.drag_disable_button)
+        self.drag_status_label = QLabel("Unknown")
+        self.drag_status_label.setStyleSheet("font-weight: bold; color: #555;")
+        drag_layout.addWidget(self.drag_status_label)
+        drag_layout.addStretch()
+        drag_layout_root.addWidget(drag_group)
+
+        drag_config_group = QGroupBox("Drag Runtime Config")
+        drag_config_layout = QGridLayout(drag_config_group)
+        drag_config_layout.addWidget(QLabel("Joint"), 0, 0)
+        drag_config_layout.addWidget(QLabel("Damping"), 0, 1)
+        drag_config_layout.addWidget(QLabel("MaxEffort"), 0, 2)
+        drag_config_layout.addWidget(QLabel("MaxOffset"), 0, 3)
+        self.drag_inputs: Dict[str, Dict[str, QLineEdit]] = {}
+        for row in range(6):
+            joint_name = f"Joint_{row + 1}"
+            drag_config_layout.addWidget(QLabel(joint_name), row + 1, 0)
+            self.drag_inputs[joint_name] = {}
+            for column, key in enumerate(["damping", "max_effort", "max_offset"], start=1):
+                edit = QLineEdit()
+                edit.setMaximumWidth(90)
+                drag_config_layout.addWidget(edit, row + 1, column)
+                self.drag_inputs[joint_name][key] = edit
+
+        drag_config_layout.addWidget(QLabel("CompScale"), 7, 0)
+        self.drag_compensation_scale_input = QLineEdit()
+        self.drag_compensation_scale_input.setMaximumWidth(90)
+        drag_config_layout.addWidget(self.drag_compensation_scale_input, 7, 1)
+
+        drag_config_layout.addWidget(QLabel("Settle s"), 7, 2)
+        self.drag_settle_timeout_input = QLineEdit()
+        self.drag_settle_timeout_input.setMaximumWidth(90)
+        drag_config_layout.addWidget(self.drag_settle_timeout_input, 7, 3)
+
+        drag_config_layout.addWidget(QLabel("DisablePulse s"), 8, 0)
+        self.drag_disable_pulse_input = QLineEdit()
+        self.drag_disable_pulse_input.setMaximumWidth(90)
+        drag_config_layout.addWidget(self.drag_disable_pulse_input, 8, 1)
+
+        drag_config_layout.addWidget(QLabel("EnablePulse s"), 8, 2)
+        self.drag_enable_pulse_input = QLineEdit()
+        self.drag_enable_pulse_input.setMaximumWidth(90)
+        drag_config_layout.addWidget(self.drag_enable_pulse_input, 8, 3)
+
+        self.apply_drag_button = QPushButton("Apply Drag Config")
+        self.apply_drag_button.clicked.connect(self._apply_drag_config)
+        drag_config_layout.addWidget(self.apply_drag_button, 9, 2, 1, 2)
+        drag_layout_root.addWidget(drag_config_group)
+
+        drag_help = QLabel(
+            "Use this tab for CST drag tuning. CompensationScale and MaxOffset affect support against gravity first."
+        )
+        drag_help.setWordWrap(True)
+        drag_help.setStyleSheet("color: #555;")
+        drag_layout_root.addWidget(drag_help)
+        drag_layout_root.addStretch()
+
+        tabs.addTab(collision_tab, "Collision")
+        tabs.addTab(drag_tab, "Drag")
+        layout.addWidget(tabs)
 
         self.setCentralWidget(central)
 
@@ -280,6 +346,8 @@ class CollisionMonitorWindow(QMainWindow):
         self._baseline_ext_tau_max = {f"Joint_{index}": 0.0 for index in range(1, 7)}
         self._drag_endpoint = "http://localhost:5000"
         self._drag_enabled = None
+        self._drag_config_loaded = False
+        self._collision_persisted_loaded = False
 
     def _refresh(self) -> None:
         data = self.ros_node.latest
@@ -397,20 +465,21 @@ class CollisionMonitorWindow(QMainWindow):
         )
         self._trim_event_log()
 
-    def _drag_request(self, path: str, method: str = "GET") -> dict | None:
+    def _drag_request(self, path: str, method: str = "GET") -> tuple[dict | None, str | None]:
         request = Request(f"{self._drag_endpoint}{path}", method=method)
         try:
-            with urlopen(request, timeout=1.5) as response:
+            with urlopen(request, timeout=5.0) as response:
                 payload = response.read().decode("utf-8")
-                return json.loads(payload) if payload else {}
-        except (URLError, TimeoutError, json.JSONDecodeError):
-            return None
+                return (json.loads(payload) if payload else {}), None
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return None, str(exc)
 
     def _enable_drag_mode(self) -> None:
-        response = self._drag_request("/drag/enable", method="POST")
+        response, error = self._drag_request("/drag/enable", method="POST")
         timestamp = time.strftime("%H:%M:%S")
         if response is None:
-            self.event_log.append(f"[{timestamp}] Drag enable failed")
+            suffix = f" | {error}" if error else ""
+            self.event_log.append(f"[{timestamp}] Drag enable failed{suffix}")
             self.drag_status_label.setText("Unavailable")
             self.drag_status_label.setStyleSheet("font-weight: bold; color: #b71c1c;")
         else:
@@ -419,10 +488,11 @@ class CollisionMonitorWindow(QMainWindow):
         self._trim_event_log()
 
     def _disable_drag_mode(self) -> None:
-        response = self._drag_request("/drag/disable", method="POST")
+        response, error = self._drag_request("/drag/disable", method="POST")
         timestamp = time.strftime("%H:%M:%S")
         if response is None:
-            self.event_log.append(f"[{timestamp}] Drag disable failed")
+            suffix = f" | {error}" if error else ""
+            self.event_log.append(f"[{timestamp}] Drag disable failed{suffix}")
             self.drag_status_label.setText("Unavailable")
             self.drag_status_label.setStyleSheet("font-weight: bold; color: #b71c1c;")
         else:
@@ -431,13 +501,17 @@ class CollisionMonitorWindow(QMainWindow):
         self._trim_event_log()
 
     def _poll_drag_status(self) -> None:
-        response = self._drag_request("/drag/status", method="GET")
+        response, error = self._drag_request("/drag/status", method="GET")
         if response is None:
             self.drag_status_label.setText("Unavailable")
             self.drag_status_label.setStyleSheet("font-weight: bold; color: #b71c1c;")
+            if error:
+                self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Drag status unavailable | {error}")
+                self._trim_event_log()
             self._drag_enabled = None
             return
         self._update_drag_status_from_payload(response)
+        self._poll_drag_config()
 
     def _update_drag_status_from_payload(self, payload: dict) -> None:
         enabled = bool(payload.get("enabled", False))
@@ -448,6 +522,72 @@ class CollisionMonitorWindow(QMainWindow):
             self.drag_status_label.setText("Disabled")
             self.drag_status_label.setStyleSheet("font-weight: bold; color: #555;")
         self._drag_enabled = enabled
+
+    def _poll_drag_config(self) -> None:
+        response, error = self._drag_request("/drag/config", method="GET")
+        if response is None:
+            return
+        self._load_drag_config_inputs(response)
+
+    def _load_drag_config_inputs(self, payload: dict) -> None:
+        if self._drag_config_loaded:
+            return
+        damping = payload.get("damping_nm_per_rad_s", [])
+        max_effort = payload.get("max_effort_nm", [])
+        max_offset = payload.get("max_torque_offset_nm", [])
+        for row, joint_name in enumerate([f"Joint_{index}" for index in range(1, 7)]):
+            if row < len(damping):
+                self.drag_inputs[joint_name]["damping"].setText(str(damping[row]))
+            if row < len(max_effort):
+                self.drag_inputs[joint_name]["max_effort"].setText(str(max_effort[row]))
+            if row < len(max_offset):
+                self.drag_inputs[joint_name]["max_offset"].setText(str(max_offset[row]))
+        self.drag_compensation_scale_input.setText(str(payload.get("compensation_scale", 1.0)))
+        self.drag_settle_timeout_input.setText(str(payload.get("settle_timeout_s", 2.0)))
+        self.drag_disable_pulse_input.setText(str(payload.get("disable_pulse_s", 0.1)))
+        self.drag_enable_pulse_input.setText(str(payload.get("enable_pulse_s", 0.1)))
+        self._drag_config_loaded = True
+
+    def _save_json(self, path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _apply_drag_config(self) -> None:
+        try:
+            payload = {
+                "compensation_scale": float(self.drag_compensation_scale_input.text()),
+                "settle_timeout_s": float(self.drag_settle_timeout_input.text()),
+                "disable_pulse_s": float(self.drag_disable_pulse_input.text()),
+                "enable_pulse_s": float(self.drag_enable_pulse_input.text()),
+                "damping_nm_per_rad_s": [],
+                "max_effort_nm": [],
+                "max_torque_offset_nm": [],
+            }
+            for joint_name in [f"Joint_{index}" for index in range(1, 7)]:
+                payload["damping_nm_per_rad_s"].append(float(self.drag_inputs[joint_name]["damping"].text()))
+                payload["max_effort_nm"].append(float(self.drag_inputs[joint_name]["max_effort"].text()))
+                payload["max_torque_offset_nm"].append(float(self.drag_inputs[joint_name]["max_offset"].text()))
+        except ValueError:
+            self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Drag config invalid")
+            self._trim_event_log()
+            return
+
+        request = Request(
+            f"{self._drag_endpoint}/drag/config",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=5.0) as resp:
+                payload_response = json.loads(resp.read().decode("utf-8") or "{}")
+                self._drag_config_loaded = False
+                self._load_drag_config_inputs(payload_response)
+                self._save_json(DRAG_CONFIG_PATH, payload)
+                self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Drag config applied")
+        except Exception as exc:
+            self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Drag config apply failed | {exc}")
+        self._trim_event_log()
 
     def _update_event_log(self, joint_name: str, joint: Dict[str, float]) -> None:
         current_state = self._event_state(joint)
@@ -492,6 +632,8 @@ class CollisionMonitorWindow(QMainWindow):
         return ""
 
     def _refresh_config_inputs(self) -> None:
+        if not self._collision_persisted_loaded:
+            self._load_collision_persisted_inputs()
         config = self.ros_node.config
         if not config:
             return
@@ -533,6 +675,50 @@ class CollisionMonitorWindow(QMainWindow):
             if row < len(output_constants):
                 self.model_inputs[model_name]["output_torque_constant"].setText(str(output_constants[row]))
         self._config_loaded = True
+
+    def _load_collision_persisted_inputs(self) -> None:
+        self._collision_persisted_loaded = True
+        if not COLLISION_CONFIG_PATH.exists():
+            return
+        try:
+            config = json.loads(COLLISION_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        for row, joint_name in enumerate([f"Joint_{index}" for index in range(1, 7)]):
+            effort_values = config.get("effort_thresholds", [])
+            follow_values = config.get("following_error_thresholds", [])
+            ext_values = config.get("external_torque_thresholds", [])
+            friction_c_values = config.get("friction_coulomb_nm", [])
+            friction_v_values = config.get("friction_viscous_nm_per_rad_s", [])
+            joint_models = config.get("joint_models", [])
+            if row < len(effort_values):
+                self.threshold_inputs[joint_name]["effort"].setText(str(effort_values[row]))
+            if row < len(follow_values):
+                self.threshold_inputs[joint_name]["following_error"].setText(str(follow_values[row]))
+            if row < len(ext_values):
+                self.threshold_inputs[joint_name]["external_torque"].setText(str(ext_values[row]))
+            if row < len(friction_c_values):
+                self.threshold_inputs[joint_name]["friction_coulomb"].setText(str(friction_c_values[row]))
+            if row < len(friction_v_values):
+                self.threshold_inputs[joint_name]["friction_viscous"].setText(str(friction_v_values[row]))
+            if row < len(joint_models):
+                self.threshold_inputs[joint_name]["joint_model"].setText(str(joint_models[row]))
+
+        self.confirm_cycles_input.setText(str(config.get("confirm_cycles", 1)))
+        self.dynamics_estimator_mode_input.setText(str(config.get("dynamics_estimator_mode", "momentum_observer")))
+        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "current_based_torque")))
+        self.friction_deadband_input.setText(str(config.get("friction_velocity_deadband_rad_s", 0.01)))
+        model_names = config.get("model_names", [])
+        rated_currents = config.get("model_rated_current_ma", [])
+        output_constants = config.get("model_output_torque_constant_nm_per_a", [])
+        for row, model_name in enumerate(model_names):
+            if model_name not in self.model_inputs:
+                continue
+            if row < len(rated_currents):
+                self.model_inputs[model_name]["rated_current_ma"].setText(str(rated_currents[row]))
+            if row < len(output_constants):
+                self.model_inputs[model_name]["output_torque_constant"].setText(str(output_constants[row]))
 
     def _apply_config(self) -> None:
         try:
@@ -584,6 +770,7 @@ class CollisionMonitorWindow(QMainWindow):
             return
 
         self.ros_node.publish_config(config)
+        self._save_json(COLLISION_CONFIG_PATH, config)
         self.status_label.setText("Runtime config update sent")
         self.status_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #1565c0;")
 

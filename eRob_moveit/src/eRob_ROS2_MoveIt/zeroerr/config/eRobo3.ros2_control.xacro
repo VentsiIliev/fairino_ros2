@@ -36,7 +36,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">0</param>
-	   	  <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
 		</ec_module>
             </joint>
@@ -64,7 +63,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">1</param>
-	      <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
 		</ec_module>
             </joint>
@@ -92,7 +90,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">2</param>
-	      <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
 		</ec_module>
             </joint>
@@ -120,7 +117,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">3</param>
-	      <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
 		</ec_module>
             </joint>
@@ -148,7 +144,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">4</param>
-	      <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
 		</ec_module>
             </joint>
@@ -176,7 +171,6 @@
 		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
 		  <param name="alias">0</param>
 		  <param name="position">5</param>
-	      <param name="mode_of_operation">8</param>
 		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
 		</ec_module>
             </joint>

@@ -104,6 +104,26 @@ def start_rest_server(
     def health():
         return jsonify({"status": "ok", "ros2_active": robot is not None})
 
+    @app.route("/drag/config", methods=["GET"])
+    def get_drag_config():
+        return jsonify(node.get_drag_mode_config())
+
+    @app.route("/drag/config", methods=["POST"])
+    def update_drag_config():
+        try:
+            payload = request.json or {}
+            updated = node.update_drag_mode_config(payload)
+            return jsonify({"success": True, **updated})
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            traceback_text = traceback.format_exc()
+            node.get_logger().error(
+                "REST /drag/config exception: "
+                f"{exc}\n{traceback_text}"
+            )
+            return jsonify({"success": False, "error": str(exc)}), 500
+
 
 
     @app.route("/move/linear", methods=["POST"])

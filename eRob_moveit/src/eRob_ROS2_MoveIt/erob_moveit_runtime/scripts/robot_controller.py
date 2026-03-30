@@ -4,11 +4,12 @@ import subprocess
 import threading
 import time
 from threading import Lock
+from pathlib import Path
 
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Duration
-from controller_manager_msgs.srv import SwitchController
+from controller_manager_msgs.srv import ListControllers, SwitchController
 from control_msgs.msg import DynamicJointState
 from erob_moveit_runtime.srv import ApplyIPP
 from geometry_msgs.msg import Pose
@@ -74,6 +75,8 @@ from config import (
     DRAG_MODE_MODE_COMMAND_TOPIC,
     DRAG_MODE_EFFORT_COMMAND_TOPIC,
     DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC,
+    DRAG_MODE_ENABLE_SET_COMMAND_TOPIC,
+    DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
     DRAG_MODE_CSP_VALUE,
     DRAG_MODE_CST_VALUE,
     DRAG_MODE_COMPENSATION_SCALE,
@@ -81,6 +84,13 @@ from config import (
     DRAG_MODE_MAX_EFFORT_NM,
     DRAG_MODE_MAX_TORQUE_OFFSET_NM,
     DRAG_MODE_MODE_SETTLE_TIMEOUT_S,
+    DRAG_MODE_DISABLE_PULSE_S,
+    DRAG_MODE_ENABLE_PULSE_S,
+    DRAG_MODE_CONFIG_PATH,
+    DRAG_MODE_JOINT_MODELS,
+    DRAG_MODE_MODEL_NAMES,
+    DRAG_MODE_MODEL_RATED_CURRENT_MA,
+    DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A,
     JOINT_NAMES,
 )
 
@@ -91,6 +101,8 @@ class RobotController(Node):
         'drag_mode_controller',
         'drag_effort_controller',
         'drag_torque_offset_controller',
+        'drag_enable_set_controller',
+        'drag_disable_set_controller',
     )
 
     def __init__(self):
@@ -157,6 +169,10 @@ class RobotController(Node):
 
         # ROS clients
         self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
+        self.list_controllers_client = self.create_client(
+            ListControllers,
+            '/controller_manager/list_controllers',
+        )
         self.switch_controller_client = self.create_client(
             SwitchController,
             '/controller_manager/switch_controller',
@@ -240,6 +256,8 @@ class RobotController(Node):
         self._drag_mode_cst = float(DRAG_MODE_CST_VALUE)
         self._drag_compensation_scale = float(DRAG_MODE_COMPENSATION_SCALE)
         self._drag_mode_settle_timeout_s = float(DRAG_MODE_MODE_SETTLE_TIMEOUT_S)
+        self._drag_disable_pulse_s = float(DRAG_MODE_DISABLE_PULSE_S)
+        self._drag_enable_pulse_s = float(DRAG_MODE_ENABLE_PULSE_S)
         self._drag_damping_nm_per_rad_s = np.array(DRAG_MODE_DAMPING_NM_PER_RAD_S, dtype=float)
         self._drag_max_effort_nm = np.array(DRAG_MODE_MAX_EFFORT_NM, dtype=float)
         self._drag_max_torque_offset_nm = np.array(DRAG_MODE_MAX_TORQUE_OFFSET_NM, dtype=float)
@@ -250,11 +268,28 @@ class RobotController(Node):
         self._drag_friction_viscous_nm_per_rad_s = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_velocity = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_mode_display = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
+        self._drag_statusword = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_error_code = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_last_mode_command = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
         self._drag_last_effort_command = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_last_torque_offset_command = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_last_effort_command_raw = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_last_torque_offset_command_raw = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_last_enable_set_command = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_last_disable_set_command = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_last_transition_ts = 0.0
+        self._drag_last_diag_log_ts = 0.0
         self._drag_joint_order = list(JOINT_NAMES)
+        self._drag_config_path = Path(DRAG_MODE_CONFIG_PATH)
+        self._drag_joint_models = list(DRAG_MODE_JOINT_MODELS)
+        self._drag_model_rated_current_ma = {
+            str(model): float(value)
+            for model, value in zip(DRAG_MODE_MODEL_NAMES, DRAG_MODE_MODEL_RATED_CURRENT_MA)
+        }
+        self._drag_model_output_torque_constant = {
+            str(model): float(value)
+            for model, value in zip(DRAG_MODE_MODEL_NAMES, DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A)
+        }
         self._drag_bias_model = KDLInverseDynamicsModel(
             urdf_path=self.urdf_path,
             base_link=BASE_LINK,
@@ -278,10 +313,26 @@ class RobotController(Node):
             DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC,
             10,
         )
+        self._drag_enable_set_pub = self.create_publisher(
+            Float64MultiArray,
+            DRAG_MODE_ENABLE_SET_COMMAND_TOPIC,
+            10,
+        )
+        self._drag_disable_set_pub = self.create_publisher(
+            Float64MultiArray,
+            DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
+            10,
+        )
         self.create_subscription(
             DynamicJointState,
             '/zeroerr/collision_monitor/state',
             self._drag_monitor_callback,
+            10,
+        )
+        self.create_subscription(
+            DynamicJointState,
+            '/dynamic_joint_states',
+            self._drag_drive_state_callback,
             10,
         )
         self.create_subscription(
@@ -291,6 +342,7 @@ class RobotController(Node):
             10,
         )
         self._drag_timer = self.create_timer(self._drag_update_dt, self._drag_mode_step)
+        self._load_persisted_drag_config()
         self.get_logger().info(
             f"[DragMode] Initialized real CST path (enabled={self._drag_enabled}, dt={self._drag_update_dt:.3f}s)"
         )
@@ -587,10 +639,15 @@ class RobotController(Node):
 
     def enable_drag_mode(self) -> dict:
         stop_result = self.stop_motion()
+        self.get_logger().info(f'[DragMode] Enable requested | stop_result={stop_result}')
         switch_ok = self._set_drag_controller_ownership(True)
         with self._drag_lock:
             self._drag_enabled = bool(switch_ok)
             self._drag_last_transition_ts = time.monotonic()
+            self._drag_last_diag_log_ts = 0.0
+        self.get_logger().info(
+            f"[DragMode] Enable result | enabled={bool(switch_ok)} controller_switch_ok={bool(switch_ok)}"
+        )
         return {
             "enabled": bool(switch_ok),
             "stopped": bool(isinstance(stop_result, dict) and stop_result.get("stopped", False)),
@@ -603,14 +660,21 @@ class RobotController(Node):
         with self._drag_lock:
             self._drag_enabled = False
             self._drag_last_transition_ts = time.monotonic()
+            self._drag_last_diag_log_ts = 0.0
         stop_result = self.stop_motion()
+        self.get_logger().info(f'[DragMode] Disable requested | stop_result={stop_result}')
         self._publish_drag_commands(
             mode_command=np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float),
             effort_command=np.zeros(NUM_JOINTS, dtype=float),
             torque_offset_command=np.zeros(NUM_JOINTS, dtype=float),
+            enable_set_command=np.zeros(NUM_JOINTS, dtype=float),
+            disable_set_command=np.zeros(NUM_JOINTS, dtype=float),
         )
         switch_ok = self._set_drag_controller_ownership(False)
         self._send_hold_position_trajectory()
+        self.get_logger().info(
+            f"[DragMode] Disable result | enabled=False controller_switch_ok={bool(switch_ok)}"
+        )
         return {
             "enabled": False,
             "stopped": bool(isinstance(stop_result, dict) and stop_result.get("stopped", False)),
@@ -623,14 +687,20 @@ class RobotController(Node):
         with self._drag_lock:
             enabled = self._drag_enabled
             mode_display = self._drag_mode_display.tolist()
+            statusword = self._drag_statusword.tolist()
+            error_code = self._drag_error_code.tolist()
             last_mode = self._drag_last_mode_command.tolist()
             last_effort = self._drag_last_effort_command.tolist()
             last_offset = self._drag_last_torque_offset_command.tolist()
+            last_effort_raw = self._drag_last_effort_command_raw.tolist()
+            last_offset_raw = self._drag_last_torque_offset_command_raw.tolist()
             return {
                 "enabled": enabled,
                 "active_mode": "cst" if enabled else "csp",
                 "requested_mode_value": self._drag_mode_cst if enabled else self._drag_mode_csp,
                 "mode_display": mode_display,
+                "statusword": statusword,
+                "error_code": error_code,
                 "mode_match": all(abs(value - (self._drag_mode_cst if enabled else self._drag_mode_csp)) < 0.5 for value in mode_display),
                 "settle_timeout_s": self._drag_mode_settle_timeout_s,
                 "manipulator_controller_expected_active": not enabled,
@@ -644,9 +714,87 @@ class RobotController(Node):
                 "last_mode_command": last_mode,
                 "last_effort_command_nm": last_effort,
                 "last_torque_offset_command_nm": last_offset,
+                "last_effort_command_raw": last_effort_raw,
+                "last_torque_offset_command_raw": last_offset_raw,
+                "last_enable_set_command": self._drag_last_enable_set_command.tolist(),
+                "last_disable_set_command": self._drag_last_disable_set_command.tolist(),
             }
 
+    def get_drag_mode_config(self) -> dict:
+        with self._drag_lock:
+            return {
+                "compensation_scale": float(self._drag_compensation_scale),
+                "damping_nm_per_rad_s": self._drag_damping_nm_per_rad_s.tolist(),
+                "max_effort_nm": self._drag_max_effort_nm.tolist(),
+                "max_torque_offset_nm": self._drag_max_torque_offset_nm.tolist(),
+                "settle_timeout_s": float(self._drag_mode_settle_timeout_s),
+                "disable_pulse_s": float(self._drag_disable_pulse_s),
+                "enable_pulse_s": float(self._drag_enable_pulse_s),
+            }
+
+    def update_drag_mode_config(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("Drag config payload must be an object")
+
+        with self._drag_lock:
+            if "compensation_scale" in payload:
+                self._drag_compensation_scale = float(payload["compensation_scale"])
+            if "settle_timeout_s" in payload:
+                self._drag_mode_settle_timeout_s = float(payload["settle_timeout_s"])
+            if "disable_pulse_s" in payload:
+                self._drag_disable_pulse_s = float(payload["disable_pulse_s"])
+            if "enable_pulse_s" in payload:
+                self._drag_enable_pulse_s = float(payload["enable_pulse_s"])
+
+            if "damping_nm_per_rad_s" in payload:
+                damping = np.array(payload["damping_nm_per_rad_s"], dtype=float)
+                if damping.size != NUM_JOINTS:
+                    raise ValueError(f"damping_nm_per_rad_s must contain {NUM_JOINTS} values")
+                self._drag_damping_nm_per_rad_s = damping
+
+            if "max_effort_nm" in payload:
+                max_effort = np.array(payload["max_effort_nm"], dtype=float)
+                if max_effort.size != NUM_JOINTS:
+                    raise ValueError(f"max_effort_nm must contain {NUM_JOINTS} values")
+                self._drag_max_effort_nm = max_effort
+
+            if "max_torque_offset_nm" in payload:
+                max_offset = np.array(payload["max_torque_offset_nm"], dtype=float)
+                if max_offset.size != NUM_JOINTS:
+                    raise ValueError(f"max_torque_offset_nm must contain {NUM_JOINTS} values")
+                self._drag_max_torque_offset_nm = max_offset
+
+        updated = self.get_drag_mode_config()
+        try:
+            self._drag_config_path.parent.mkdir(parents=True, exist_ok=True)
+            self._drag_config_path.write_text(
+                json.dumps(updated, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"[DragMode] Failed to persist config to {self._drag_config_path}: {exc}")
+        self.get_logger().info(f"[DragMode] Runtime config updated | {updated}")
+        return updated
+
+    def _load_persisted_drag_config(self) -> None:
+        path = self._drag_config_path
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.update_drag_mode_config(payload)
+            self.get_logger().info(f"[DragMode] Loaded persisted config from {path}")
+        except Exception as exc:
+            self.get_logger().warning(f"[DragMode] Failed to load persisted config from {path}: {exc}")
+
     def _set_drag_controller_ownership(self, drag_enabled: bool) -> bool:
+        controller_states = self._get_controller_states()
+        if controller_states is None:
+            return False
+        self.get_logger().info(
+            f"[DragMode] Controller states before switch: {controller_states}"
+        )
+
         if not self.switch_controller_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().error('[DragMode] /controller_manager/switch_controller not available')
             return False
@@ -655,32 +803,78 @@ class RobotController(Node):
         request.strictness = 2
         request.activate_asap = True
         request.timeout = Duration(sec=2, nanosec=0)
-        request.activate_controllers = list(self._DRAG_CONTROLLER_NAMES)
+        request.activate_controllers = [
+            name for name in self._DRAG_CONTROLLER_NAMES
+            if controller_states.get(name) != 'active'
+        ]
         if drag_enabled:
-            request.deactivate_controllers = [self._MANIPULATOR_CONTROLLER_NAME]
+            request.deactivate_controllers = (
+                [self._MANIPULATOR_CONTROLLER_NAME]
+                if controller_states.get(self._MANIPULATOR_CONTROLLER_NAME) == 'active'
+                else []
+            )
         else:
-            request.activate_controllers.append(self._MANIPULATOR_CONTROLLER_NAME)
+            if controller_states.get(self._MANIPULATOR_CONTROLLER_NAME) != 'active':
+                request.activate_controllers.append(self._MANIPULATOR_CONTROLLER_NAME)
             request.deactivate_controllers = []
 
+        if not request.activate_controllers and not request.deactivate_controllers:
+            self.get_logger().info('[DragMode] Controller ownership already in desired state')
+            return True
+
+        self.get_logger().info(
+            f"[DragMode] switch_controller request | drag_enabled={drag_enabled} "
+            f"activate={request.activate_controllers} deactivate={request.deactivate_controllers}"
+        )
+
         future = self.switch_controller_client.call_async(request)
-        deadline = time.monotonic() + 3.0
-        while not future.done() and time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.05)
-        if not future.done():
+        response = self._wait_for_service_future(future, timeout_s=3.0)
+        if response is None:
             self.get_logger().error('[DragMode] Timed out switching controllers')
-            return False
-        try:
-            response = future.result()
-        except Exception as exc:
-            self.get_logger().error(f'[DragMode] Controller switch failed: {exc}')
             return False
         if not response.ok:
             self.get_logger().error('[DragMode] Controller manager rejected drag controller switch')
             return False
+        updated_states = self._get_controller_states()
+        if updated_states is not None:
+            self.get_logger().info(
+                f"[DragMode] Controller states after switch: {updated_states}"
+            )
         self.get_logger().info(
             f"[DragMode] Controller ownership set for {'drag' if drag_enabled else 'trajectory'} mode"
         )
         return True
+
+    def _get_controller_states(self) -> dict[str, str] | None:
+        if not self.list_controllers_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error('[DragMode] /controller_manager/list_controllers not available')
+            return None
+        future = self.list_controllers_client.call_async(ListControllers.Request())
+        response = self._wait_for_service_future(future, timeout_s=3.0)
+        if response is None:
+            self.get_logger().error('[DragMode] Timed out listing controllers')
+            return None
+        return {controller.name: controller.state for controller in response.controller}
+
+    def _wait_for_service_future(self, future, timeout_s: float):
+        event = threading.Event()
+        result = {"value": None, "error": None}
+
+        def _done_callback(done_future):
+            try:
+                result["value"] = done_future.result()
+            except Exception as exc:
+                result["error"] = exc
+            finally:
+                event.set()
+
+        future.add_done_callback(_done_callback)
+        if not event.wait(timeout_s):
+            return None
+        if result["error"] is not None:
+            self.get_logger().error(f'[DragMode] Service future failed: {result["error"]}')
+            return None
+        return result["value"]
 
     def is_hardware_ready_for_motion(self) -> bool:
         with self._ethercat_fault_lock:
@@ -743,10 +937,32 @@ class RobotController(Node):
             self._drag_friction_coulomb_nm = coulomb_np
             self._drag_friction_viscous_nm_per_rad_s = viscous_np
 
+    def _drag_drive_state_callback(self, msg: DynamicJointState):
+        joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
+        statusword = np.zeros(NUM_JOINTS, dtype=float)
+        error_code = np.zeros(NUM_JOINTS, dtype=float)
+        for joint_name, interface_value in zip(msg.joint_names, msg.interface_values):
+            index = joint_index.get(joint_name)
+            if index is None:
+                continue
+            for name, value in zip(interface_value.interface_names, interface_value.values):
+                if name == 'statusword' and np.isfinite(value):
+                    statusword[index] = float(value)
+                elif name == 'error_code' and np.isfinite(value):
+                    error_code[index] = float(value)
+        with self._drag_lock:
+            self._drag_statusword = statusword
+            self._drag_error_code = error_code
+
     def _drag_mode_step(self):
         with self._drag_lock:
             drag_enabled = self._drag_enabled
             target_mode = self._drag_mode_cst if drag_enabled else self._drag_mode_csp
+            mode_display = self._drag_mode_display.copy()
+            statusword = self._drag_statusword.copy()
+            error_code = self._drag_error_code.copy()
+            last_diag_log_ts = self._drag_last_diag_log_ts
+            transition_ts = self._drag_last_transition_ts
 
         if not self.is_hardware_ready_for_motion():
             return
@@ -788,11 +1004,56 @@ class RobotController(Node):
             torque_offset = np.zeros(NUM_JOINTS, dtype=float)
             effort_command = np.zeros(NUM_JOINTS, dtype=float)
 
+        enable_set_command = np.zeros(NUM_JOINTS, dtype=float)
+        disable_set_command = np.zeros(NUM_JOINTS, dtype=float)
+        elapsed = max(0.0, time.monotonic() - transition_ts)
+        if drag_enabled:
+            if elapsed < self._drag_disable_pulse_s:
+                disable_set_command.fill(1.0)
+                torque_offset = np.zeros(NUM_JOINTS, dtype=float)
+                effort_command = np.zeros(NUM_JOINTS, dtype=float)
+            elif elapsed < (self._drag_disable_pulse_s + self._drag_enable_pulse_s):
+                enable_set_command.fill(1.0)
+                torque_offset = np.zeros(NUM_JOINTS, dtype=float)
+                effort_command = np.zeros(NUM_JOINTS, dtype=float)
+
         self._publish_drag_commands(
             mode_command=np.full(NUM_JOINTS, target_mode, dtype=float),
             effort_command=effort_command,
             torque_offset_command=torque_offset,
+            enable_set_command=enable_set_command,
+            disable_set_command=disable_set_command,
         )
+        effort_command_raw = self._drag_nm_to_drive_units(effort_command)
+        torque_offset_command_raw = self._drag_nm_to_drive_units(torque_offset)
+
+        now = time.monotonic()
+        if now - last_diag_log_ts >= 1.0:
+            mode_match = bool(np.all(np.abs(mode_display - target_mode) < 0.5))
+            if drag_enabled and not mode_match:
+                self.get_logger().warning(
+                    '[DragMode] Mode mismatch while drag enabled | '
+                    f'requested={target_mode} mode_display={mode_display.tolist()} '
+                    f'statusword={statusword.tolist()} error_code={error_code.tolist()} '
+                    f'enable_set={enable_set_command.tolist()} disable_set={disable_set_command.tolist()} '
+                    f'effort_cmd={effort_command.tolist()} effort_raw={effort_command_raw.tolist()} '
+                    f'offset_cmd={torque_offset.tolist()} offset_raw={torque_offset_command_raw.tolist()}'
+                )
+            else:
+                self.get_logger().info(
+                    '[DragMode] Step diag | '
+                    f'enabled={drag_enabled} requested={target_mode} '
+                    f'mode_display={mode_display.tolist()} '
+                    f'statusword={statusword.tolist()} error_code={error_code.tolist()} '
+                    f'vel={velocities.tolist()} '
+                    f'expected_tau={expected_tau.tolist()} '
+                    f'friction_tau={friction_tau.tolist()} '
+                    f'enable_set={enable_set_command.tolist()} disable_set={disable_set_command.tolist()} '
+                    f'effort_cmd={effort_command.tolist()} effort_raw={effort_command_raw.tolist()} '
+                    f'offset_cmd={torque_offset.tolist()} offset_raw={torque_offset_command_raw.tolist()}'
+                )
+            with self._drag_lock:
+                self._drag_last_diag_log_ts = now
 
     def _compute_drag_friction_torque(self, velocities: np.ndarray) -> np.ndarray:
         coulomb = getattr(self, "_drag_friction_coulomb_nm", np.zeros(NUM_JOINTS, dtype=float))
@@ -804,22 +1065,54 @@ class RobotController(Node):
         mode_command: np.ndarray,
         effort_command: np.ndarray,
         torque_offset_command: np.ndarray,
+        enable_set_command: np.ndarray,
+        disable_set_command: np.ndarray,
     ) -> None:
         mode_msg = Float64MultiArray()
         mode_msg.data = mode_command.tolist()
+        effort_command_raw = self._drag_nm_to_drive_units(effort_command)
         effort_msg = Float64MultiArray()
-        effort_msg.data = effort_command.tolist()
+        effort_msg.data = effort_command_raw.tolist()
+        torque_offset_command_raw = self._drag_nm_to_drive_units(torque_offset_command)
         offset_msg = Float64MultiArray()
-        offset_msg.data = torque_offset_command.tolist()
+        offset_msg.data = torque_offset_command_raw.tolist()
+        enable_msg = Float64MultiArray()
+        enable_msg.data = enable_set_command.tolist()
+        disable_msg = Float64MultiArray()
+        disable_msg.data = disable_set_command.tolist()
 
         self._drag_mode_pub.publish(mode_msg)
         self._drag_effort_pub.publish(effort_msg)
         self._drag_torque_offset_pub.publish(offset_msg)
+        self._drag_enable_set_pub.publish(enable_msg)
+        self._drag_disable_set_pub.publish(disable_msg)
 
         with self._drag_lock:
             self._drag_last_mode_command = mode_command.copy()
             self._drag_last_effort_command = effort_command.copy()
             self._drag_last_torque_offset_command = torque_offset_command.copy()
+            self._drag_last_effort_command_raw = effort_command_raw.copy()
+            self._drag_last_torque_offset_command_raw = torque_offset_command_raw.copy()
+            self._drag_last_enable_set_command = enable_set_command.copy()
+            self._drag_last_disable_set_command = disable_set_command.copy()
+
+    def _drag_nm_to_drive_units(self, torque_nm: np.ndarray) -> np.ndarray:
+        raw = np.zeros(NUM_JOINTS, dtype=float)
+        for index in range(min(NUM_JOINTS, len(self._drag_joint_models))):
+            model = self._drag_joint_models[index]
+            rated_current_ma = self._drag_model_rated_current_ma.get(model)
+            output_torque_constant = self._drag_model_output_torque_constant.get(model)
+            if (
+                rated_current_ma is None
+                or output_torque_constant is None
+                or rated_current_ma <= 0.0
+                or output_torque_constant <= 0.0
+            ):
+                raw[index] = 0.0
+                continue
+            raw_per_nm = 1_000_000.0 / (rated_current_ma * output_torque_constant)
+            raw[index] = torque_nm[index] * raw_per_nm
+        return raw
 
     def _send_hold_position_trajectory(self) -> None:
         joint_state = self.current_joint_state
