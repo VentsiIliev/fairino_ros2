@@ -1,6 +1,10 @@
 /build/
 /install/
 /log/
+/eRob_moveit/build/
+/eRob_moveit/install/
+/eRob_moveit/log/
+/src/ethercat_driver_ros2/ethercat_driver_ros2/
 *.pyc
 .idea/
 __pycache__/
