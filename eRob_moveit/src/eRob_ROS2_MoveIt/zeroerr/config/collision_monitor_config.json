@@ -1,0 +1,66 @@
+{
+  "confirm_cycles": 1,
+  "dynamics_estimator_mode": "momentum_observer",
+  "effort_thresholds": [
+    20.0,
+    20.0,
+    15.0,
+    8.0,
+    6.0,
+    4.0
+  ],
+  "external_torque_thresholds": [
+    12.0,
+    12.0,
+    10.0,
+    8.0,
+    6.0,
+    5.0
+  ],
+  "following_error_thresholds": [
+    4000.0,
+    4000.0,
+    3500.0,
+    2000.0,
+    1500.0,
+    1200.0
+  ],
+  "friction_coulomb_nm": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "friction_velocity_deadband_rad_s": 0.01,
+  "friction_viscous_nm_per_rad_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "joint_models": [
+    "eRob80H100T",
+    "eRob80H100T",
+    "eRob80H100T",
+    "eRob70H100T",
+    "eRob70H100T",
+    "eRob70H100T"
+  ],
+  "measured_torque_source": "drive_torque",
+  "model_names": [
+    "eRob70H100T",
+    "eRob80H100T"
+  ],
+  "model_output_torque_constant_nm_per_a": [
+    4.76,
+    8.475
+  ],
+  "model_rated_current_ma": [
+    3500.0,
+    5500.0
+  ]
+}
