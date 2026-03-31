@@ -8,6 +8,7 @@ install(PROGRAMS
   scripts/zeroerr_error_monitor.py
   scripts/zeroerr_collision_monitor.py
   scripts/zeroerr_collision_monitor_gui.py
+  scripts/zeroerr_runtime.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

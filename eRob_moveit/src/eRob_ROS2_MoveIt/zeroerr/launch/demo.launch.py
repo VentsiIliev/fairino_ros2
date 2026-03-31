@@ -140,12 +140,12 @@ def generate_launch_description():
         "output": "screen",
         "parameters": [{
             "slave_count": 6,
-            "poll_period_sec": 0.1,
+            "poll_period_sec": 0.005,
             "confirm_cycles": 3,
             "print_table": False,
             "use_inverse_dynamics": True,
             "dynamics_estimator_mode": "momentum_observer",
-            "measured_torque_source": "current_based_torque",
+            "measured_torque_source": "drive_torque",
             "joint_models": [
                 "eRob80H100T",
                 "eRob80H100T",
@@ -159,7 +159,7 @@ def generate_launch_description():
             "model_output_torque_constant_nm_per_a": [4.76, 8.475],
             "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "urdf_path": os.path.join(package_path, "config", "erob_arm.urdf"),
+            "urdf_path": os.path.join(package_path, "config", "erob_arm_backup_corrected_mass.urdf"),
             "base_link": "base_link",
             "tip_link": "tool0",
             "num_joints": 6,
@@ -199,9 +199,8 @@ def generate_launch_description():
         )
 
     velocity_monitor_gui = Node(
-        package="erob_moveit_runtime",
-        executable="main.py",
-        additional_env={"EROB_CONFIG_PACKAGE": "zeroerr"},
+        package="zeroerr",
+        executable="zeroerr_runtime.py",
         name="velocity_monitor",
         output="screen",
         emulate_tty=True,

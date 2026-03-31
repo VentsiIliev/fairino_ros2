@@ -86,7 +86,7 @@ class CollisionMonitorGuiNode(Node):
             "following_error_thresholds": [float("nan")] * 6,
             "external_torque_thresholds": [float("nan")] * 6,
             "dynamics_estimator_mode": "momentum_observer",
-            "measured_torque_source": "current_based_torque",
+            "measured_torque_source": "drive_torque",
             "joint_models": ["eRob80H100T"] * 3 + ["eRob70H100T"] * 3,
             "friction_coulomb_nm": [0.0] * 6,
             "friction_viscous_nm_per_rad_s": [0.0] * 6,
@@ -278,15 +278,16 @@ class CollisionMonitorWindow(QMainWindow):
         drag_config_group = QGroupBox("Drag Runtime Config")
         drag_config_layout = QGridLayout(drag_config_group)
         drag_config_layout.addWidget(QLabel("Joint"), 0, 0)
-        drag_config_layout.addWidget(QLabel("Damping"), 0, 1)
-        drag_config_layout.addWidget(QLabel("MaxEffort"), 0, 2)
-        drag_config_layout.addWidget(QLabel("MaxOffset"), 0, 3)
+        drag_config_layout.addWidget(QLabel("JointScale"), 0, 1)
+        drag_config_layout.addWidget(QLabel("Damping"), 0, 2)
+        drag_config_layout.addWidget(QLabel("MaxEffort"), 0, 3)
+        drag_config_layout.addWidget(QLabel("MaxOffset"), 0, 4)
         self.drag_inputs: Dict[str, Dict[str, QLineEdit]] = {}
         for row in range(6):
             joint_name = f"Joint_{row + 1}"
             drag_config_layout.addWidget(QLabel(joint_name), row + 1, 0)
             self.drag_inputs[joint_name] = {}
-            for column, key in enumerate(["damping", "max_effort", "max_offset"], start=1):
+            for column, key in enumerate(["joint_scale", "damping", "max_effort", "max_offset"], start=1):
                 edit = QLineEdit()
                 edit.setMaximumWidth(90)
                 drag_config_layout.addWidget(edit, row + 1, column)
@@ -297,24 +298,24 @@ class CollisionMonitorWindow(QMainWindow):
         self.drag_compensation_scale_input.setMaximumWidth(90)
         drag_config_layout.addWidget(self.drag_compensation_scale_input, 7, 1)
 
-        drag_config_layout.addWidget(QLabel("Settle s"), 7, 2)
+        drag_config_layout.addWidget(QLabel("Settle s"), 7, 3)
         self.drag_settle_timeout_input = QLineEdit()
         self.drag_settle_timeout_input.setMaximumWidth(90)
-        drag_config_layout.addWidget(self.drag_settle_timeout_input, 7, 3)
+        drag_config_layout.addWidget(self.drag_settle_timeout_input, 7, 4)
 
         drag_config_layout.addWidget(QLabel("DisablePulse s"), 8, 0)
         self.drag_disable_pulse_input = QLineEdit()
         self.drag_disable_pulse_input.setMaximumWidth(90)
         drag_config_layout.addWidget(self.drag_disable_pulse_input, 8, 1)
 
-        drag_config_layout.addWidget(QLabel("EnablePulse s"), 8, 2)
+        drag_config_layout.addWidget(QLabel("EnablePulse s"), 8, 3)
         self.drag_enable_pulse_input = QLineEdit()
         self.drag_enable_pulse_input.setMaximumWidth(90)
-        drag_config_layout.addWidget(self.drag_enable_pulse_input, 8, 3)
+        drag_config_layout.addWidget(self.drag_enable_pulse_input, 8, 4)
 
         self.apply_drag_button = QPushButton("Apply Drag Config")
         self.apply_drag_button.clicked.connect(self._apply_drag_config)
-        drag_config_layout.addWidget(self.apply_drag_button, 9, 2, 1, 2)
+        drag_config_layout.addWidget(self.apply_drag_button, 9, 3, 1, 2)
         drag_layout_root.addWidget(drag_config_group)
 
         drag_help = QLabel(
@@ -532,10 +533,13 @@ class CollisionMonitorWindow(QMainWindow):
     def _load_drag_config_inputs(self, payload: dict) -> None:
         if self._drag_config_loaded:
             return
+        joint_scale = payload.get("joint_compensation_scale", [])
         damping = payload.get("damping_nm_per_rad_s", [])
         max_effort = payload.get("max_effort_nm", [])
         max_offset = payload.get("max_torque_offset_nm", [])
         for row, joint_name in enumerate([f"Joint_{index}" for index in range(1, 7)]):
+            if row < len(joint_scale):
+                self.drag_inputs[joint_name]["joint_scale"].setText(str(joint_scale[row]))
             if row < len(damping):
                 self.drag_inputs[joint_name]["damping"].setText(str(damping[row]))
             if row < len(max_effort):
@@ -559,11 +563,13 @@ class CollisionMonitorWindow(QMainWindow):
                 "settle_timeout_s": float(self.drag_settle_timeout_input.text()),
                 "disable_pulse_s": float(self.drag_disable_pulse_input.text()),
                 "enable_pulse_s": float(self.drag_enable_pulse_input.text()),
+                "joint_compensation_scale": [],
                 "damping_nm_per_rad_s": [],
                 "max_effort_nm": [],
                 "max_torque_offset_nm": [],
             }
             for joint_name in [f"Joint_{index}" for index in range(1, 7)]:
+                payload["joint_compensation_scale"].append(float(self.drag_inputs[joint_name]["joint_scale"].text()))
                 payload["damping_nm_per_rad_s"].append(float(self.drag_inputs[joint_name]["damping"].text()))
                 payload["max_effort_nm"].append(float(self.drag_inputs[joint_name]["max_effort"].text()))
                 payload["max_torque_offset_nm"].append(float(self.drag_inputs[joint_name]["max_offset"].text()))
@@ -662,7 +668,7 @@ class CollisionMonitorWindow(QMainWindow):
 
         self.confirm_cycles_input.setText(str(config.get("confirm_cycles", 1)))
         self.dynamics_estimator_mode_input.setText(str(config.get("dynamics_estimator_mode", "momentum_observer")))
-        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "current_based_torque")))
+        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "drive_torque")))
         self.friction_deadband_input.setText(str(config.get("friction_velocity_deadband_rad_s", 0.01)))
         model_names = config.get("model_names", [])
         rated_currents = config.get("model_rated_current_ma", [])
@@ -707,7 +713,7 @@ class CollisionMonitorWindow(QMainWindow):
 
         self.confirm_cycles_input.setText(str(config.get("confirm_cycles", 1)))
         self.dynamics_estimator_mode_input.setText(str(config.get("dynamics_estimator_mode", "momentum_observer")))
-        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "current_based_torque")))
+        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "drive_torque")))
         self.friction_deadband_input.setText(str(config.get("friction_velocity_deadband_rad_s", 0.01)))
         model_names = config.get("model_names", [])
         rated_currents = config.get("model_rated_current_ma", [])
@@ -833,7 +839,7 @@ class CollisionMonitorWindow(QMainWindow):
         joint_models = self.ros_node.config.get("joint_models", [])
         external_threshold = external_thresholds[joint_index] if joint_index < len(external_thresholds) else float("nan")
         effort_threshold = effort_thresholds[joint_index] if joint_index < len(effort_thresholds) else float("nan")
-        source = str(self.ros_node.config.get("measured_torque_source", "current_based_torque"))
+        source = str(self.ros_node.config.get("measured_torque_source", "drive_torque"))
         model = str(joint_models[joint_index]) if joint_index < len(joint_models) else "?"
         return (
             f"meas={self._fmt(joint.get('measured_torque'), 2)}Nm "

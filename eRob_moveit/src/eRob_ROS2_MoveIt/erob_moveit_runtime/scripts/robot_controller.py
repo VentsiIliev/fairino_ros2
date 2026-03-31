@@ -24,6 +24,8 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from action_msgs.msg import GoalStatusArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import config
+from backend.runtime_adapter import create_runtime_adapter
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
@@ -133,6 +135,7 @@ class RobotController(Node):
         self.tcp_loaded = False
         self.T_ee_link = None
         self.T_tool = np.eye(4)
+        self.runtime_adapter = create_runtime_adapter()
         # Reduced frequency - TCP transform typically available quickly
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
@@ -255,6 +258,17 @@ class RobotController(Node):
         self._drag_mode_csp = float(DRAG_MODE_CSP_VALUE)
         self._drag_mode_cst = float(DRAG_MODE_CST_VALUE)
         self._drag_compensation_scale = float(DRAG_MODE_COMPENSATION_SCALE)
+        joint_comp_scale_cfg = globals().get(
+            "DRAG_MODE_JOINT_COMPENSATION_SCALE",
+            [1.0] * NUM_JOINTS,
+        )
+        self._drag_joint_compensation_scale = np.array(joint_comp_scale_cfg, dtype=float)
+        if self._drag_joint_compensation_scale.size != NUM_JOINTS:
+            self.get_logger().warning(
+                f"[DragMode] Invalid DRAG_MODE_JOINT_COMPENSATION_SCALE size="
+                f"{self._drag_joint_compensation_scale.size}, expected {NUM_JOINTS}; using ones"
+            )
+            self._drag_joint_compensation_scale = np.ones(NUM_JOINTS, dtype=float)
         self._drag_mode_settle_timeout_s = float(DRAG_MODE_MODE_SETTLE_TIMEOUT_S)
         self._drag_disable_pulse_s = float(DRAG_MODE_DISABLE_PULSE_S)
         self._drag_enable_pulse_s = float(DRAG_MODE_ENABLE_PULSE_S)
@@ -263,6 +277,8 @@ class RobotController(Node):
         self._drag_max_torque_offset_nm = np.array(DRAG_MODE_MAX_TORQUE_OFFSET_NM, dtype=float)
         self._drag_external_tau = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_expected_tau = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_gravity_tau = np.zeros(NUM_JOINTS, dtype=float)
+        self._drag_non_gravity_tau = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_friction_tau = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_friction_coulomb_nm = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_friction_viscous_nm_per_rad_s = np.zeros(NUM_JOINTS, dtype=float)
@@ -298,54 +314,71 @@ class RobotController(Node):
             logger=self.get_logger(),
             include_gravity=True,
         )
-        self._drag_mode_pub = self.create_publisher(
-            Float64MultiArray,
-            DRAG_MODE_MODE_COMMAND_TOPIC,
-            10,
+        self._drag_nograv_model = KDLInverseDynamicsModel(
+            urdf_path=self.urdf_path,
+            base_link=BASE_LINK,
+            tip_link=COLLISION_TIP_LINK,
+            num_joints=NUM_JOINTS,
+            logger=self.get_logger(),
+            include_gravity=False,
         )
-        self._drag_effort_pub = self.create_publisher(
-            Float64MultiArray,
-            DRAG_MODE_EFFORT_COMMAND_TOPIC,
-            10,
-        )
-        self._drag_torque_offset_pub = self.create_publisher(
-            Float64MultiArray,
-            DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC,
-            10,
-        )
-        self._drag_enable_set_pub = self.create_publisher(
-            Float64MultiArray,
-            DRAG_MODE_ENABLE_SET_COMMAND_TOPIC,
-            10,
-        )
-        self._drag_disable_set_pub = self.create_publisher(
-            Float64MultiArray,
-            DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
-            10,
-        )
-        self.create_subscription(
-            DynamicJointState,
-            '/zeroerr/collision_monitor/state',
-            self._drag_monitor_callback,
-            10,
-        )
-        self.create_subscription(
-            DynamicJointState,
-            '/dynamic_joint_states',
-            self._drag_drive_state_callback,
-            10,
-        )
-        self.create_subscription(
-            String,
-            '/zeroerr/collision_monitor/config_state',
-            self._drag_config_callback,
-            10,
-        )
-        self._drag_timer = self.create_timer(self._drag_update_dt, self._drag_mode_step)
-        self._load_persisted_drag_config()
-        self.get_logger().info(
-            f"[DragMode] Initialized real CST path (enabled={self._drag_enabled}, dt={self._drag_update_dt:.3f}s)"
-        )
+        self._drag_mode_pub = None
+        self._drag_effort_pub = None
+        self._drag_torque_offset_pub = None
+        self._drag_enable_set_pub = None
+        self._drag_disable_set_pub = None
+        self._drag_timer = None
+        if self.runtime_adapter.supports_drag_mode:
+            self._drag_mode_pub = self.create_publisher(
+                Float64MultiArray,
+                DRAG_MODE_MODE_COMMAND_TOPIC,
+                10,
+            )
+            self._drag_effort_pub = self.create_publisher(
+                Float64MultiArray,
+                DRAG_MODE_EFFORT_COMMAND_TOPIC,
+                10,
+            )
+            self._drag_torque_offset_pub = self.create_publisher(
+                Float64MultiArray,
+                DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC,
+                10,
+            )
+            self._drag_enable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRAG_MODE_ENABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self._drag_disable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self.create_subscription(
+                DynamicJointState,
+                '/zeroerr/collision_monitor/state',
+                self._drag_monitor_callback,
+                10,
+            )
+            self.create_subscription(
+                DynamicJointState,
+                '/dynamic_joint_states',
+                self._drag_drive_state_callback,
+                10,
+            )
+            self.create_subscription(
+                String,
+                '/zeroerr/collision_monitor/config_state',
+                self._drag_config_callback,
+                10,
+            )
+            self._drag_timer = self.create_timer(self._drag_update_dt, self._drag_mode_step)
+            self._load_persisted_drag_config()
+            self.get_logger().info(
+                f"[DragMode] Initialized real CST path (enabled={self._drag_enabled}, dt={self._drag_update_dt:.3f}s)"
+            )
+        else:
+            self.get_logger().info("[DragMode] Disabled for this robot backend")
 
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
         self.create_subscription(GoalStatusArray, ACTION_FOLLOW_TRAJECTORY + '/_action/status',
@@ -387,6 +420,10 @@ class RobotController(Node):
                 return False
             time.sleep(0.1)
         return True
+
+    def _get_monitor_tcp_transform(self):
+        """Return the transform RobotMonitor should apply on /cartesian_position."""
+        return self.runtime_adapter.get_monitor_tcp_transform(self)
 
     def get_tool_transform(self, tool_id):
         """
@@ -433,9 +470,9 @@ class RobotController(Node):
         self.T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
         self.planner_context.T_tool = self.T_tool
 
-        # Topic publishes EE_LINK already; only apply tool offset
+        # Monitor transform depends on the backend's /cartesian_position source frame.
         if self.monitor is not None:
-            self.monitor.T_tcp = self.T_tool
+            self.monitor.T_tcp = self._get_monitor_tcp_transform()
             self.get_logger().info(f"Switched active tool to {tool_name}")
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")
@@ -446,14 +483,19 @@ class RobotController(Node):
 
         if self.tf_buffer.can_transform(WRIST_LINK, EE_LINK, rclpy.time.Time()):
             try:
-                # Load ee_link offset from URDF/TF (wrist3 → ee_link) — kept for reference/logging only.
-                # The /cartesian_position topic already publishes the EE_LINK (tcp) frame, so the
-                # monitor must only apply the user tool offset (T_tool), not T_ee_link again.
+                # Load the wrist3 -> ee_link fixed transform from TF/URDF.
                 self.T_ee_link = self.get_tcp_transform(WRIST_LINK, EE_LINK)
                 print(f"[RobotController] Loaded ee_link transform:\n{self.T_ee_link}")
 
-                # Monitor receives EE_LINK pose from topic → only apply tool offset on top
-                self.monitor = RobotMonitor(ros_node=self, tcp_transform=self.T_tool, stable_update_rate_hz=50.0)
+                # Monitor receives backend-specific Cartesian source frames:
+                # - ZeroErr/generic: ee_link pose
+                # - Fairino: flange pose from native controller state
+                self.monitor = RobotMonitor(
+                    ros_node=self,
+                    tcp_transform=self._get_monitor_tcp_transform(),
+                    stable_update_rate_hz=50.0,
+                )
+                self.monitor.set_stable_update_callback(self._handle_monitor_update)
                 self.tcp_loaded = True
 
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")
@@ -492,6 +534,11 @@ class RobotController(Node):
         if not self.is_hardware_ready_for_motion():
             self.get_logger().error(
                 f'[EtherCAT] Rejecting motion: {self.get_hardware_fault_reason()}'
+            )
+            return MOTION_ERROR_HARDWARE_NOT_READY
+        if not self.is_motion_stack_ready():
+            self.get_logger().error(
+                f'[Motion] Rejecting motion: {self.get_motion_stack_fault_reason()}'
             )
             return MOTION_ERROR_HARDWARE_NOT_READY
         return self._motion.execute(strategy, queue_if_busy=queue_if_busy)
@@ -575,13 +622,28 @@ class RobotController(Node):
                 # Also store efforts in monitor data
                 if len(msg.effort) >= 6:
                     data['efforts'] = np.array(msg.effort[:6])
+                    self.latest_data = data
 
             # Send data to UI
             # self.ui_callback(data)
 
     def get_latest_data(self):
         """Return a copy of the latest joint/cartesian data."""
-        return self.state_store.get_latest_data()
+        data = self.state_store.get_latest_data()
+        if data is not None:
+            return data
+        if self.monitor is not None:
+            return self.monitor.get_latest_data()
+        return None
+
+    def _handle_monitor_update(self, data):
+        """Persist RobotMonitor stable snapshots into the shared planner/status store."""
+        if data is None:
+            return
+        self.latest_data = data
+        cartesian = data.get('cartesian')
+        if cartesian is not None:
+            self.prev_cartesian = cartesian
 
     def request_cartesian_path(self, request):
         return self.planner_context.request_cartesian_path(request)
@@ -638,6 +700,14 @@ class RobotController(Node):
         return self._motion.stop_motion()
 
     def enable_drag_mode(self) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            return {
+                "enabled": False,
+                "stopped": False,
+                "mode": "unsupported",
+                "state": "UNSUPPORTED",
+                "controller_switch_ok": False,
+            }
         stop_result = self.stop_motion()
         self.get_logger().info(f'[DragMode] Enable requested | stop_result={stop_result}')
         switch_ok = self._set_drag_controller_ownership(True)
@@ -657,6 +727,14 @@ class RobotController(Node):
         }
 
     def disable_drag_mode(self) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            return {
+                "enabled": False,
+                "stopped": False,
+                "mode": "unsupported",
+                "state": "UNSUPPORTED",
+                "controller_switch_ok": False,
+            }
         with self._drag_lock:
             self._drag_enabled = False
             self._drag_last_transition_ts = time.monotonic()
@@ -684,6 +762,12 @@ class RobotController(Node):
         }
 
     def get_drag_mode_status(self) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            return {
+                "enabled": False,
+                "active_mode": "unsupported",
+                "state": "UNSUPPORTED",
+            }
         with self._drag_lock:
             enabled = self._drag_enabled
             mode_display = self._drag_mode_display.tolist()
@@ -705,11 +789,19 @@ class RobotController(Node):
                 "settle_timeout_s": self._drag_mode_settle_timeout_s,
                 "manipulator_controller_expected_active": not enabled,
                 "compensation_scale": self._drag_compensation_scale,
+                "joint_compensation_scale": self._drag_joint_compensation_scale.tolist(),
                 "damping_nm_per_rad_s": self._drag_damping_nm_per_rad_s.tolist(),
                 "max_effort_nm": self._drag_max_effort_nm.tolist(),
                 "max_torque_offset_nm": self._drag_max_torque_offset_nm.tolist(),
+                "drive_command_unit": "per_thousand_of_rated_current",
+                "drive_command_objects": {
+                    "target_torque": "0x6071",
+                    "torque_offset": "0x60B2",
+                },
                 "external_tau_nm": self._drag_external_tau.tolist(),
                 "expected_tau_nm": self._drag_expected_tau.tolist(),
+                "gravity_tau_nm": self._drag_gravity_tau.tolist(),
+                "non_gravity_tau_nm": self._drag_non_gravity_tau.tolist(),
                 "friction_tau_nm": self._drag_friction_tau.tolist(),
                 "last_mode_command": last_mode,
                 "last_effort_command_nm": last_effort,
@@ -721,24 +813,39 @@ class RobotController(Node):
             }
 
     def get_drag_mode_config(self) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            return {"supported": False}
         with self._drag_lock:
             return {
                 "compensation_scale": float(self._drag_compensation_scale),
+                "joint_compensation_scale": self._drag_joint_compensation_scale.tolist(),
                 "damping_nm_per_rad_s": self._drag_damping_nm_per_rad_s.tolist(),
                 "max_effort_nm": self._drag_max_effort_nm.tolist(),
                 "max_torque_offset_nm": self._drag_max_torque_offset_nm.tolist(),
                 "settle_timeout_s": float(self._drag_mode_settle_timeout_s),
                 "disable_pulse_s": float(self._drag_disable_pulse_s),
                 "enable_pulse_s": float(self._drag_enable_pulse_s),
+                "drive_command_unit": "per_thousand_of_rated_current",
+                "drive_command_objects": {
+                    "target_torque": "0x6071",
+                    "torque_offset": "0x60B2",
+                },
             }
 
     def update_drag_mode_config(self, payload: dict) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            raise ValueError("Drag mode is not supported for this robot backend")
         if not isinstance(payload, dict):
             raise ValueError("Drag config payload must be an object")
 
         with self._drag_lock:
             if "compensation_scale" in payload:
                 self._drag_compensation_scale = float(payload["compensation_scale"])
+            if "joint_compensation_scale" in payload:
+                joint_scale = np.array(payload["joint_compensation_scale"], dtype=float)
+                if joint_scale.size != NUM_JOINTS:
+                    raise ValueError(f"joint_compensation_scale must contain {NUM_JOINTS} values")
+                self._drag_joint_compensation_scale = joint_scale
             if "settle_timeout_s" in payload:
                 self._drag_mode_settle_timeout_s = float(payload["settle_timeout_s"])
             if "disable_pulse_s" in payload:
@@ -884,6 +991,46 @@ class RobotController(Node):
         with self._ethercat_fault_lock:
             return self._ethercat_fault_reason or 'EtherCAT hardware fault'
 
+    def is_motion_stack_ready(self) -> bool:
+        if self.current_joint_state is None:
+            return False
+        if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
+            return False
+        if not self.wait_for_cartesian_path_service(timeout_sec=0.05):
+            return False
+        ik_client = self.get_ik_client()
+        if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.05):
+            return False
+        fk_client = self.get_fk_client()
+        if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
+            return False
+        state_validity_client = self.get_state_validity_client()
+        if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=0.05):
+            return False
+        if not self.controller_client.wait_for_server(timeout_sec=0.05):
+            return False
+        return True
+
+    def get_motion_stack_fault_reason(self) -> str:
+        if self.current_joint_state is None:
+            return 'joint_states not available yet'
+        if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
+            return 'current Cartesian pose not available yet'
+        if not self.wait_for_cartesian_path_service(timeout_sec=0.05):
+            return 'MoveIt compute_cartesian_path service not available'
+        ik_client = self.get_ik_client()
+        if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.05):
+            return 'MoveIt IK service not available'
+        fk_client = self.get_fk_client()
+        if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
+            return 'MoveIt FK service not available'
+        state_validity_client = self.get_state_validity_client()
+        if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=0.05):
+            return 'MoveIt state validity service not available'
+        if not self.controller_client.wait_for_server(timeout_sec=0.05):
+            return 'FollowJointTrajectory action server not available'
+        return 'motion stack not ready'
+
     def is_motion_active(self):
         """Return True if any motion goal is active."""
         return self._motion.is_motion_active()
@@ -979,13 +1126,21 @@ class RobotController(Node):
         )
         friction_tau = self._compute_drag_friction_torque(velocities)
         expected_tau = self._drag_bias_model.compute_bias_torque(positions, velocities)
+        non_gravity_tau = self._drag_nograv_model.compute_bias_torque(positions, velocities)
+        gravity_tau = expected_tau - non_gravity_tau
 
         with self._drag_lock:
             self._drag_velocity = velocities
             self._drag_expected_tau = expected_tau
+            self._drag_gravity_tau = gravity_tau
+            self._drag_non_gravity_tau = non_gravity_tau
             self._drag_friction_tau = friction_tau
 
-        torque_offset = self._drag_compensation_scale * (expected_tau + friction_tau)
+        torque_offset = (
+            self._drag_compensation_scale
+            * self._drag_joint_compensation_scale
+            * (expected_tau + friction_tau)
+        )
         torque_offset = np.clip(
             torque_offset,
             -self._drag_max_torque_offset_nm,
@@ -1036,22 +1191,14 @@ class RobotController(Node):
                     f'requested={target_mode} mode_display={mode_display.tolist()} '
                     f'statusword={statusword.tolist()} error_code={error_code.tolist()} '
                     f'enable_set={enable_set_command.tolist()} disable_set={disable_set_command.tolist()} '
+                    f'gravity_tau={gravity_tau.tolist()} non_gravity_tau={non_gravity_tau.tolist()} '
                     f'effort_cmd={effort_command.tolist()} effort_raw={effort_command_raw.tolist()} '
                     f'offset_cmd={torque_offset.tolist()} offset_raw={torque_offset_command_raw.tolist()}'
                 )
             else:
-                self.get_logger().info(
-                    '[DragMode] Step diag | '
-                    f'enabled={drag_enabled} requested={target_mode} '
-                    f'mode_display={mode_display.tolist()} '
-                    f'statusword={statusword.tolist()} error_code={error_code.tolist()} '
-                    f'vel={velocities.tolist()} '
-                    f'expected_tau={expected_tau.tolist()} '
-                    f'friction_tau={friction_tau.tolist()} '
-                    f'enable_set={enable_set_command.tolist()} disable_set={disable_set_command.tolist()} '
-                    f'effort_cmd={effort_command.tolist()} effort_raw={effort_command_raw.tolist()} '
-                    f'offset_cmd={torque_offset.tolist()} offset_raw={torque_offset_command_raw.tolist()}'
-                )
+                # Keep drag diagnostics quiet during normal operation; mismatch/fault cases above
+                # still log as warnings with full context.
+                pass
             with self._drag_lock:
                 self._drag_last_diag_log_ts = now
 

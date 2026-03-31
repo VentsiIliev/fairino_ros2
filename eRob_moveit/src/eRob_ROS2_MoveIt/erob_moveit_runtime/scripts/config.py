@@ -15,14 +15,6 @@ from typing import Any
 import yaml
 
 DEFAULTS = {
-    'NUM_JOINTS': 6,
-    'JOINT_NAMES': ['j1', 'j2', 'j3', 'j4', 'j5', 'j6'],
-    'PLANNING_GROUP': 'fairino5_v6_group',
-    'BASE_LINK': 'base_link',
-    'EE_LINK': 'ee_link',
-    'WRIST_LINK': 'wrist3_link',
-    'COLLISION_TIP_LINK': 'wrist3_link',
-    'URDF_PATH': '/home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf',
     'TOPIC_ROBOT_STATUS': '/robot_status',
     'TOPIC_CARTESIAN_POSITION': '/cartesian_position',
     'TOPIC_CARTESIAN_VELOCITY': '/cartesian_velocity',
@@ -36,15 +28,14 @@ DEFAULTS = {
     'SERVICE_FK': '/compute_fk',
     'SERVICE_APPLY_IPP': '/apply_ipp',
     'SERVICE_STATE_VALIDITY': '/check_state_validity',
-    'ACTION_FOLLOW_TRAJECTORY': '/fairino5_controller/follow_joint_trajectory',
     'SAFETY_WALLS_ENABLED': True,
     'SAFETY_MARGIN_M': 0.01,
     'WALL_XY_OFFSET_M': 0.13,
     'WALL_THICKNESS_M': 0.01,
     'WALL_BYPASS_LINKS': [],
     'SAFETY_WALL_NAMES': ['wall_x_min', 'wall_x_max', 'wall_y_min', 'wall_y_max', 'wall_z_min', 'wall_z_max'],
-    'TOOL_REGISTRY': {'TOOL_0': [0, 0, 0, 0, 0, 0], 'TOOL_1': [0.081, -7.250, 0, 0, 0, 0]},
-    'TOOL_ID_MAP': {0: 'TOOL_0', 1: 'TOOL_1'},
+    'TOOL_REGISTRY': {'TOOL_0': [0, 0, 0, 0, 0, 0]},
+    'TOOL_ID_MAP': {0: 'TOOL_0'},
     'DEFAULT_VEL_PERCENT': 30,
     'DEFAULT_ACC_PERCENT': 30,
     'DEFAULT_VEL_SCALING': 0.6,
@@ -58,6 +49,7 @@ DEFAULTS = {
     'SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM': 2.0,
     'JACOBIAN_MAX_JOINT_STEP': 0.05,
     'JACOBIAN_MIN_DURATION_S': 0.05,
+    'JACOBIAN_SHORT_MOVE_MIN_DURATION_S': 0.20,
     'JACOBIAN_DAMPING': 1e-5,
     'JACOBIAN_NUM_DIFF_EPS': 1e-7,
     'MOTION_QUEUE_MAX_SIZE': 10,
@@ -97,6 +89,7 @@ DEFAULTS = {
     'DRAG_MODE_CSP_VALUE': 8.0,
     'DRAG_MODE_CST_VALUE': 10.0,
     'DRAG_MODE_COMPENSATION_SCALE': 1.0,
+    'DRAG_MODE_JOINT_COMPENSATION_SCALE': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
     'DRAG_MODE_DAMPING_NM_PER_RAD_S': [1.5, 1.5, 1.2, 0.8, 0.5, 0.3],
     'DRAG_MODE_MAX_EFFORT_NM': [10.0, 10.0, 8.0, 5.0, 3.0, 2.0],
     'DRAG_MODE_MAX_TORQUE_OFFSET_NM': [60.0, 60.0, 45.0, 25.0, 12.0, 8.0],
@@ -108,23 +101,38 @@ DEFAULTS = {
     'DRAG_MODE_MODEL_NAMES': ['eRob70H100T', 'eRob80H100T'],
     'DRAG_MODE_MODEL_RATED_CURRENT_MA': [3500.0, 5500.0],
     'DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A': [4.76, 8.475],
-    'DH_D1': 0.152,
-    'DH_A2': -0.425,
-    'DH_A3': -0.39501,
-    'DH_D4': 0.1021,
-    'DH_D5': 0.102,
     'DEFAULT_WORKOBJECT': [0, 0, 0, 0, 0, 0],
     'REST_HOST': '0.0.0.0',
     'REST_PORT': 5000,
-    'REST_LOG': '/tmp/fairino_rest_server.log',
     'WS_EXTRACT_MAX_RETRIES': 60,
     'WS_EXTRACT_RETRY_DELAY': 2.0,
     'MONITOR_WAIT_TIMEOUT_S': 10.0,
 }
 
+REQUIRED_KEYS = frozenset({
+    'ROBOT_BACKEND',
+    'NUM_JOINTS',
+    'JOINT_NAMES',
+    'PLANNING_GROUP',
+    'BASE_LINK',
+    'EE_LINK',
+    'WRIST_LINK',
+    'COLLISION_TIP_LINK',
+    'URDF_PATH',
+    'ACTION_FOLLOW_TRAJECTORY',
+    'REST_LOG',
+})
+
 
 def _config_package() -> str:
-    return os.environ.get('EROB_CONFIG_PACKAGE', 'fairino5_v6_moveit2_config')
+    package_name = os.environ.get('EROB_CONFIG_PACKAGE', '').strip()
+    if not package_name:
+        raise RuntimeError(
+            'EROB_CONFIG_PACKAGE is not set. '
+            'Launch the runtime through a robot-specific launch file or set '
+            'EROB_CONFIG_PACKAGE explicitly.'
+        )
+    return package_name
 
 
 def _runtime_yaml_path() -> Path | None:
@@ -158,6 +166,11 @@ def _load_runtime_config() -> dict[str, Any]:
     with path.open('r', encoding='utf-8') as handle:
         loaded = yaml.safe_load(handle) or {}
     config = _merge(DEFAULTS, loaded)
+    missing = sorted(key for key in REQUIRED_KEYS if key not in config or config[key] in (None, ''))
+    if missing:
+        raise RuntimeError(
+            f"Runtime config {path} is missing required keys: {', '.join(missing)}"
+        )
     config['WALL_BYPASS_LINKS'] = frozenset(config.get('WALL_BYPASS_LINKS', []))
     config['SAFETY_WALL_NAMES'] = frozenset(config.get('SAFETY_WALL_NAMES', []))
     config['TOOL_ID_MAP'] = {int(k): v for k, v in dict(config.get('TOOL_ID_MAP', {})).items()}

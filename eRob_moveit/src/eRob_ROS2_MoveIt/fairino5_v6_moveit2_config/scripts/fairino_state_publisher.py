@@ -91,6 +91,8 @@ class FairinoStatePublisher(CartesianPublisherBase):
 
         self._native_pose: Optional[PoseStamped] = None
         self._native_last_recv: float = 0.0
+        self._last_tool_num: Optional[int] = None
+        self._last_work_num: Optional[int] = None
 
         self.create_subscription(
             RobotNonrtState,
@@ -105,19 +107,21 @@ class FairinoStatePublisher(CartesianPublisherBase):
     def _nonrt_callback(self, msg: RobotNonrtState) -> None:
         stamp = self.get_clock().now().to_msg()
 
-        # Robot sends position in mm → convert to metres
-        rx_rad = msg.cart_a_cur_pos * np.pi / 180.0
-        ry_rad = msg.cart_b_cur_pos * np.pi / 180.0
-        rz_rad = msg.cart_c_cur_pos * np.pi / 180.0
+        # Publish flange pose, not the controller's already-tool-shifted TCP pose.
+        # The runtime then reconstructs ee_link/TCP from the URDF and runtime tool
+        # registry, keeping reported position consistent with planning.
+        rx_rad = msg.flange_a_cur_pos * np.pi / 180.0
+        ry_rad = msg.flange_b_cur_pos * np.pi / 180.0
+        rz_rad = msg.flange_c_cur_pos * np.pi / 180.0
         quat = (Rotation.from_euler('xyz', [rx_rad, ry_rad, rz_rad])
                 .as_quat())
 
         pose = PoseStamped()
         pose.header.stamp = stamp
         pose.header.frame_id = 'base_link'
-        pose.pose.position.x = msg.cart_x_cur_pos / 1000.0
-        pose.pose.position.y = msg.cart_y_cur_pos / 1000.0
-        pose.pose.position.z = msg.cart_z_cur_pos / 1000.0
+        pose.pose.position.x = msg.flange_x_cur_pos / 1000.0
+        pose.pose.position.y = msg.flange_y_cur_pos / 1000.0
+        pose.pose.position.z = msg.flange_z_cur_pos / 1000.0
         pose.pose.orientation.x = float(quat[0])
         pose.pose.orientation.y = float(quat[1])
         pose.pose.orientation.z = float(quat[2])
@@ -125,6 +129,17 @@ class FairinoStatePublisher(CartesianPublisherBase):
 
         self._native_pose = pose
         self._native_last_recv = time.monotonic()
+
+        tool_num = int(getattr(msg, 'tool_num', -1))
+        work_num = int(getattr(msg, 'work_num', -1))
+        if tool_num != self._last_tool_num or work_num != self._last_work_num:
+            self.get_logger().info(
+                '[FairinoStatePublisher] Active controller frames: tool=%d workobject=%d',
+                tool_num,
+                work_num,
+            )
+            self._last_tool_num = tool_num
+            self._last_work_num = work_num
 
     def _get_cartesian_pose(self) -> Optional[PoseStamped]:
         elapsed = time.monotonic() - self._native_last_recv

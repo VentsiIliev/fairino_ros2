@@ -11,6 +11,40 @@ class TrajectoryExecutor:
         self._motion = coordinator
         self._queue = motion_queue
         self._controller_client = controller_client
+        action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
+        self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
+
+    def _overwrite_first_point_with_live_state(self, joint_trajectory):
+        """Anchor the first controller point to the latest measured joint state."""
+        if not joint_trajectory.points:
+            return
+
+        current_joint_state = getattr(self._node, 'current_joint_state', None)
+        if current_joint_state is None:
+            return
+
+        state_names = list(getattr(current_joint_state, 'name', []) or [])
+        state_positions = list(getattr(current_joint_state, 'position', []) or [])
+        if not state_names or len(state_names) != len(state_positions):
+            return
+
+        position_by_name = {
+            name: position
+            for name, position in zip(state_names, state_positions)
+        }
+        ordered_positions = []
+        for joint_name in joint_trajectory.joint_names:
+            if joint_name not in position_by_name:
+                return
+            ordered_positions.append(position_by_name[joint_name])
+
+        first_point = joint_trajectory.points[0]
+        first_point.positions = ordered_positions
+
+        if first_point.velocities:
+            first_point.velocities = [0.0] * len(ordered_positions)
+        if first_point.accelerations:
+            first_point.accelerations = [0.0] * len(ordered_positions)
 
     def send_trajectory_to_controller(self, joint_trajectory):
         """Send trajectory directly to the low-level controller for smooth execution."""
@@ -19,7 +53,9 @@ class TrajectoryExecutor:
             return
 
         if not self._controller_client.wait_for_server(timeout_sec=1.0):
-            self._node.get_logger().error('[Controller] fairino5_controller not available')
+            self._node.get_logger().error(
+                f'[Controller] {self._controller_name} not available'
+            )
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
@@ -42,6 +78,8 @@ class TrajectoryExecutor:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
             return
+
+        self._overwrite_first_point_with_live_state(joint_trajectory)
 
         with self._motion.lock:
             self._motion.is_executing = True
@@ -111,14 +149,18 @@ class TrajectoryExecutor:
         try:
             goal_handle = future.result()
             if not goal_handle.accepted:
-                self._node.get_logger().error('[Controller] Trajectory execution rejected by fairino5_controller')
+                self._node.get_logger().error(
+                    f'[Controller] Trajectory execution rejected by {self._controller_name}'
+                )
                 self._motion.active_controller_goal = None
                 with self._motion.lock:
                     self._motion.is_executing = False
                 self._motion.execution_lock.release()
                 return
 
-            self._node.get_logger().info('[Controller] Trajectory accepted by fairino5_controller')
+            self._node.get_logger().info(
+                f'[Controller] Trajectory accepted by {self._controller_name}'
+            )
             self._motion.active_controller_goal = goal_handle
             result_future = goal_handle.get_result_async()
             result_future.add_done_callback(self._on_controller_goal_result)

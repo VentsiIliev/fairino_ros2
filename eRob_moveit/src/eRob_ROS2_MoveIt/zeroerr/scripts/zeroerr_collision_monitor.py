@@ -47,7 +47,7 @@ class ZeroErrCollisionMonitor(Node):
         )
         self.declare_parameter("use_inverse_dynamics", False)
         self.declare_parameter("dynamics_estimator_mode", "momentum_observer")
-        self.declare_parameter("measured_torque_source", "current_based_torque")
+        self.declare_parameter("measured_torque_source", "drive_torque")
         self.declare_parameter("friction_coulomb_nm", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("friction_viscous_nm_per_rad_s", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("friction_velocity_deadband_rad_s", 0.01)

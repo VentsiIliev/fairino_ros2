@@ -4,6 +4,10 @@ set -euo pipefail
 
 ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-14,15}"
 ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-0xC000}"
+IRQ_CORES="${ZEROERR_IRQ_CORES:-${ZEROERR_ETHERCAT_CORES:-14}}"
+IRQ_MASK="${ZEROERR_IRQ_MASK:-0x4000}"
+ETHERCAT_CORES="${ZEROERR_ETHERCAT_CORES:-14}"
+CONTROL_CORES="${ZEROERR_CONTROL_CORES:-15}"
 PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-0}"
 NON_RT_CORES="${ZEROERR_NON_RT_CORES:-0-13}"
 RT_PRIORITY=90
@@ -19,8 +23,10 @@ configure_cpu() {
   done
   echo "  → Governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
 
-  echo "Disabling deep idle states on cores $ISOLATED_CORES..."
-  for core in 14 15; do
+  local idle_cores
+  idle_cores=$(printf "%s\n%s\n%s\n" "$ISOLATED_CORES" "$IRQ_CORES" "$CONTROL_CORES" | tr ',' '\n' | awk 'NF && !seen[$0]++')
+  echo "Disabling deep idle states on RT-related cores: $(echo "$idle_cores" | paste -sd, -)..."
+  for core in $idle_cores; do
     for state in /sys/devices/system/cpu/cpu${core}/cpuidle/state*/disable; do
       echo 1 | sudo tee "$state" > /dev/null 2>&1
     done
@@ -39,25 +45,95 @@ restart_ethercat_master() {
 }
 
 pin_ethercat_master() {
-  ETHERCAT_PIDS=$(pgrep -f "EtherCAT" 2>/dev/null || true)
+  local ethercat_pids=""
+  echo "Waiting for persistent EtherCAT worker to start..."
+  for _ in $(seq 1 100); do
+    ethercat_pids=$(pgrep -x "EtherCAT-OP" 2>/dev/null || true)
+    if [ -n "$ethercat_pids" ]; then
+      break
+    fi
+    ethercat_pids=$(pgrep -f "EtherCAT" 2>/dev/null || true)
+    if [ -n "$ethercat_pids" ]; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  ETHERCAT_PIDS=$(printf "%s\n" "$ethercat_pids" | sort -n | uniq | tr '\n' ' ')
   if [ -n "$ETHERCAT_PIDS" ]; then
     for pid in $ETHERCAT_PIDS; do
-      sudo taskset -cp $ISOLATED_CORES $pid > /dev/null 2>&1
-      sudo chrt -f -p $RT_PRIORITY $pid > /dev/null 2>&1
-      echo "  EtherCAT PID $pid → cores $ISOLATED_CORES, FIFO $RT_PRIORITY"
+      if sudo taskset -cp "$ETHERCAT_CORES" "$pid" > /dev/null 2>&1; then
+        :
+      else
+        echo "  Warning: failed to pin EtherCAT PID $pid to cores $ETHERCAT_CORES"
+      fi
+      for tid in $(ls /proc/$pid/task/ 2>/dev/null); do
+        sudo taskset -cp "$ETHERCAT_CORES" "$tid" > /dev/null 2>&1 || true
+      done
+      if sudo chrt -f -p $RT_PRIORITY $pid > /dev/null 2>&1; then
+        :
+      else
+        echo "  Warning: failed to set FIFO priority on EtherCAT PID $pid"
+      fi
+      local affinity
+      affinity=$(taskset -pc "$pid" 2>/dev/null | awk -F': ' '/current affinity list/ {print $2}')
+      echo "  EtherCAT PID $pid → requested cores $ETHERCAT_CORES, actual affinity ${affinity:-unknown}, FIFO $RT_PRIORITY"
+
+      (
+        while true; do
+          sleep 0.5
+          [ -d "/proc/$pid" ] || break
+          sudo taskset -cp "$ETHERCAT_CORES" "$pid" > /dev/null 2>&1 || true
+          for tid in $(ls /proc/$pid/task/ 2>/dev/null); do
+            sudo taskset -cp "$ETHERCAT_CORES" "$tid" > /dev/null 2>&1 || true
+          done
+        done
+        echo "  [RT] EtherCAT re-pin loop finished for PID $pid"
+      ) &
     done
   else
     echo "  Warning: EtherCAT process not found."
   fi
 }
 
+start_ethercat_repin_monitor() {
+  (
+    local seen=""
+    while true; do
+      sleep 0.5
+      local current_pids
+      current_pids=$(pgrep -x "EtherCAT-OP" 2>/dev/null || true)
+      [ -n "$current_pids" ] || current_pids=$(pgrep -f "EtherCAT" 2>/dev/null || true)
+      [ -n "$current_pids" ] || continue
+
+      local normalized
+      normalized=$(printf "%s\n" "$current_pids" | sort -n | uniq | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+      [ -n "$normalized" ] || continue
+
+      if [ "$normalized" != "$seen" ]; then
+        echo "Refreshing EtherCAT affinity for PID set: $normalized"
+        for pid in $normalized; do
+          sudo taskset -cp "$ETHERCAT_CORES" "$pid" > /dev/null 2>&1 || true
+          for tid in $(ls /proc/$pid/task/ 2>/dev/null); do
+            sudo taskset -cp "$ETHERCAT_CORES" "$tid" > /dev/null 2>&1 || true
+          done
+          local affinity
+          affinity=$(taskset -pc "$pid" 2>/dev/null | awk -F': ' '/current affinity list/ {print $2}')
+          echo "  EtherCAT monitor PID $pid → actual affinity ${affinity:-unknown}"
+        done
+        seen="$normalized"
+      fi
+    done
+  ) &
+}
+
 pin_irqs() {
-  echo "Pinning $NIC IRQs to cores $ISOLATED_CORES..."
+  echo "Pinning $NIC IRQs to cores $IRQ_CORES..."
   for irq_dir in /proc/irq/*/; do
     irq_num=$(basename "$irq_dir")
     if ls "$irq_dir" 2>/dev/null | grep -q "$NIC"; then
-      echo $ISOLATED_MASK | sudo tee "/proc/irq/${irq_num}/smp_affinity" > /dev/null 2>&1
-      echo "  IRQ $irq_num ($NIC) → mask $ISOLATED_MASK"
+      echo $IRQ_MASK | sudo tee "/proc/irq/${irq_num}/smp_affinity" > /dev/null 2>&1
+      echo "  IRQ $irq_num ($NIC) → mask $IRQ_MASK"
     fi
   done
 }
@@ -88,12 +164,12 @@ pin_to_cpuset_cgroup() {
     return 1
   fi
 
-  echo "$ISOLATED_CORES" | sudo tee "$cg_path/cpuset.cpus" > /dev/null 2>&1 || { echo "  [cpuset] cpus write failed"; return 1; }
+  echo "$CONTROL_CORES" | sudo tee "$cg_path/cpuset.cpus" > /dev/null 2>&1 || { echo "  [cpuset] cpus write failed"; return 1; }
   echo "0"               | sudo tee "$cg_path/cpuset.mems" > /dev/null 2>&1 || true
 
   # Writing PID to cgroup.procs moves ALL threads (current + future) — kernel-enforced
   if echo "$pid" | sudo tee "$cg_path/cgroup.procs" > /dev/null 2>&1; then
-    echo "  [cpuset] PID $pid → rt_ethercat cgroup (CPUs: $ISOLATED_CORES) — kernel-enforced"
+    echo "  [cpuset] PID $pid → rt_control cgroup (CPUs: $CONTROL_CORES) — kernel-enforced"
     return 0
   else
     echo "  [cpuset] cgroup.procs write failed for PID $pid — falling back to taskset loop"
@@ -113,12 +189,12 @@ pin_ros2_control() {
   done
 
   if [ -n "$ros2_ctrl_pid" ]; then
-    sudo taskset -cp $ISOLATED_CORES $ros2_ctrl_pid > /dev/null 2>&1
-    echo "  ros2_control_node PID $ros2_ctrl_pid → cores $ISOLATED_CORES"
+    sudo taskset -cp $CONTROL_CORES $ros2_ctrl_pid > /dev/null 2>&1
+    echo "  ros2_control_node PID $ros2_ctrl_pid → cores $CONTROL_CORES"
     for tid in $(ls /proc/$ros2_ctrl_pid/task/ 2>/dev/null); do
-      sudo taskset -cp $ISOLATED_CORES $tid > /dev/null 2>&1
+      sudo taskset -cp $CONTROL_CORES $tid > /dev/null 2>&1
     done
-    echo "  All threads of ros2_control_node set to cores $ISOLATED_CORES"
+    echo "  All threads of ros2_control_node set to cores $CONTROL_CORES"
 
     # Try kernel-enforced cpuset cgroup — prevents threads from self-reassigning cores
     pin_to_cpuset_cgroup "$ros2_ctrl_pid" || true
@@ -129,7 +205,7 @@ pin_ros2_control() {
         sleep 0.5
         [ -d "/proc/$ros2_ctrl_pid" ] || break
         for tid in $(ls /proc/$ros2_ctrl_pid/task/ 2>/dev/null); do
-          sudo taskset -cp $ISOLATED_CORES $tid > /dev/null 2>&1
+          sudo taskset -cp $CONTROL_CORES $tid > /dev/null 2>&1
         done
 
         # Optionally keep known non-RT processes off the isolated cores as they come and go.
@@ -186,4 +262,6 @@ if [ "$PREP_ONLY" = "1" ]; then
   exit 0
 fi
 
+start_ethercat_repin_monitor
+pin_ethercat_master
 pin_ros2_control

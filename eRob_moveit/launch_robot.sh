@@ -24,6 +24,7 @@ FAIRINO_ROS_PID=""
 
 cleanup_stale_zeroerr_processes() {
   local patterns=(
+    "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
     "/opt/ros/.*/moveit_ros_move_group/move_group"
     "rest_server_main.py"
@@ -64,6 +65,7 @@ cleanup_stale_zeroerr_processes() {
 
 cleanup_stale_fairino_processes() {
   local patterns=(
+    "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
     "/opt/ros/.*/moveit_ros_move_group/move_group"
     "/opt/ros/.*/rviz2/rviz2"

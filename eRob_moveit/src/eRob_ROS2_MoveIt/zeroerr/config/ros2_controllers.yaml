@@ -1,7 +1,7 @@
 # This config file is used by ros2_control
 controller_manager:
   ros__parameters:
-    update_rate: 200          # Hz — halves JTC splines cost; EtherCAT HW thread runs independently
+    update_rate: 200           # Hz — keep EtherCAT hardware loop at 1000Hz, give JTC/controller_manager more headroom
     realtime_priority: 80     # FIFO priority for controller_manager RT thread
     use_sim_time: false
     manipulator_controller:

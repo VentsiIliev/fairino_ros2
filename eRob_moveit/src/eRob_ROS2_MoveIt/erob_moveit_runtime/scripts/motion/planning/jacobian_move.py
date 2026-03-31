@@ -17,6 +17,12 @@ from ..execution.trajectory_executor import _send_trajectory_to_controller
 _JACOBIAN_NOOP_POSITION_TOL_M = 1e-5  # 0.01 mm
 _JACOBIAN_NOOP_ORIENTATION_TOL_RAD = 1e-5
 _JACOBIAN_NOOP_JOINT_TOL_RAD = 1e-5
+_JACOBIAN_TRAJ_TIME_FRACTIONS = (0.0, 0.15, 0.5, 0.85, 1.0)
+
+
+def _smoothstep5(t):
+    """Quintic easing with zero velocity/acceleration at both ends."""
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
 
 def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scaling, generation):
@@ -136,8 +142,8 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
             J[5, j] = (dR[1, 0] - dR[0, 1]) / s2 * angle / eps
 
     singular_values = np.linalg.svd(J, compute_uv=False)
-    robot_controller.get_logger().info(
-        f'[JacMove] delta_x={[f"{v:.6f}" for v in delta_x[:3]]}, S={[f"{v:.4f}" for v in singular_values]}')
+    # robot_controller.get_logger().info(
+    #     f'[JacMove] delta_x={[f"{v:.6f}" for v in delta_x[:3]]}, S={[f"{v:.4f}" for v in singular_values]}')
 
     # Damped least-squares pseudoinverse: J⁺ = Vᵀ · diag(σ/(σ²+λ²)) · Uᵀ
     # λ (damping) prevents blow-up near singularities where σ ≈ 0
@@ -149,7 +155,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
     delta_q = J_pinv @ delta_x
 
     max_dq = np.max(np.abs(delta_q))
-    robot_controller.get_logger().info(f'[JacMove] Δq={[f"{v:.5f}" for v in delta_q]} (max={max_dq:.5f})')
+    # robot_controller.get_logger().info(f'[JacMove] Δq={[f"{v:.5f}" for v in delta_q]} (max={max_dq:.5f})')
 
     if max_dq < _JACOBIAN_NOOP_JOINT_TOL_RAD:
         # Compare the requested target pose with the robot's current pose to distinguish:
@@ -191,27 +197,35 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
 
     target_joints = np.array(joints) + delta_q
 
-    # Build a minimal 2-point JointTrajectory: start (t=0) → target (t=duration)
-    # Duration is estimated from cubic spline peak velocity: T = 1.5·Δq_max / (vel·ω_max)
+    # Build a short eased trajectory instead of a single start→target jump.
+    # This gives the controller a gentler ramp for tiny Cartesian corrections.
     from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
     from builtin_interfaces.msg import Duration
     traj_msg = JointTrajectory()
     traj_msg.joint_names = joint_names
+    requested_delta_mm = float(np.linalg.norm(delta_x[:3]) * 1000.0)
+    duration_s = max(
+        config.JACOBIAN_MIN_DURATION_S,
+        1.5 * max_dq / (max(0.01, vel_scaling) * 3.0),
+    )
+    if requested_delta_mm <= config.SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM:
+        duration_s = max(duration_s, config.JACOBIAN_SHORT_MOVE_MIN_DURATION_S)
+    # robot_controller.get_logger().info(
+    #     f'[JacMove] duration={duration_s:.3f}s for delta={requested_delta_mm:.3f}mm, '
+    #     f'max_dq={max_dq:.5f}rad, vel_scaling={vel_scaling:.3f}'
+    # )
+    delta_q_full = target_joints - q0
+    traj_points = []
+    for fraction in _JACOBIAN_TRAJ_TIME_FRACTIONS:
+        eased = _smoothstep5(fraction)
+        pt = JointTrajectoryPoint()
+        pt.positions = list(q0 + delta_q_full * eased)
+        pt.velocities = [0.0] * n
+        pt.accelerations = [0.0] * n
+        pt.time_from_start = Duration(sec=0, nanosec=int(duration_s * fraction * 1e9))
+        traj_points.append(pt)
 
-    pt0 = JointTrajectoryPoint()
-    pt0.positions = list(q0)
-    pt0.velocities = [0.0] * n
-    pt0.accelerations = [0.0] * n
-    pt0.time_from_start = Duration(sec=0, nanosec=0)
-
-    pt1 = JointTrajectoryPoint()
-    pt1.positions = list(target_joints)
-    pt1.velocities = [0.0] * n
-    pt1.accelerations = [0.0] * n
-    duration_s = max(config.JACOBIAN_MIN_DURATION_S, 1.5 * max_dq / (max(0.01, vel_scaling) * 3.0))
-    pt1.time_from_start = Duration(sec=0, nanosec=int(duration_s * 1e9))
-
-    traj_msg.points = [pt0, pt1]
+    traj_msg.points = traj_points
 
     # Hand off to parallel collision check before executing
     _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generation)

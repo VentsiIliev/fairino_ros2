@@ -94,9 +94,8 @@ def generate_launch_description():
 
     # Launch GUI as a ROS2 node (velocity monitor)
     velocity_monitor_gui = Node(
-        package='erob_moveit_runtime',
-        executable='main.py',
-        additional_env={'EROB_CONFIG_PACKAGE': 'fairino5_v6_moveit2_config'},
+        package='fairino5_v6_moveit2_config',
+        executable='fairino_runtime.py',
         name='velocity_monitor',
         output='screen',
         emulate_tty=True

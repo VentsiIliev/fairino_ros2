@@ -3,7 +3,7 @@
     <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
 
     <!-- Import eRobo3 urdf file -->
-    <xacro:include filename="$(find zeroerr)/config/erob_arm.urdf" />
+    <xacro:include filename="$(find zeroerr)/config/erob_arm_backup_corrected_mass.urdf" />
 
     <!-- Import control_xacro -->
     <xacro:include filename="eRobo3.ros2_control.xacro" />

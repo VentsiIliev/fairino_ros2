@@ -157,11 +157,28 @@ def _resolve_start_state(robot_controller, start_pose):
             f'[Single Point] IK start-state sync failed: {exc} — using live joint state')
         return None
 
+    error_code = getattr(getattr(resp, "error_code", None), "val", None)
     solution = getattr(resp, "solution", None)
     joint_state = getattr(solution, "joint_state", None)
     positions = list(getattr(joint_state, "position", []) or [])
     names = list(getattr(joint_state, "name", []) or [])
     if len(positions) < 6 or not names:
+        live_joint_state = robot_controller.current_joint_state
+        live_names = list(getattr(live_joint_state, "name", []) or []) if live_joint_state is not None else []
+        live_positions = list(getattr(live_joint_state, "position", []) or []) if live_joint_state is not None else []
+        robot_controller.get_logger().warning(
+            '[Single Point] IK start-state sync returned no usable joint solution '
+            f'(error_code={error_code}, names={names}, positions={len(positions)}) — using live joint state')
+        if live_names and live_positions:
+            robot_controller.get_logger().warning(
+                f'[Single Point] Live joint state fallback: '
+                f'{[(name, round(pos, 6)) for name, pos in zip(live_names, live_positions)]}')
+        robot_controller.get_logger().warning(
+            '[Single Point] Requested Cartesian start pose: '
+            f'X={start_pose.position.x * 1000:.2f} Y={start_pose.position.y * 1000:.2f} '
+            f'Z={start_pose.position.z * 1000:.2f} '
+            f'Q=[{start_pose.orientation.x:.4f}, {start_pose.orientation.y:.4f}, '
+            f'{start_pose.orientation.z:.4f}, {start_pose.orientation.w:.4f}]')
         robot_controller.get_logger().warning(
             '[Single Point] IK start-state sync returned no usable joint solution — using live joint state')
         return None
@@ -223,6 +240,11 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         robot_controller.get_logger().info(
             f'[Single Point] Orientation-dominant move: using coarse MoveIt eef_step={max_step:.4f}m '
             f'for orientation delta={orientation_delta_deg:.3f}°')
+
+    if not robot_controller.is_motion_stack_ready():
+        robot_controller.get_logger().error(
+            f'[Single Point] Motion stack not ready: {robot_controller.get_motion_stack_fault_reason()}')
+        return config.MOTION_ERROR_HARDWARE_NOT_READY
 
     start_state = _resolve_start_state(robot_controller, poses[0])
     _dispatch_moveit(
