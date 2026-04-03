@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compact Robot Monitor GUI with collision detection visualization.
+Compact motion oscilloscope GUI with trajectory test controls.
 Two-column layout to fit on screen.
 """
 import sys
@@ -9,6 +9,7 @@ import json
 import requests
 from threading import Thread
 import numpy as np
+import pyqtgraph as pg
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Int32MultiArray
@@ -18,7 +19,9 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
                               QFrame, QSplitter, QScrollArea, QComboBox)
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+import config
 from status.robot_monitor import RobotMonitor
+from utils.work_object import WorkObject
 
 
 class SimpleMonitorGUI(QWidget):
@@ -51,6 +54,11 @@ class SimpleMonitorGUI(QWidget):
         self.collected_data = []
         self.collection_start_time = None
         self.was_executing = False
+        self.command_start_wall_time = None
+        self.execution_start_wall_time = None
+        self.execution_end_wall_time = None
+        self.last_trace_summary = None
+        self.default_workobject = self._build_default_workobject()
 
         # Timing tracking
         self.last_update_time = time.time()
@@ -58,9 +66,11 @@ class SimpleMonitorGUI(QWidget):
         self.max_timing_samples = 30
 
         self.plot_ready_signal.connect(self._show_plot)
+        self.motion_buttons = []
+        self._last_live_trace_key = None
 
-        self.setWindowTitle('Robot Monitor - Compact View')
-        self.setMinimumSize(1200, 600)
+        self.setWindowTitle('Robot Motion Oscilloscope')
+        self.setMinimumSize(1280, 820)
 
         # Main horizontal layout (two columns)
         main_layout = QHBoxLayout()
@@ -70,7 +80,7 @@ class SimpleMonitorGUI(QWidget):
 
         # Title and update rate (compact)
         header_layout = QHBoxLayout()
-        title = QLabel('Robot Monitor')
+        title = QLabel('Robot Motion Oscilloscope')
         title.setStyleSheet('font-size: 14pt; font-weight: bold;')
         header_layout.addWidget(title)
         header_layout.addStretch()
@@ -153,27 +163,106 @@ class SimpleMonitorGUI(QWidget):
         jvel_group.setLayout(jvel_layout)
         left_column.addWidget(jvel_group)
 
-        # Data Collection (compact)
-        collect_group = QGroupBox('Data Collection')
-        collect_layout = QHBoxLayout()
-        collect_layout.addWidget(QLabel('Dist:'))
+        # Trajectory Test
+        collect_group = QGroupBox('Linear Trajectory Test')
+        collect_layout = QGridLayout()
+        collect_layout.setHorizontalSpacing(8)
+        collect_layout.setVerticalSpacing(6)
+        collect_layout.addWidget(QLabel('Dist (mm):'), 0, 0)
         self.jog_distance_input = QLineEdit('-200')
-        self.jog_distance_input.setFixedWidth(60)
-        collect_layout.addWidget(self.jog_distance_input)
-        collect_layout.addWidget(QLabel('V%:'))
+        self.jog_distance_input.setFixedWidth(70)
+        collect_layout.addWidget(self.jog_distance_input, 0, 1)
+        collect_layout.addWidget(QLabel('V%:'), 0, 2)
         self.jog_vel_input = QLineEdit('60')
-        self.jog_vel_input.setFixedWidth(40)
-        collect_layout.addWidget(self.jog_vel_input)
-        collect_layout.addWidget(QLabel('A%:'))
+        self.jog_vel_input.setFixedWidth(55)
+        collect_layout.addWidget(self.jog_vel_input, 0, 3)
+        collect_layout.addWidget(QLabel('A%:'), 0, 4)
         self.jog_acc_input = QLineEdit('40')
-        self.jog_acc_input.setFixedWidth(40)
-        collect_layout.addWidget(self.jog_acc_input)
-        self.collect_button = QPushButton('Go')
-        self.collect_button.setFixedWidth(50)
-        self.collect_button.clicked.connect(self.start_data_collection)
-        collect_layout.addWidget(self.collect_button)
+        self.jog_acc_input.setFixedWidth(55)
+        collect_layout.addWidget(self.jog_acc_input, 0, 5)
+        collect_layout.addWidget(QLabel('Opt:'), 0, 6)
+        self.optimizer_selector = QComboBox()
+        self.optimizer_selector.addItems(['TOTG', 'RUCKIG'])
+        self.optimizer_selector.setCurrentText('TOTG')
+        self.optimizer_selector.setFixedWidth(90)
+        collect_layout.addWidget(self.optimizer_selector, 0, 7)
+        collect_layout.addWidget(QLabel('Tool:'), 0, 8)
+        self.tool_selector = QComboBox()
+        self.tool_selector.addItems(['0', '1'])
+        self.tool_selector.setCurrentText('1' if getattr(config, 'ROBOT_BACKEND', '').lower() == 'fairino' else '0')
+        self.tool_selector.setFixedWidth(55)
+        collect_layout.addWidget(self.tool_selector, 0, 9)
+        collect_layout.addWidget(QLabel('User:'), 0, 10)
+        self.user_selector = QComboBox()
+        self.user_selector.addItems(['0'])
+        self.user_selector.setCurrentText('0')
+        self.user_selector.setFixedWidth(55)
+        collect_layout.addWidget(self.user_selector, 0, 11)
+
+        self.collect_button = QPushButton('Run X+')
+        self.collect_button.clicked.connect(lambda: self.start_data_collection('x', 1))
+        collect_layout.addWidget(self.collect_button, 1, 0, 1, 2)
+        self.motion_buttons.append(self.collect_button)
+
+        test_buttons = [
+            ('X-', 'x', -1, 1, 2),
+            ('X+', 'x', 1, 1, 3),
+            ('Y-', 'y', -1, 1, 4),
+            ('Y+', 'y', 1, 1, 5),
+            ('Z-', 'z', -1, 1, 6),
+            ('Z+', 'z', 1, 1, 7),
+        ]
+        for label, axis, direction, row, col in test_buttons:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, a=axis, d=direction: self.start_data_collection(a, d))
+            collect_layout.addWidget(btn, row, col)
+            self.motion_buttons.append(btn)
+
+        self.trace_status_label = QLabel('No trace recorded')
+        self.trace_status_label.setStyleSheet('font-family: monospace; color: #666;')
+        self.trace_status_label.setWordWrap(True)
+        collect_layout.addWidget(self.trace_status_label, 2, 0, 1, 12)
+
+        self.trace_timing_label = QLabel('Timing: n/a')
+        self.trace_timing_label.setStyleSheet('font-family: monospace; color: #0066cc;')
+        self.trace_timing_label.setWordWrap(True)
+        collect_layout.addWidget(self.trace_timing_label, 3, 0, 1, 12)
         collect_group.setLayout(collect_layout)
         left_column.addWidget(collect_group)
+
+        live_group = QGroupBox('Live Motion Trace')
+        live_layout = QVBoxLayout()
+        self.live_plot_widget = pg.GraphicsLayoutWidget()
+        self.live_plot_widget.setBackground('w')
+        self.live_progress_plot = self.live_plot_widget.addPlot(row=0, col=0)
+        self.live_velocity_plot = self.live_plot_widget.addPlot(row=1, col=0)
+        self.live_accel_plot = self.live_plot_widget.addPlot(row=2, col=0)
+        self.live_jerk_plot = self.live_plot_widget.addPlot(row=3, col=0)
+
+        live_specs = [
+            (self.live_progress_plot, 'Progress (mm)', '#1f77b4'),
+            (self.live_velocity_plot, 'Velocity (mm/s)', '#2ca02c'),
+            (self.live_accel_plot, 'Accel (mm/s²)', '#d62728'),
+            (self.live_jerk_plot, 'Jerk (mm/s³)', '#9467bd'),
+        ]
+        self.live_curves = {}
+        for plot, label, color in live_specs:
+            plot.showGrid(x=True, y=True, alpha=0.25)
+            plot.setLabel('left', label)
+            plot.getAxis('left').setWidth(80)
+            plot.setMenuEnabled(False)
+            plot.setMouseEnabled(x=False, y=False)
+            self.live_curves[label] = plot.plot(pen=pg.mkPen(color=color, width=2))
+        self.live_progress_plot.hideAxis('bottom')
+        self.live_velocity_plot.hideAxis('bottom')
+        self.live_accel_plot.hideAxis('bottom')
+        self.live_jerk_plot.setLabel('bottom', 'Time (s)')
+        self.live_velocity_plot.setXLink(self.live_progress_plot)
+        self.live_accel_plot.setXLink(self.live_progress_plot)
+        self.live_jerk_plot.setXLink(self.live_progress_plot)
+        live_layout.addWidget(self.live_plot_widget)
+        live_group.setLayout(live_layout)
+        left_column.addWidget(live_group)
 
         # Digital Output
         do_group = QGroupBox('DO3')
@@ -344,47 +433,190 @@ class SimpleMonitorGUI(QWidget):
             return
         stamp = msg.header.stamp
         time_sec = stamp.sec + stamp.nanosec * 1e-9
-        x_mm = msg.pose.position.x * 1000.0
         if self.collection_start_time is None:
             self.collection_start_time = time_sec
         relative_time = time_sec - self.collection_start_time
-        self.collected_data.append((relative_time, x_mm))
+        stable = self.robot_monitor.get_stable_data()
+        if stable is None:
+            return
+        cart = np.array(stable['cartesian'], dtype=float)
+        cart_vel = np.array(stable['cart_velocity'], dtype=float)
+        cart_acc = np.array(stable['cart_acceleration'], dtype=float)
+        joint_vel = np.array(stable['velocities'], dtype=float)
+        joint_acc = np.array(stable['accelerations'], dtype=float)
+        self.collected_data.append({
+            't': relative_time,
+            'cartesian': cart,
+            'cart_velocity': cart_vel,
+            'cart_acceleration': cart_acc,
+            'cart_vel_mag': float(stable['cart_vel_magnitude']),
+            'cart_acc_mag': float(stable['cart_acc_magnitude']),
+            'joint_vel_mag': float(stable['vel_magnitude']),
+            'joint_acc_mag': float(stable['acc_magnitude']),
+            'joint_velocities': joint_vel,
+            'joint_accelerations': joint_acc,
+            'is_executing': bool(self.robot_status.get('is_executing', False)),
+        })
 
-    def start_data_collection(self):
+    def _build_default_workobject(self):
+        values = list(getattr(config, 'DEFAULT_WORKOBJECT', [0, 0, 0, 0, 0, 0]) or [0, 0, 0, 0, 0, 0])
+        if len(values) != 6 or not any(abs(float(v)) > 1e-9 for v in values):
+            return None
+        return WorkObject(*values)
+
+    def _current_pose_in_user_frame(self, user_id):
+        try:
+            response = requests.get('http://localhost:5000/position/current', timeout=2.0)
+            response.raise_for_status()
+            payload = response.json()
+            position = payload.get('position')
+            if position and len(position) == 6:
+                return np.array(position, dtype=float)
+        except Exception as exc:
+            self.ros_node.get_logger().warning(
+                f'Falling back to local monitor pose because /position/current failed: {exc}'
+            )
+
+        stable = self.robot_monitor.get_stable_data()
+        if stable is None:
+            return None
+        pose = np.array(stable['cartesian'], dtype=float)
+        if user_id == 0 and self.default_workobject is not None:
+            pose = np.array(self.default_workobject.apply(pose.tolist(), inverse=True), dtype=float)
+        return pose
+
+    def _compute_motion_profile(self):
+        if len(self.collected_data) < 3:
+            return None
+
+        from scipy.ndimage import uniform_filter1d
+
+        samples = sorted(self.collected_data, key=lambda sample: sample['t'])
+        t = np.array([sample['t'] for sample in samples], dtype=float)
+        cartesian = np.array([sample['cartesian'] for sample in samples], dtype=float)
+        cart_vel_mag = np.array([sample['cart_vel_mag'] for sample in samples], dtype=float)
+        cart_acc_mag = np.array([sample['cart_acc_mag'] for sample in samples], dtype=float)
+
+        unique_mask = np.diff(t, prepend=-1.0) > 0
+        t = t[unique_mask]
+        cartesian = cartesian[unique_mask]
+        cart_vel_mag = cart_vel_mag[unique_mask]
+        cart_acc_mag = cart_acc_mag[unique_mask]
+
+        if len(t) < 3:
+            return None
+
+        start_xyz = cartesian[0, :3]
+        progress = uniform_filter1d(np.linalg.norm(cartesian[:, :3] - start_xyz, axis=1), size=3)
+        speed = uniform_filter1d(cart_vel_mag, size=3)
+        acceleration = uniform_filter1d(cart_acc_mag, size=3)
+        jerk = uniform_filter1d(np.gradient(acceleration, t), size=3)
+
+        return {
+            't': t,
+            'progress': progress,
+            'speed': speed,
+            'acceleration': acceleration,
+            'jerk': jerk,
+            'cartesian': cartesian,
+        }
+
+    def _refresh_live_plot(self):
+        profile = self._compute_motion_profile()
+        if profile is None:
+            return
+
+        t = profile['t']
+        self.live_curves['Progress (mm)'].setData(t, profile['progress'])
+        self.live_curves['Velocity (mm/s)'].setData(t, profile['speed'])
+        self.live_curves['Accel (mm/s²)'].setData(t, profile['acceleration'])
+        self.live_curves['Jerk (mm/s³)'].setData(t, profile['jerk'])
+
+        self.live_progress_plot.enableAutoRange(axis='xy', enable=True)
+        self.live_velocity_plot.enableAutoRange(axis='y', enable=True)
+        self.live_accel_plot.enableAutoRange(axis='y', enable=True)
+        self.live_jerk_plot.enableAutoRange(axis='y', enable=True)
+
+    def start_data_collection(self, axis='x', direction=1):
         if self.is_collecting:
             return
         try:
             jog_distance = float(self.jog_distance_input.text())
             vel = float(self.jog_vel_input.text())
             acc = float(self.jog_acc_input.text())
+            trajectory_optimizer = self.optimizer_selector.currentText().strip().upper()
+            tool_id = int(self.tool_selector.currentText())
+            user_id = int(self.user_selector.currentText())
         except ValueError:
             QMessageBox.warning(self, 'Invalid Input', 'Please enter valid numbers.')
             return
+
+        current_pose = self._current_pose_in_user_frame(user_id)
+        if current_pose is None:
+            QMessageBox.warning(self, 'No Robot Data', 'No current robot state available yet.')
+            return
+
+        axis_to_index = {'x': 0, 'y': 1, 'z': 2}
+        if axis not in axis_to_index:
+            QMessageBox.warning(self, 'Invalid Axis', f'Unsupported axis: {axis}')
+            return
+
+        target = current_pose.copy()
+        target[axis_to_index[axis]] += abs(jog_distance) * direction
 
         self.collected_data = []
         self.collection_start_time = None
         self.is_collecting = True
         self.was_executing = False
-        self.collect_button.setEnabled(False)
+        self.command_start_wall_time = time.time()
+        self.execution_start_wall_time = None
+        self.execution_end_wall_time = None
+        self.last_trace_summary = None
+        self._set_motion_buttons_enabled(False)
+        self.trace_status_label.setText(
+            f'Collecting {axis.upper()} {"+" if direction > 0 else "-"} {abs(jog_distance):.1f} mm '
+            f'({trajectory_optimizer}, tool={tool_id}, user={user_id})'
+        )
+        self.trace_timing_label.setText(
+            'Target: '
+            f'[{target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f}, '
+            f'RZ={target[5]:.1f}°]  waiting for motion start'
+        )
 
-        def send_jog():
+        def send_linear():
             try:
-                direction = 1 if jog_distance >= 0 else -1
-                step = abs(jog_distance)
-                requests.post(
-                    'http://localhost:5000/jog',
-                    json={'axis': 1, 'direction': direction, 'step': step, 'vel': vel, 'acc': acc},
-                    timeout=5.0
+                response = requests.post(
+                    'http://localhost:5000/move/linear',
+                    json={
+                        'position': target.tolist(),
+                        'tool': tool_id,
+                        'user': user_id,
+                        'vel': vel,
+                        'acc': acc,
+                        'blocking': True,
+                        'trajectory_optimizer': trajectory_optimizer,
+                    },
+                    timeout=30.0,
                 )
+                if response.status_code >= 400:
+                    raise RuntimeError(f'HTTP {response.status_code}: {response.text}')
             except Exception as e:
-                self.ros_node.get_logger().error(f'Jog failed: {e}')
+                self.is_collecting = False
+                self._set_motion_buttons_enabled(True)
+                self.trace_status_label.setText(f'Command failed: {e}')
+                self.trace_timing_label.setText('Timing: n/a')
+                self.ros_node.get_logger().error(f'Linear move failed: {e}')
 
-        Thread(target=send_jog, daemon=True).start()
+        Thread(target=send_linear, daemon=True).start()
 
     def set_digital_output(self, do_id, status):
         msg = Int32MultiArray()
         msg.data = [do_id, status]
         self.do_publisher.publish(msg)
+
+    def _set_motion_buttons_enabled(self, enabled):
+        for button in self.motion_buttons:
+            button.setEnabled(enabled)
 
     def update_display(self):
         # Update rate
@@ -516,11 +748,22 @@ class SimpleMonitorGUI(QWidget):
 
         # Data collection
         if self.is_collecting:
+            self._refresh_live_plot()
             if is_executing:
+                if self.execution_start_wall_time is None:
+                    self.execution_start_wall_time = time.time()
+                    planning_delay = self.execution_start_wall_time - self.command_start_wall_time
+                    self.trace_timing_label.setText(
+                        f'Timing: planning {planning_delay:.3f}s, executing...'
+                    )
                 self.was_executing = True
             if self.was_executing and not is_executing:
                 self.is_collecting = False
-                self.collect_button.setEnabled(True)
+                self.execution_end_wall_time = time.time()
+                self._set_motion_buttons_enabled(True)
+                self.last_trace_summary = self._build_trace_summary()
+                self._update_trace_summary_labels()
+                self._refresh_live_plot()
                 self.plot_ready_signal.emit()
 
     def _show_plot(self):
@@ -529,41 +772,109 @@ class SimpleMonitorGUI(QWidget):
             return
         self._generate_analysis_plot()
 
+    def _build_trace_summary(self):
+        if self.command_start_wall_time is None:
+            return None
+
+        summary = {
+            'samples': len(self.collected_data),
+            'planning_delay_s': None,
+            'execution_s': None,
+            'total_s': None,
+        }
+
+        if self.execution_start_wall_time is not None:
+            summary['planning_delay_s'] = self.execution_start_wall_time - self.command_start_wall_time
+        if self.execution_start_wall_time is not None and self.execution_end_wall_time is not None:
+            summary['execution_s'] = self.execution_end_wall_time - self.execution_start_wall_time
+        if self.execution_end_wall_time is not None:
+            summary['total_s'] = self.execution_end_wall_time - self.command_start_wall_time
+        return summary
+
+    def _update_trace_summary_labels(self):
+        summary = self.last_trace_summary
+        if not summary:
+            return
+        self.trace_status_label.setText(f'Trace ready: {summary["samples"]} samples')
+        planning = summary['planning_delay_s']
+        execution = summary['execution_s']
+        total = summary['total_s']
+        self.trace_timing_label.setText(
+            'Timing: '
+            f'plan={planning:.3f}s ' if planning is not None else 'Timing: plan=n/a '
+            + (f'exec={execution:.3f}s ' if execution is not None else 'exec=n/a ')
+            + (f'total={total:.3f}s' if total is not None else 'total=n/a')
+        )
+
     def _generate_analysis_plot(self):
         import matplotlib.pyplot as plt
-        from scipy.ndimage import uniform_filter1d
-
-        data = np.array(self.collected_data)
-        t = data[:, 0]
-        x = data[:, 1]
-
-        sort_idx = np.argsort(t)
-        t, x = t[sort_idx], x[sort_idx]
-
-        unique_mask = np.diff(t, prepend=-1) > 0
-        t, x = t[unique_mask], x[unique_mask]
-
-        if len(t) < 10:
+        profile = self._compute_motion_profile()
+        if profile is None or len(profile['t']) < 10:
             return
 
-        x_smooth = uniform_filter1d(x, size=3)
-        dt = np.diff(t)
-        dt[dt == 0] = 1e-6
+        t = profile['t']
+        cartesian = profile['cartesian']
+        progress = profile['progress']
+        speed = profile['speed']
+        acceleration = profile['acceleration']
+        jerk = profile['jerk']
 
-        velocity = np.diff(x_smooth) / dt
-        t_vel = t[:-1] + dt / 2
-        velocity_smooth = uniform_filter1d(velocity, size=5)
+        peak_speed = float(np.max(np.abs(speed))) if len(speed) else 0.0
+        peak_acc = float(np.max(np.abs(acceleration))) if len(acceleration) else 0.0
+        peak_jerk = float(np.max(np.abs(jerk))) if len(jerk) else 0.0
 
-        fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-        axes[0].plot(t, x_smooth, 'b-', linewidth=2)
-        axes[0].set_ylabel('Position (mm)')
+        fig, axes = plt.subplots(4, 1, figsize=(11, 9), sharex=True)
+
+        axes[0].plot(t, progress, color='b', linewidth=2)
+        axes[0].set_ylabel('Progress (mm)')
         axes[0].grid(True, alpha=0.3)
 
-        axes[1].plot(t_vel, velocity_smooth, 'g-', linewidth=2)
+        axes[1].plot(t, speed, color='g', linewidth=2)
         axes[1].set_ylabel('Velocity (mm/s)')
-        axes[1].set_xlabel('Time (s)')
         axes[1].grid(True, alpha=0.3)
 
+        axes[2].plot(t, acceleration, color='r', linewidth=2)
+        axes[2].set_ylabel('Accel (mm/s²)')
+        axes[2].grid(True, alpha=0.3)
+
+        axes[3].plot(t, jerk, color='m', linewidth=2)
+        axes[3].set_ylabel('Jerk (mm/s³)')
+        axes[3].set_xlabel('Time (s)')
+        axes[3].grid(True, alpha=0.3)
+
+        title = 'Motion Oscilloscope Trace'
+        if self.last_trace_summary and None not in (
+            self.last_trace_summary["planning_delay_s"],
+            self.last_trace_summary["execution_s"],
+            self.last_trace_summary["total_s"],
+        ):
+            summary = self.last_trace_summary
+            title += (
+                f'  plan={summary["planning_delay_s"]:.3f}s'
+                f'  exec={summary["execution_s"]:.3f}s'
+                f'  total={summary["total_s"]:.3f}s'
+            )
+        title += (
+            f'  peak_v={peak_speed:.1f}mm/s'
+            f'  peak_a={peak_acc:.1f}mm/s²'
+            f'  peak_j={peak_jerk:.1f}mm/s³'
+        )
+        fig.suptitle(title)
+
+        if len(cartesian) >= 2:
+            move_delta = cartesian[-1, :3] - cartesian[0, :3]
+            axes[0].text(
+                0.01,
+                0.95,
+                f'ΔXYZ = [{move_delta[0]:.1f}, {move_delta[1]:.1f}, {move_delta[2]:.1f}] mm',
+                transform=axes[0].transAxes,
+                verticalalignment='top',
+                fontsize=9,
+                family='monospace',
+                bbox={'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.8, 'edgecolor': '#cccccc'},
+            )
+
+        axes[2].set_xlabel('Time (s)')
         plt.tight_layout()
         plt.show()
 

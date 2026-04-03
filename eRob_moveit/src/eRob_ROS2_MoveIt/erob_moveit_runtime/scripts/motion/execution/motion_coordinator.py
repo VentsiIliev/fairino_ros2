@@ -83,7 +83,7 @@ class MotionCoordinator:
 
         with self.lock:
             was_executing = bool(self.is_executing)
-            if stopped:
+            if stopped or was_executing:
                 self.plan_generation += 1
             self.is_executing = False
             self.last_move_result = -1
@@ -110,7 +110,8 @@ class MotionCoordinator:
 
         if was_executing:
             self._node.get_logger().warning(
-                '[STOP] Stop requested while robot was executing, but no cancel handle was available')
+                '[STOP] Stop requested while robot was executing, but no cancel handle was available; '
+                'invalidated in-flight plan generation')
             return {
                 'state': 'STOP_REQUESTED_BUT_UNCONFIRMED',
                 'result': 1,

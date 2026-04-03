@@ -6,6 +6,7 @@ find_package(ament_cmake REQUIRED)
 install(PROGRAMS
   scripts/fairino_state_publisher.py
   scripts/fairino_runtime.py
+  scripts/fairino_oscilloscope.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

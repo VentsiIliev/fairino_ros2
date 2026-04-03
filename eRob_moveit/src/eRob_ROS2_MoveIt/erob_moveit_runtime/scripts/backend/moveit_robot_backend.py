@@ -66,7 +66,7 @@ class MoveItRobotBackend(IRobotBackend):
 
     # ---------------- Movement Methods ----------------
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
         if len(position) != 6:
             return -1
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
@@ -82,8 +82,17 @@ class MoveItRobotBackend(IRobotBackend):
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             x, y, z, rx, ry, rz = position_base
             from motion.strategies import SingleTargetStrategy
-            result = self.node.execute(SingleTargetStrategy(x, y, z, rx, ry, rz, vel_scale, acc_scale,
-                                                            tool_transform=tool_transform))
+            if trajectory_optimizer is not None:
+                result = self.node.execute(SingleTargetStrategy(
+                    x, y, z, rx, ry, rz, vel_scale, acc_scale,
+                    tool_transform=tool_transform,
+                    trajectory_optimizer=trajectory_optimizer,
+                ))
+            else:
+                result = self.node.execute(SingleTargetStrategy(
+                    x, y, z, rx, ry, rz, vel_scale, acc_scale,
+                    tool_transform=tool_transform,
+                ))
             if result != 0:
                 if blocking and result > 0:
                     task_id = getattr(self.node, 'last_submitted_task_id', None)
@@ -402,11 +411,32 @@ class MoveItRobotBackend(IRobotBackend):
 
         try:
             x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
-            return self.node.send_cartesian_goal(
+            avoid_collisions = bool(getattr(config, 'JOG_AVOID_COLLISIONS', True))
+            result = self.node.send_cartesian_goal(
                 x_b, y_b, z_b, rx_b, ry_b, rz_b,
                 vel_scale=vel_scale, acc_scale=acc_scale,
                 queue_if_busy=False,
+                avoid_collisions=avoid_collisions,
             )
+            if result != 0:
+                return result
+
+            import time
+            deadline = time.time() + float(getattr(config, 'JOG_BLOCKING_TIMEOUT_S', 5.0))
+            while time.time() < deadline:
+                if (
+                    not self.node.is_executing
+                    and not self.node.is_motion_active()
+                    and not self.node.has_pending_motion()
+                ):
+                    return self.node.last_move_result
+                time.sleep(0.01)
+
+            self.node.get_logger().error(
+                '[JOG] Timed out waiting for jog motion to complete after %.2fs',
+                float(getattr(config, 'JOG_BLOCKING_TIMEOUT_S', 5.0)),
+            )
+            return -1
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
             return -1

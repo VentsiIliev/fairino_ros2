@@ -1,5 +1,7 @@
 from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
+from builtin_interfaces.msg import Duration
+from copy import deepcopy
 import config
 
 
@@ -41,10 +43,73 @@ class TrajectoryExecutor:
         first_point = joint_trajectory.points[0]
         first_point.positions = ordered_positions
 
-        if first_point.velocities:
-            first_point.velocities = [0.0] * len(ordered_positions)
-        if first_point.accelerations:
-            first_point.accelerations = [0.0] * len(ordered_positions)
+        first_point.velocities = [0.0] * len(ordered_positions)
+        first_point.accelerations = [0.0] * len(ordered_positions)
+
+    @staticmethod
+    def _duration_to_sec(duration_msg):
+        return duration_msg.sec + duration_msg.nanosec / 1e9
+
+    @staticmethod
+    def _sec_to_duration(seconds):
+        whole = int(seconds)
+        nanos = int(round((seconds - whole) * 1e9))
+        if nanos >= 1_000_000_000:
+            whole += 1
+            nanos -= 1_000_000_000
+        return Duration(sec=whole, nanosec=nanos)
+
+    def _soften_trajectory_start(self, joint_trajectory):
+        """Insert a short ramp-in sequence after the live start state."""
+        if len(joint_trajectory.points) < 2:
+            return
+
+        hold_s = float(getattr(config, 'EXECUTOR_START_HOLD_S', 0.0))
+        ramp_points = int(getattr(config, 'EXECUTOR_START_RAMP_POINTS', 0))
+        if hold_s <= 0.0:
+            return
+
+        first_point = joint_trajectory.points[0]
+        second_point = joint_trajectory.points[1]
+        second_time = self._duration_to_sec(second_point.time_from_start)
+
+        # Always create a small ramp-in window, but don't over-inflate extremely short moves.
+        effective_hold_s = min(hold_s, max(0.0, second_time * 0.8))
+        if effective_hold_s <= 1e-6:
+            return
+
+        insert_count = max(1, ramp_points)
+        ramp_points_to_insert = []
+        for idx in range(insert_count):
+            ratio = (idx + 1) / insert_count
+            inserted_point = deepcopy(first_point)
+            inserted_point.time_from_start = self._sec_to_duration(effective_hold_s * ratio)
+
+            if idx < insert_count - 1:
+                position_ratio = 0.5 * ratio
+                inserted_point.positions = [
+                    start + (target - start) * position_ratio
+                    for start, target in zip(first_point.positions, second_point.positions)
+                ]
+                inserted_point.velocities = [0.0] * len(first_point.positions)
+                inserted_point.accelerations = [0.0] * len(first_point.positions)
+            else:
+                inserted_point.positions = list(first_point.positions)
+                inserted_point.velocities = [0.0] * len(first_point.positions)
+                inserted_point.accelerations = [0.0] * len(first_point.positions)
+
+            ramp_points_to_insert.append(inserted_point)
+
+        for idx in range(1, len(joint_trajectory.points)):
+            shifted = self._duration_to_sec(joint_trajectory.points[idx].time_from_start) + effective_hold_s
+            joint_trajectory.points[idx].time_from_start = self._sec_to_duration(shifted)
+
+        for offset, inserted_point in enumerate(ramp_points_to_insert, start=1):
+            joint_trajectory.points.insert(offset, inserted_point)
+        self._node.get_logger().info(
+            f'[Controller] Inserted start ramp ({insert_count} points over {effective_hold_s:.3f}s) '
+            'to soften motion onset'
+        )
 
     def send_trajectory_to_controller(self, joint_trajectory):
         """Send trajectory directly to the low-level controller for smooth execution."""
@@ -80,6 +145,7 @@ class TrajectoryExecutor:
             return
 
         self._overwrite_first_point_with_live_state(joint_trajectory)
+        self._soften_trajectory_start(joint_trajectory)
 
         with self._motion.lock:
             self._motion.is_executing = True

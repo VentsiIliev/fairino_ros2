@@ -544,11 +544,12 @@ class RobotController(Node):
         return self._motion.execute(strategy, queue_if_busy=queue_if_busy)
 
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                            tool_transform=None, queue_if_busy=True):
+                            tool_transform=None, queue_if_busy=True, avoid_collisions=True):
         from motion.strategies import SingleTargetStrategy
         return self.execute(SingleTargetStrategy(
             x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-            tool_transform=tool_transform), queue_if_busy=queue_if_busy)
+            tool_transform=tool_transform,
+            avoid_collisions=avoid_collisions), queue_if_busy=queue_if_busy)
 
     def _on_collision_detected(self):
         """Callback when collision detector triggers."""

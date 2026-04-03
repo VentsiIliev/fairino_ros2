@@ -10,7 +10,7 @@ class MotionStrategy:
 
 class SingleTargetStrategy(MotionStrategy):
     def __init__(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                 tool_transform=None):
+                 tool_transform=None, avoid_collisions=True, trajectory_optimizer=None):
         self.x_mm = x_mm
         self.y_mm = y_mm
         self.z_mm = z_mm
@@ -20,6 +20,8 @@ class SingleTargetStrategy(MotionStrategy):
         self.vel_scale = vel_scale
         self.acc_scale = acc_scale
         self.tool_transform = tool_transform  # per-move TCP override; None = use robot_controller.T_tool
+        self.avoid_collisions = avoid_collisions
+        self.trajectory_optimizer = trajectory_optimizer
 
     def execute(self, robot_controller) -> int:
         from .planning.single_target import send_cartesian_goal
@@ -29,7 +31,9 @@ class SingleTargetStrategy(MotionStrategy):
             self.x_mm, self.y_mm, self.z_mm,
             self.rx, self.ry, self.rz,
             self.vel_scale, self.acc_scale,
-            tool_transform=self.tool_transform)
+            tool_transform=self.tool_transform,
+            avoid_collisions=self.avoid_collisions,
+            trajectory_optimizer=self.trajectory_optimizer)
 
 
 class PathStrategy(MotionStrategy):

@@ -25,6 +25,24 @@ INTERFACE_DEFAULTS = {
     "mode_display": None,
 }
 
+PLOT_METRICS = {
+    "position": lambda self, slave: slave.get("position"),
+    "velocity": lambda self, slave: slave.get("velocity"),
+    "following_error_actual": lambda self, slave: slave.get("following_error_actual"),
+    "motor_current_a": lambda self, slave: self._motor_current_a_by_joint.get(str(slave["joint"])),
+    "drive_output_torque": lambda self, slave: self._drive_output_torque_by_joint.get(str(slave["joint"])),
+    "current_based_output_torque": lambda self, slave: self._current_based_output_torque_by_joint.get(str(slave["joint"])),
+    "friction_torque": lambda self, slave: self._friction_torque_by_joint.get(str(slave["joint"])),
+    "measured_torque": lambda self, slave: self._measured_torque_by_joint.get(str(slave["joint"])),
+    "expected_torque": lambda self, slave: self._expected_torque_by_joint.get(str(slave["joint"])),
+    "torque_difference": lambda self, slave: self._torque_difference_by_joint.get(str(slave["joint"])),
+    "external_torque": lambda self, slave: self._external_torque_by_joint.get(str(slave["joint"])),
+    "contact_active": lambda self, slave: 1.0 if self._contact_active[str(slave["joint"])] else 0.0,
+    "contact_latched": lambda self, slave: 1.0 if self._contact_latched[str(slave["joint"])] else 0.0,
+    "dynamics_active": lambda self, slave: 1.0 if self._dynamics_active[str(slave["joint"])] else 0.0,
+    "dynamics_latched": lambda self, slave: 1.0 if self._dynamics_latched[str(slave["joint"])] else 0.0,
+}
+
 DEFAULT_EFFORT_THRESHOLDS = [20.0, 20.0, 15.0, 8.0, 6.0, 4.0]
 DEFAULT_FOLLOWING_ERROR_THRESHOLDS = [4000.0, 4000.0, 3500.0, 2000.0, 1500.0, 1200.0]
 DEFAULT_COLLISION_CONFIG_PATH = str(
@@ -74,6 +92,9 @@ class ZeroErrCollisionMonitor(Node):
         self.declare_parameter("external_torque_thresholds", [12.0, 12.0, 10.0, 8.0, 6.0, 5.0])
         self.declare_parameter("filter_alpha", 0.7)
         self.declare_parameter("include_gravity", False)
+        self.declare_parameter("static_torque_bias_nm", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.declare_parameter("warmup_sec", 8.0)
+        self.declare_parameter("warmup_vel_threshold_rad_s", 0.02)
         self.declare_parameter("collision_config_path", DEFAULT_COLLISION_CONFIG_PATH)
 
         self._slave_count = int(self.get_parameter("slave_count").value)
@@ -187,7 +208,7 @@ class ZeroErrCollisionMonitor(Node):
         }
         self._last_velocity_vector: Optional[np.ndarray] = None
         self._last_velocity_timestamp: Optional[float] = None
-        self._estimator: Optional[ExternalTorqueEstimator] = None
+        self._estimator: Optional[object] = None
         self._dynamics_enabled = False
 
         if self._use_inverse_dynamics:
@@ -205,6 +226,14 @@ class ZeroErrCollisionMonitor(Node):
             "/zeroerr/collision_monitor/state",
             10,
         )
+        self._plot_publishers = {
+            metric: self.create_publisher(
+                JointState,
+                f"/zeroerr/collision_monitor/plot/{metric}",
+                qos_profile_sensor_data,
+            )
+            for metric in PLOT_METRICS
+        }
         self._config_pub = self.create_publisher(
             String,
             "/zeroerr/collision_monitor/config_state",
@@ -391,6 +420,7 @@ class ZeroErrCollisionMonitor(Node):
                     self._reinitialize_estimator()
                 updated = True
 
+
         return updated
 
     def _load_persisted_config(self) -> None:
@@ -517,6 +547,7 @@ class ZeroErrCollisionMonitor(Node):
         table_msg.data = self._format_table(payload["slaves"])
         self._table_pub.publish(table_msg)
         self._state_pub.publish(self._build_state_msg(payload["slaves"]))
+        self._publish_plot_topics(payload["slaves"], stamp)
         self._publish_config_state()
 
         if self._print_table:
@@ -612,6 +643,9 @@ class ZeroErrCollisionMonitor(Node):
         num_joints = int(self.get_parameter("num_joints").value)
         filter_alpha = float(self.get_parameter("filter_alpha").value)
         include_gravity = bool(self.get_parameter("include_gravity").value)
+        static_torque_bias_nm = list(self.get_parameter("static_torque_bias_nm").value)
+        warmup_sec = float(self.get_parameter("warmup_sec").value)
+        warmup_vel_threshold_rad_s = float(self.get_parameter("warmup_vel_threshold_rad_s").value)
 
         if not urdf_path:
             self.get_logger().warning(
@@ -630,7 +664,13 @@ class ZeroErrCollisionMonitor(Node):
             )
             estimator_mode = self._dynamics_estimator_mode
             if estimator_mode == "momentum_observer":
-                self._estimator = momentum_estimator_class(model, filter_alpha=filter_alpha)
+                self._estimator = momentum_estimator_class(
+                    model,
+                    filter_alpha=filter_alpha,
+                    static_torque_bias_nm=np.array(static_torque_bias_nm, dtype=float),
+                    warmup_sec=warmup_sec,
+                    warmup_vel_threshold_rad_s=warmup_vel_threshold_rad_s,
+                )
             else:
                 self._estimator = external_estimator_class(model, filter_alpha=filter_alpha)
             self._dynamics_enabled = True
@@ -896,6 +936,18 @@ class ZeroErrCollisionMonitor(Node):
             sort_keys=True,
         )
         self._config_pub.publish(msg)
+
+    def _publish_plot_topics(self, slaves: List[Dict[str, Optional[float]]], stamp) -> None:
+        joint_names = [str(slave["joint"]) for slave in slaves]
+        for metric, publisher in self._plot_publishers.items():
+            msg = JointState()
+            msg.header.stamp = stamp
+            msg.name = joint_names
+            msg.position = [
+                self._state_value(PLOT_METRICS[metric](self, slave))
+                for slave in slaves
+            ]
+            publisher.publish(msg)
 
     def _compute_current_based_output_torque(
         self,

@@ -142,6 +142,7 @@ def start_rest_server(
             vel=payload["vel"],
             acc=payload["acc"],
             blocking=payload["blocking"],
+            trajectory_optimizer=payload["trajectory_optimizer"],
         )
         task_id = getattr(robot.node, 'last_submitted_task_id', None)
 

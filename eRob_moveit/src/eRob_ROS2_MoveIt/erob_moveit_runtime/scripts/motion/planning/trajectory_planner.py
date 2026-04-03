@@ -33,13 +33,80 @@ from .planner_utils import _set_result, _is_stale, _begin_execution
 from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collision
 from .jacobian_move import _jacobian_fallback_move
 from ..execution.trajectory_executor import _send_trajectory_to_controller
+from ..execution.trajectory_optimizer import resolve_trajectory_optimizer
 from moveit_msgs.srv import GetCartesianPath
 import config
 
 
 # ─── Main path-planning response handler ─────────────────────────────────────
 
-def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix='[Plan]'):
+def _sanitize_optimizer_start(rc, trajectory, log_prefix):
+    """Align the optimizer input trajectory to the latest live joint state."""
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or not joint_trajectory.points:
+        return trajectory
+
+    current_joint_state = getattr(rc, 'current_joint_state', None)
+    if current_joint_state is None:
+        return trajectory
+
+    state_names = list(getattr(current_joint_state, 'name', []) or [])
+    state_positions = list(getattr(current_joint_state, 'position', []) or [])
+    if not state_names or len(state_names) != len(state_positions):
+        return trajectory
+
+    position_by_name = {
+        name: position
+        for name, position in zip(state_names, state_positions)
+    }
+
+    ordered_positions = []
+    for joint_name in joint_trajectory.joint_names:
+        if joint_name not in position_by_name:
+            return trajectory
+        ordered_positions.append(position_by_name[joint_name])
+
+    align_tol = float(getattr(config, 'OPTIMIZER_START_ALIGN_TOL_RAD', 0.0))
+    merge_tol = float(getattr(config, 'OPTIMIZER_START_MERGE_TOL_RAD', align_tol))
+
+    sanitized = deepcopy(trajectory)
+    points = sanitized.joint_trajectory.points
+    first_point = points[0]
+
+    deltas = [abs(a - b) for a, b in zip(first_point.positions, ordered_positions)]
+    max_delta = max(deltas, default=0.0)
+
+    if max_delta > 0.0:
+        first_point.positions = ordered_positions
+        if hasattr(first_point, 'velocities') and first_point.velocities:
+            first_point.velocities = [0.0] * len(ordered_positions)
+        if hasattr(first_point, 'accelerations') and first_point.accelerations:
+            first_point.accelerations = [0.0] * len(ordered_positions)
+        if hasattr(first_point, 'effort') and first_point.effort:
+            first_point.effort = []
+
+        if max_delta >= align_tol > 0.0:
+            rc.get_logger().info(
+                f'{log_prefix} Aligned optimizer start to live joint state '
+                f'(max joint delta {max_delta:.4f} rad)'
+            )
+
+    if len(points) >= 2 and merge_tol > 0.0:
+        second_point = points[1]
+        second_delta = max(
+            (abs(a - b) for a, b in zip(second_point.positions, first_point.positions)),
+            default=0.0,
+        )
+        if second_delta <= merge_tol:
+            points.pop(1)
+            rc.get_logger().info(
+                f'{log_prefix} Dropped near-duplicate first segment before optimization '
+                f'(max joint delta {second_delta:.4f} rad)'
+            )
+
+    return sanitized
+
+def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix='[Plan]', trajectory_optimizer_name=None):
     """
     Apply TOTG or Ruckig time parameterization and dispatch to the hardware controller.
 
@@ -55,6 +122,8 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
         gen:         plan_generation token for staleness detection
         log_prefix:  log tag, e.g. '[Cartesian Path]' or '[EXECUTE_PATH]'
     """
+    prepared_trajectory = _sanitize_optimizer_start(rc, trajectory, log_prefix)
+
     def on_done(result):
         if _is_stale(rc, gen):
             rc.get_logger().info(f'{log_prefix} Stale TOTG response discarded')
@@ -67,9 +136,10 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
             rc.last_move_result = 0
         _send_trajectory_to_controller(rc, result.joint_trajectory)
 
-    rc.trajectory_optimizer.optimize(
+    optimizer = resolve_trajectory_optimizer(trajectory_optimizer_name, node=rc, default_optimizer=rc.trajectory_optimizer)
+    optimizer.optimize(
         rc,
-        trajectory,
+        prepared_trajectory,
         vel_scaling,
         acc_scaling,
         on_done,
@@ -101,7 +171,7 @@ def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
     return req
 
 
-def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None):
+def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None, trajectory_optimizer_name=None):
     """
     Callback triggered when MoveIt's /compute_cartesian_path service responds.
 
@@ -236,7 +306,8 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         # TOTG or Ruckig adds velocity/acceleration/jerk profiles to the raw
         # joint-space waypoints returned by MoveIt (which have no timing).
         _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
-                          generation, log_prefix='[Cartesian Path]')
+                          generation, log_prefix='[Cartesian Path]',
+                          trajectory_optimizer_name=trajectory_optimizer_name)
 
     except Exception as e:
         robot_controller.get_logger().error(f'[Cartesian Path] Service call failed: {e}')

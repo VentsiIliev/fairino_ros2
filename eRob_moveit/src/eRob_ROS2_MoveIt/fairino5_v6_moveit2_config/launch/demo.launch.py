@@ -4,7 +4,10 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import ExecuteProcess, SetEnvironmentVariable, RegisterEventHandler, TimerAction, LogInfo
 from launch.event_handlers import OnProcessStart, OnProcessExit
+from ament_index_python.packages import get_package_share_directory
 import os
+
+launch_plotjuggler = os.environ.get("FAIRINO_PLOTJUGGLER", "0") == "1"
 
 
 def generate_launch_description():
@@ -101,6 +104,29 @@ def generate_launch_description():
         emulate_tty=True
     )
 
+    motion_oscilloscope = Node(
+        package='fairino5_v6_moveit2_config',
+        executable='fairino_oscilloscope.py',
+        name='fairino_motion_oscilloscope',
+        output='screen',
+        emulate_tty=True
+    )
+
+    gui_actions = [velocity_monitor_gui]
+    if launch_plotjuggler:
+        _pkg_share = get_package_share_directory('fairino5_v6_moveit2_config')
+        _layout = os.path.join(_pkg_share, 'config', 'fairino_plotjuggler.xml')
+        plotjuggler_node = ExecuteProcess(
+            cmd=[
+                "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
+                "--layout", _layout,
+            ],
+            output="screen",
+        )
+        gui_actions.append(plotjuggler_node)
+    else:
+        gui_actions.append(motion_oscilloscope)
+
     # Launch GUI only after the state publisher node starts
     from launch.actions import RegisterEventHandler
     from launch.event_handlers import OnProcessStart
@@ -109,7 +135,7 @@ def generate_launch_description():
         RegisterEventHandler(
             OnProcessStart(
                 target_action=fairino_state_publisher_node,
-                on_start=[velocity_monitor_gui]
+                on_start=gui_actions
             )
         )
     )

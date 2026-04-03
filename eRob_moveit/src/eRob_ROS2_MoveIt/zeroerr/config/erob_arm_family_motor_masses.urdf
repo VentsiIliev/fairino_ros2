@@ -1,4 +1,18 @@
 <robot name="eRobo3" version="1.0">
+  <!--
+    Variant with actuator family masses folded into the moving-link inertials.
+
+    Assumptions:
+      - J1/J2/J3 use eRob80H100T family actuators: 1.94 kg, envelope 85 x 85 x 111.8 mm
+      - J4/J5/J6 use eRob70H100T family actuators: 1.24 kg, envelope 73 x 73 x 99 mm
+      - Actuator mass is assigned to the child moving link of each joint.
+      - Added actuator COM is approximated at half of the outgoing link segment.
+      - Added actuator inertia is approximated as a solid box using the family envelope.
+
+    Sources:
+      - https://zeroerr.cn/eRob/eRob70T.html
+      - https://zeroerr.cn/eRob/eRob80T.html
+  -->
   <joint name="Joint_1" type="revolute">
     <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
     <parent link="base_link"/>
@@ -64,9 +78,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.00054" ixy="0.00000" ixz="0.00000" iyy="0.00052" iyz="0.00000" izz="0.00054"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00308 0.13617"/>
-      <mass value="0.50622"/>
+      <inertia ixx="0.005693" ixy="0.000000" ixz="0.000000" iyy="0.005453" iyz="0.000620" izz="0.003096"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02165 0.08389"/>
+      <mass value="2.44622"/>
     </inertial>
     <visual name="Link_1_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
@@ -84,9 +98,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.01269" ixy="0.00000" ixz="0.00000" iyy="0.01268" iyz="0.00243" izz="0.00175"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.03082 0.16900"/>
-      <mass value="1.59000"/>
+      <inertia ixx="0.007864" ixy="0.000000" ixz="0.000000" iyy="0.006329" iyz="0.000247" izz="0.005072"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.01913 0.17871"/>
+      <mass value="3.53000"/>
     </inertial>
     <visual name="Link_2_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
@@ -104,9 +118,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.00703" ixy="0.00000" ixz="0.00000" iyy="0.00654" iyz="-0.00179" izz="0.00121"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 -0.04066 0.13747"/>
-      <mass value="1.04000"/>
+      <inertia ixx="0.006557" ixy="0.000000" ixz="0.000000" iyy="0.005079" iyz="-0.000664" izz="0.004494"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 -0.02358 0.14840"/>
+      <mass value="2.98000"/>
     </inertial>
     <visual name="Link_3_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
@@ -124,9 +138,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.00025" ixy="0.00000" ixz="0.00000" iyy="0.00024" iyz="0.00000" izz="0.00026"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00001 0.04110 0.00150"/>
-      <mass value="0.31668"/>
+      <inertia ixx="0.001973" ixy="0.000000" ixz="0.000000" iyy="0.001885" iyz="0.000080" izz="0.001439"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02708 0.01584"/>
+      <mass value="1.55668"/>
     </inertial>
     <visual name="Link_4_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
@@ -144,9 +158,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.00025" ixy="0.00000" ixz="0.00000" iyy="0.00026" iyz="0.00000" izz="0.00024"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="-0.00001 0.00150 0.04110"/>
-      <mass value="0.31668"/>
+      <inertia ixx="0.002102" ixy="0.000000" ixz="0.000000" iyy="0.001902" iyz="0.000128" izz="0.001552"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02452 0.02708"/>
+      <mass value="1.55668"/>
     </inertial>
     <visual name="Link_5_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
@@ -164,9 +178,9 @@
       </geometry>
     </collision>
     <inertial>
-      <inertia ixx="0.00004" ixy="0.00000" ixz="0.00000" iyy="0.00007" iyz="0.00000" izz="0.00004"/>
-      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 -0.00578 0.00013"/>
-      <mass value="0.10121"/>
+      <inertia ixx="0.001692" ixy="0.000000" ixz="0.000000" iyy="0.001655" iyz="0.000038" izz="0.001208"/>
+      <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.01898 -0.01386"/>
+      <mass value="1.34121"/>
     </inertial>
     <visual name="Link_6_visual">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>

@@ -103,11 +103,13 @@ def _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_sc
     return 0
 
 
-def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling):
+def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
     gen = _begin_execution(robot_controller)
     future = robot_controller.request_cartesian_path(request)
     future.add_done_callback(
-        lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
+        lambda f: _cartesian_path_response(
+            robot_controller, f, vel_scaling, acc_scaling, gen,
+            trajectory_optimizer_name=trajectory_optimizer_name))
 
 
 def _resolve_start_state(robot_controller, start_pose):
@@ -193,7 +195,7 @@ def _resolve_start_state(robot_controller, start_pose):
 
 
 def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling,
-                          tool_transform=None):
+                          tool_transform=None, avoid_collisions=True, trajectory_optimizer_name=None):
     dx = target_wp[0] - start_wp[0]
     dy = target_wp[1] - start_wp[1]
     dz = target_wp[2] - start_wp[2]
@@ -256,15 +258,17 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
             vel_scaling,
             acc_scaling,
             start_state=start_state,
+            avoid_collisions=avoid_collisions,
         ),
         vel_scaling,
         acc_scaling,
+        trajectory_optimizer_name=trajectory_optimizer_name,
     )
     return 0
 
 
 def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                        tool_transform=None):
+                        tool_transform=None, avoid_collisions=True, trajectory_optimizer=None):
     robot_controller.force_safety_update()
 
     current_cart = robot_controller.prev_cartesian
@@ -278,6 +282,10 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
     robot_controller.get_logger().info(
         f'[MOVE] [{start_wp[0]:.1f}, {start_wp[1]:.1f}, {start_wp[2]:.1f}, RZ={start_wp[5]:.1f}°]'
         f' → [{x_mm:.1f}, {y_mm:.1f}, {z_mm:.1f}, RZ={rz:.1f}°]')
+    if not avoid_collisions:
+        robot_controller.get_logger().info('[MOVE] MoveIt collision checking disabled for this request')
 
     return _execute_single_point(robot_controller, start_wp, target_wp, vel_scale, acc_scale,
-                                 tool_transform=tool_transform)
+                                 tool_transform=tool_transform,
+                                 avoid_collisions=avoid_collisions,
+                                 trajectory_optimizer_name=trajectory_optimizer)

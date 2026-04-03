@@ -50,3 +50,9 @@ def build_trajectory_optimizer(name, node, fallback_name=None):
         return build_trajectory_optimizer(fallback_name, node=node)
 
     raise ValueError(f"Unknown trajectory optimizer: {name}")
+
+
+def resolve_trajectory_optimizer(name, node, default_optimizer):
+    if not name:
+        return default_optimizer
+    return build_trajectory_optimizer(name, node=node, fallback_name="TOTG")

@@ -6,6 +6,20 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
 import shutil
+import yaml
+
+
+def _urdf_path_from_runtime(package_path: str) -> str:
+    rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
+    try:
+        with open(rt_yaml) as f:
+            rt = yaml.safe_load(f) or {}
+        path = rt.get("URDF_PATH", "")
+        if path and os.path.isfile(path):
+            return path
+    except Exception:
+        pass
+    return os.path.join(package_path, "config", "erob_arm_family_motor_masses.urdf")
 
 
 def generate_launch_description():
@@ -18,6 +32,10 @@ def generate_launch_description():
 
     moveit_config = (
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
+        .robot_description(
+            file_path="config/eRobo3.urdf.xacro",
+            mappings={"robot_urdf": _urdf_path_from_runtime(get_package_share_directory("zeroerr"))},
+        )
         .to_moveit_configs()
     )
 
@@ -104,6 +122,9 @@ def generate_launch_description():
         "executable": "zeroerr_collision_monitor.py",
         "name": "zeroerr_collision_monitor",
         "output": "screen",
+        "additional_env": {
+            "EROB_CONFIG_PACKAGE": "zeroerr",
+        },
         "parameters": [{
             "slave_count": 6,
             "poll_period_sec": 0.005,
@@ -125,13 +146,14 @@ def generate_launch_description():
             "model_output_torque_constant_nm_per_a": [4.76, 8.475],
             "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "urdf_path": os.path.join(package_path, "config", "erob_arm_backup_corrected_mass.urdf"),
+            "urdf_path": _urdf_path_from_runtime(package_path),
             "base_link": "base_link",
             "tip_link": "tool0",
             "num_joints": 6,
             "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
             "filter_alpha": 0.7,
             "include_gravity": False,
+            "static_torque_bias_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         }],
     }
     if terminal_prefix:
@@ -151,6 +173,7 @@ def generate_launch_description():
         )
 
     return LaunchDescription([
+        SetEnvironmentVariable("EROB_CONFIG_PACKAGE", "zeroerr"),
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
         SetEnvironmentVariable("MESA_GL_VERSION_OVERRIDE", "3.3"),
         SetEnvironmentVariable("LIBGL_DRI3_DISABLE", "1"),

@@ -76,6 +76,11 @@ def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
     position = payload.get("position")
     if not position or len(position) != 6:
         raise ValueError("Invalid position format")
+    trajectory_optimizer = payload.get("trajectory_optimizer")
+    if trajectory_optimizer is not None:
+        trajectory_optimizer = str(trajectory_optimizer).strip().upper()
+        if trajectory_optimizer not in {"TOTG", "RUCKIG"}:
+            raise ValueError("Invalid trajectory_optimizer; expected TOTG or RUCKIG")
     return {
         "position": position,
         "tool": payload.get("tool", 0),
@@ -83,6 +88,7 @@ def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
         "vel": payload.get("vel", config.DEFAULT_VEL_PERCENT),
         "acc": payload.get("acc", config.DEFAULT_ACC_PERCENT),
         "blocking": payload.get("blocking", True),
+        "trajectory_optimizer": trajectory_optimizer,
     }
 
 
