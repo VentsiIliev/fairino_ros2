@@ -230,33 +230,39 @@
     <color rgba="0.40000 0.40000 0.40000 1.0000"/>
   </material>
     <!-- Tool0 frame -->
-  <link name="tool0">
-    <!-- TEMPORARILY COMMENTED OUT: ToolPointer mesh
-    <visual name="ToolPointer_visual">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+  <link name="tool0"/>
+
+  <joint name="tool0" type="fixed">
+    <parent link="Link_6"/>
+    <child link="tool0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="ring_raster_m5">
+    <visual name="RingRasterM5_visual">
+      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/ring_raster_m5_10_centered.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="tool_material">
         <color rgba="0.7 0.7 0.7 1"/>
       </material>
     </visual>
-    <collision name="ToolPointer_collision">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+    <collision name="RingRasterM5_collision">
+      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/ring_raster_m5_10_centered.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
-    -->
   </link>
 
-  <joint name="tool0" type="fixed">
-    <parent link="Link_6"/>
-    <child link="tool0"/>
-    <origin xyz="0.0 0.042 -0.030" rpy="-1.5708 0.0 3.14159"/>
+  <joint name="ring_raster_m5_joint" type="fixed">
+    <parent link="tool0"/>
+    <child link="ring_raster_m5"/>
+    <origin xyz="0 0.010 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- TCP frame at the actual tool center point (tip of ToolPointer) -->
+  <!-- TCP frame relative to the mounted ring raster tool -->
   <link name="tcp">
     <visual name="TCP_marker">
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -278,9 +284,9 @@
   </link>
 
   <joint name="tcp_joint" type="fixed">
-    <parent link="tool0"/>
+    <parent link="ring_raster_m5"/>
     <child link="tcp"/>
-    <origin xyz="0 -0.0305 -0.083" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
   <material name="tool_marker">

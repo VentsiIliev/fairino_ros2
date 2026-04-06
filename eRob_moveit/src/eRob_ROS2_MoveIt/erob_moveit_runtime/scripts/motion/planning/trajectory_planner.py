@@ -220,6 +220,18 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         if fraction < config.CARTESIAN_MIN_FRACTION:
             requested_delta_mm = robot_controller.get_last_requested_delta_mm()
             stored_wps = robot_controller.get_last_full_waypoints() or []
+            planned_trajectory = getattr(response, 'solution', None)
+            planned_points = len(getattr(getattr(planned_trajectory, 'joint_trajectory', None), 'points', []) or [])
+
+            if 0.0 <= requested_delta_mm <= config.JACOBIAN_FALLBACK_MIN_DELTA_MM and fraction > 0.0:
+                robot_controller.get_logger().info(
+                    '[Cartesian Path] Partial fraction on sub-threshold micro-move '
+                    f'(fraction={fraction * 100:.1f}%, delta={requested_delta_mm:.3f}mm, '
+                    f'points={planned_points}) — treating as already satisfied'
+                )
+                _set_result(robot_controller, 0)
+                return
+
             if (
                 0.0 < requested_delta_mm <= config.SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM
                 and 2 <= len(stored_wps) <= 5

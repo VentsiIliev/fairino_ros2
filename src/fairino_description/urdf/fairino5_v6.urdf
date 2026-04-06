@@ -542,9 +542,11 @@
         <color rgba="0.0 0.0 1.0 1.0"/>
       </material>
     </visual>
-    <!-- Disk attachment -->
+  </link>
+
+  <link name="disk_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 3.97062"/>
       <geometry>
         <mesh filename="package://fairino_description/meshes/disk.stl" scale="0.001 0.001 0.001"/>
       </geometry>
@@ -565,6 +567,12 @@
     <child link="ee_link"/>
     <!-- adjust this to match the flange face -->
     <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="ee_to_disk" type="fixed">
+    <parent link="ee_link"/>
+    <child link="disk_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
 </robot>
