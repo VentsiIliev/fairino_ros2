@@ -1,7 +1,7 @@
 gui_bridge:
   ros__parameters:
     planning_group: "manipulator"
-    end_effector_link: "tcp"
+    end_effector_link: "ee_link"
     base_frame: "base_link"
     joint_names: ["Joint_1", "Joint_2", "Joint_3", "Joint_4", "Joint_5", "Joint_6"]
 

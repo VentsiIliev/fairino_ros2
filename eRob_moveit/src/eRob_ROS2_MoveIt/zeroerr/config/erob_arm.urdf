@@ -215,69 +215,46 @@
     <material name="base">
     <color rgba="0.40000 0.40000 0.40000 1.0000"/>
   </material>
-    <!-- Tool0 frame -->
-  <link name="tool0"/>
+    <!-- End effector frame -->
+  <link name="ee_link"/>
 
-  <joint name="tool0" type="fixed">
+  <joint name="link6_to_ee" type="fixed">
     <parent link="Link_6"/>
-    <child link="tool0"/>
-    <origin xyz="0 0.042 0" rpy="0 0 0"/>
+    <child link="ee_link"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
   </joint>
 
-  <link name="ring_raster_m5">
+  <link name="disk_mount"/>
+
+  <joint name="ee_to_disk_mount" type="fixed">
+    <parent link="ee_link"/>
+    <child link="disk_mount"/>
+    <origin xyz="0 0 0" rpy="0 0 -1.1344640138"/>
+  </joint>
+
+  <link name="disk_link">
     <visual name="RingRasterM5_visual">
-      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ring_raster_m5_10_centered.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/disk.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="tool_material">
         <color rgba="0.7 0.7 0.7 1"/>
       </material>
     </visual>
     <collision name="RingRasterM5_collision">
-      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ring_raster_m5_10_centered.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/disk.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
 
-  <joint name="ring_raster_m5_joint" type="fixed">
-    <parent link="tool0"/>
-    <child link="ring_raster_m5"/>
-    <origin xyz="0 0.010 0" rpy="0 0 0"/>
-  </joint>
-
-  <!-- TCP frame relative to the mounted ring raster tool -->
-  <link name="tcp">
-    <visual name="TCP_marker">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <sphere radius="0.008"/>
-      </geometry>
-      <material name="tool_marker">
-        <color rgba="1 0 0 1"/>
-      </material>
-    </visual>
-    <!-- TEMPORARILY COMMENTED OUT: ToolPointer collision
-    <collision name="TCP_collision">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
-      </geometry>
-    </collision>
-    -->
-  </link>
-
-  <joint name="tcp_joint" type="fixed">
-    <parent link="ring_raster_m5"/>
-    <child link="tcp"/>
+  <joint name="disk_mount_to_disk" type="fixed">
+    <parent link="disk_mount"/>
+    <child link="disk_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
-
-  <material name="tool_marker">
-    <color rgba="1 0 0 1"/>
-  </material>
 
   <!-- TABLE: Fixed collision object representing the work surface -->
   <!-- This allows MoveIt to automatically avoid the table without manual Z limits -->
@@ -337,7 +314,7 @@
   <link name="camera_optical_frame"/>
 
   <joint name="camera_joint" type="fixed">
-    <parent link="tool0"/>
+    <parent link="ee_link"/>
     <child link="camera_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>

@@ -4,9 +4,9 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - 0
-- -0.735
-- -1.256
-- 17.01
+- 0
+- -3.188
+- 15.83
 NUM_JOINTS: 6
 JOINT_NAMES:
 - Joint_1
@@ -17,9 +17,9 @@ JOINT_NAMES:
 - Joint_6
 PLANNING_GROUP: manipulator
 BASE_LINK: base_link
-EE_LINK: tcp
-WRIST_LINK: tool0
-COLLISION_TIP_LINK: tool0
+EE_LINK: ee_link
+WRIST_LINK: Link_6
+COLLISION_TIP_LINK: Link_6
 URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_backup_corrected_mass.urdf
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 TOOL_REGISTRY:
@@ -66,5 +66,4 @@ JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
 # observer integrates it.  Use the drive_output_torque value seen at rest for
 # each joint to cancel gravity-model mismatch between the URDF and firmware.
 # Example: J3 reads ~3.68 Nm at the home pose → set index 2 = 3.68.
-STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 3.68, 0.0, 0.0, 0.0]
-
+STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

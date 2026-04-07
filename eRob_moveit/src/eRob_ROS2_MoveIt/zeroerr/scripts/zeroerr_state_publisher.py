@@ -2,7 +2,7 @@
 """
 ZeroErr State Publisher
 =======================
-Publishes Cartesian position by looking up the 'tcp' frame in 'base_link'
+Publishes Cartesian position by looking up the 'ee_link' frame in 'base_link'
 via TF2, which is populated by the standard robot_state_publisher node from
 /joint_states + URDF.
 
@@ -24,11 +24,11 @@ from tf2_ros import LookupException, ConnectivityException, ExtrapolationExcepti
 
 
 _BASE_FRAME = 'base_link'
-_TCP_FRAME  = 'tcp'
+_TCP_FRAME  = 'ee_link'
 
 
 class ZeroErrStatePublisher(CartesianPublisherBase):
-    """Cartesian source: TF2 lookup of 'tcp' in 'base_link' (URDF-consistent)."""
+    """Cartesian source: TF2 lookup of 'ee_link' in 'base_link' (URDF-consistent)."""
 
     def __init__(self) -> None:
         super().__init__('zeroerr_state_publisher')

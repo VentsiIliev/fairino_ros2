@@ -17,14 +17,7 @@
         <joint name="Joint_4"/>
         <joint name="Joint_5"/>
         <joint name="Joint_6"/>
-        <joint name="tcp_joint"/>
-    </group>
-    <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
-    <group name="tool0_group">
-        <link name="tool0"/>
-    </group>
-    <group name="tcp_group">
-        <link name="tcp"/>
+        <link name="ee_link"/>
     </group>
     <group_state name="home" group="manipulator">
         <joint name="Joint_1" value="-1.57"/>
@@ -36,8 +29,6 @@
     </group_state>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
     <virtual_joint name="virtual_joint" type="fixed" parent_frame="world" child_link="base_link"/>
-    <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
-    <end_effector name="tcp" parent_link="tool0" group="tcp_group"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
     <!-- With expanded joint limits (J2: ±180°, J3: ±180°, J4: -280° to +180°), many links can now collide -->
     <!-- ONLY disable collision checking for: 1) Adjacent links, 2) Links that are ALWAYS geometrically impossible to collide -->
@@ -50,9 +41,10 @@
     <disable_collisions link1="Link_3" link2="Link_4" reason="Adjacent"/>
     <disable_collisions link1="Link_4" link2="Link_5" reason="Adjacent"/>
     <disable_collisions link1="Link_5" link2="Link_6" reason="Adjacent"/>
-    <disable_collisions link1="Link_6" link2="tool0" reason="Adjacent"/>
-    <disable_collisions link1="tool0" link2="tcp" reason="Adjacent"/>
-    <!--<disable_collisions link1="tool0" link2="camera_link" reason="Adjacent"/>-->
+    <disable_collisions link1="Link_6" link2="ee_link" reason="Adjacent"/>
+    <disable_collisions link1="ee_link" link2="disk_link" reason="Adjacent"/>
+    <disable_collisions link1="disk_link" link2="Link_6" reason="Adjacent"/>
+    <!--<disable_collisions link1="ee_link" link2="camera_link" reason="Adjacent"/>-->
     <!--<disable_collisions link1="camera_link" link2="camera_optical_frame" reason="Adjacent"/>-->
 
     <!-- Only disable for links that are truly unreachable by geometry -->
@@ -80,36 +72,31 @@
     <disable_collisions link1="Link_6" link2="base_link" reason="Never"/>
     <disable_collisions link1="Link_6" link2="base_link_inertial" reason="Never"/>
 
-    <!-- Tool contains ToolPointer mesh - disable collisions with nearby wrist links -->
-    <disable_collisions link1="tool0" link2="base_link" reason="Never"/>
-    <disable_collisions link1="tool0" link2="base_link_inertial" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_1" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_2" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_3" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_4" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_5" reason="Never"/>
-    <disable_collisions link1="tool0" link2="Link_6" reason="Adjacent"/>
-    <disable_collisions link1="tool0" link2="tcp" reason="Adjacent"/>
-    <!--<disable_collisions link1="tool0" link2="camera_link" reason="Adjacent"/>-->
-    <!-- ENABLED: tool0 vs Link_2, Link_3 - ToolPointer can reach these -->
+    <!-- disk tool - disable collisions with adjacent and unreachable links -->
+    <disable_collisions link1="disk_link" link2="Link_6" reason="Adjacent"/>
+    <disable_collisions link1="disk_link" link2="Link_5" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="Link_4" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="Link_3" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="Link_2" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="Link_1" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="base_link" reason="Never"/>
+    <disable_collisions link1="disk_link" link2="base_link_inertial" reason="Never"/>
 
-    <!-- TCP is a small sphere at tool tip - disable collisions with links it cannot reach -->
-    <disable_collisions link1="tcp" link2="base_link" reason="Never"/>
-    <disable_collisions link1="tcp" link2="base_link_inertial" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_1" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_2" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_3" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_4" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_5" reason="Never"/>
-    <disable_collisions link1="tcp" link2="Link_6" reason="Adjacent"/>
-    <disable_collisions link1="tcp" link2="tool0" reason="Adjacent"/>
-    <!--<disable_collisions link1="tcp" link2="camera_link" reason="Adjacent"/>-->
+    <!-- Tool contains ToolPointer mesh - disable collisions with nearby wrist links -->
+    <disable_collisions link1="ee_link" link2="base_link" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="base_link_inertial" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_1" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_2" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_3" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_4" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_5" reason="Never"/>
+    <disable_collisions link1="ee_link" link2="Link_6" reason="Adjacent"/>
+    <!--<disable_collisions link1="ee_link" link2="camera_link" reason="Adjacent"/>-->
 
     <!-- Tool-mounted camera — commented out (camera removed from URDF) -->
     <!--<disable_collisions link1="camera_link" link2="Link_6" reason="Adjacent"/>-->
     <!--<disable_collisions link1="camera_link" link2="Link_5" reason="Never"/>-->
-    <!--<disable_collisions link1="camera_link" link2="tool0" reason="Adjacent"/>-->
-    <!--<disable_collisions link1="camera_link" link2="tcp" reason="Adjacent"/>-->
+    <!--<disable_collisions link1="camera_link" link2="ee_link" reason="Adjacent"/>-->
 
     <!-- TABLE collision checking -->
     <!-- Disable collisions with table for links that can never reach it (upper arm and wrist) -->
@@ -121,7 +108,5 @@
     <disable_collisions link1="table" link2="Link_4" reason="Never"/>
     <disable_collisions link1="table" link2="Link_5" reason="Never"/>
     <disable_collisions link1="table" link2="Link_6" reason="Never"/>
-    <disable_collisions link1="table" link2="tool0" reason="Never"/>
-    <disable_collisions link1="table" link2="tcp" reason="Never"/>
 
 </robot>

@@ -20,7 +20,7 @@ move_group:
     trajectory_execution.allowed_start_tolerance: 0.01
     trajectory_execution.execution_duration_monitoring: false
     trajectory_execution.trajectory_execution_manager.wait_for_trajectory_completion: false
-    trajectory_execution.cartesian_speed_limited_link: "tcp"
+    trajectory_execution.cartesian_speed_limited_link: "ee_link"
     trajectory_execution.monitor_overshoot: false
     collision_detection:
       plugin: "collision_detection/CollisionPluginFCL"

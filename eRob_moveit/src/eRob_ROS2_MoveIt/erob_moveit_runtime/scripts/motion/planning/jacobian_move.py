@@ -81,8 +81,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
             T = T @ trans(0,      -0.014,   0.311  ) @ roty(-q[3])   # Joint_4 axis -Y
             T = T @ trans(0,       0.047,   0.039  ) @ rotz( q[4])   # Joint_5 axis +Z
             T = T @ trans(0,       0.0608,  0.047  ) @ roty( q[5])   # Joint_6 axis +Y
-            T = T @ trans(0,       0.042,  -0.030  ) @ rotz(np.pi) @ rotx(-np.pi / 2)  # tool0 fixed
-            T = T @ trans(0,      -0.0305, -0.083  )                  # tcp fixed
+            T = T @ rotx(-np.pi / 2)  # tool0 fixed: xyz=0,0,0 rpy=-1.5708,0,0 (backup URDF)
         else:
             # Fairino5 v6 DH FK
             T = np.eye(4)
