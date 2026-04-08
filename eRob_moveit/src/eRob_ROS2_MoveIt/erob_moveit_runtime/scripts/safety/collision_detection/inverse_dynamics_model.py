@@ -76,7 +76,7 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
         base_link: str = config.BASE_LINK,
         tip_link: str = config.COLLISION_TIP_LINK,
         num_joints: int = config.NUM_JOINTS,
-        gravity: np.ndarray = np.array([0, 0, 9.81]),
+        gravity: np.ndarray = np.array([0, 0, -9.81]),
         include_gravity: bool = False,
         logger=None
     ):

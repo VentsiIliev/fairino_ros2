@@ -3,6 +3,7 @@ from enums import RobotAxis, Direction
 import config
 from backend.i_robot_backend import IRobotBackend
 
+
 class MoveItRobotBackend(IRobotBackend):
     """
     Shared MoveIt-backed robot transport used by the REST API regardless of robot hardware.
@@ -122,7 +123,7 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"move_liner error: {e}")
             return -1
 
-    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True):
+    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True, trajectory_optimizer=None):
         """Execute path with automatic selection of best execution strategy.
 
         Strategy selection based on path density:
@@ -218,9 +219,12 @@ class MoveItRobotBackend(IRobotBackend):
         else:
             # ✅ ALWAYS use compute_cartesian_path for consistency
             # Controller's spline interpolation + TOTG provides smooth continuous motion
-            self.node.get_logger().info("[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)")
+            self.node.get_logger().info(
+                "[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)"
+                + (f" with {trajectory_optimizer}" if trajectory_optimizer else "")
+            )
             from motion.strategies import PathStrategy
-            result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc))
+            result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc, trajectory_optimizer))
 
         # Return error code if planning/submission failed
         if result < 0:

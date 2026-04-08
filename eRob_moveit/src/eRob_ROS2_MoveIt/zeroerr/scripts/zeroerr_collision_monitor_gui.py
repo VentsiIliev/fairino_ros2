@@ -37,9 +37,7 @@ from std_msgs.msg import String
 
 
 INTERFACES = [
-    "drive_output_torque",
-    "motor_current_a",
-    "current_based_output_torque",
+    "torque_sensor",
     "friction_torque",
     "measured_torque",
     "expected_torque",
@@ -56,9 +54,7 @@ INTERFACES = [
 
 TABLE_COLUMNS = [
     "Joint",
-    "DrvTau Nm",
-    "Cur A",
-    "CurTau Nm",
+    "SensTau Nm",
     "FricTau Nm",
     "MeasTau Nm",
     "ExpTau Nm",
@@ -86,14 +82,9 @@ class CollisionMonitorGuiNode(Node):
             "following_error_thresholds": [float("nan")] * 6,
             "external_torque_thresholds": [float("nan")] * 6,
             "dynamics_estimator_mode": "momentum_observer",
-            "measured_torque_source": "drive_torque",
-            "joint_models": ["eRob80H100T"] * 3 + ["eRob70H100T"] * 3,
             "friction_coulomb_nm": [0.0] * 6,
             "friction_viscous_nm_per_rad_s": [0.0] * 6,
             "friction_velocity_deadband_rad_s": 0.01,
-            "model_names": ["eRob70H100T", "eRob80H100T"],
-            "model_rated_current_ma": [3500.0, 5500.0],
-            "model_output_torque_constant_nm_per_a": [4.76, 8.475],
         }
         self.config_stamp = "No config"
         self.config_pub = self.create_publisher(String, "/zeroerr/collision_monitor/config", 10)
@@ -169,7 +160,6 @@ class CollisionMonitorWindow(QMainWindow):
         threshold_layout.addWidget(QLabel("ExtTau"), 0, 3)
         threshold_layout.addWidget(QLabel("FricC"), 0, 4)
         threshold_layout.addWidget(QLabel("FricV"), 0, 5)
-        threshold_layout.addWidget(QLabel("Model"), 0, 6)
         self.threshold_inputs: Dict[str, Dict[str, QLineEdit]] = {}
         for row in range(6):
             joint_name = f"Joint_{row + 1}"
@@ -182,7 +172,6 @@ class CollisionMonitorWindow(QMainWindow):
                     "external_torque",
                     "friction_coulomb",
                     "friction_viscous",
-                    "joint_model",
                 ],
                 start=1,
             ):
@@ -199,14 +188,10 @@ class CollisionMonitorWindow(QMainWindow):
         self.dynamics_estimator_mode_input = QLineEdit()
         self.dynamics_estimator_mode_input.setMaximumWidth(120)
         threshold_layout.addWidget(self.dynamics_estimator_mode_input, 7, 3)
-        threshold_layout.addWidget(QLabel("TorqueSrc"), 7, 4)
-        self.measured_torque_source_input = QLineEdit()
-        self.measured_torque_source_input.setMaximumWidth(140)
-        threshold_layout.addWidget(self.measured_torque_source_input, 7, 5)
-        threshold_layout.addWidget(QLabel("Deadband"), 7, 6)
+        threshold_layout.addWidget(QLabel("Deadband"), 7, 4)
         self.friction_deadband_input = QLineEdit()
         self.friction_deadband_input.setMaximumWidth(80)
-        threshold_layout.addWidget(self.friction_deadband_input, 7, 7)
+        threshold_layout.addWidget(self.friction_deadband_input, 7, 5)
         self.apply_button = QPushButton("Apply Config")
         self.apply_button.clicked.connect(self._apply_config)
         threshold_layout.addWidget(self.apply_button, 8, 4, 1, 2)
@@ -217,22 +202,6 @@ class CollisionMonitorWindow(QMainWindow):
         self.baseline_status_label.setStyleSheet("color: #555;")
         threshold_layout.addWidget(self.baseline_status_label, 8, 2, 1, 2)
         collision_layout.addWidget(threshold_group)
-
-        model_group = QGroupBox("Model Constants")
-        model_layout = QGridLayout(model_group)
-        model_layout.addWidget(QLabel("Model"), 0, 0)
-        model_layout.addWidget(QLabel("Rated Current mA"), 0, 1)
-        model_layout.addWidget(QLabel("Output Kt Nm/A"), 0, 2)
-        self.model_inputs: Dict[str, Dict[str, QLineEdit]] = {}
-        for row, model_name in enumerate(["eRob70H100T", "eRob80H100T"], start=1):
-            model_layout.addWidget(QLabel(model_name), row, 0)
-            self.model_inputs[model_name] = {}
-            for column, key in enumerate(["rated_current_ma", "output_torque_constant"], start=1):
-                edit = QLineEdit()
-                edit.setMaximumWidth(120)
-                model_layout.addWidget(edit, row, column)
-                self.model_inputs[model_name][key] = edit
-        collision_layout.addWidget(model_group)
 
         summary_group = QGroupBox("Detector Summary")
         summary_layout = QGridLayout(summary_group)
@@ -373,9 +342,7 @@ class CollisionMonitorWindow(QMainWindow):
             self._update_event_log(joint_name, joint)
             row_values = [
                 joint_name,
-                self._fmt(joint.get("drive_output_torque"), 2),
-                self._fmt(joint.get("motor_current_a"), 3),
-                self._fmt(joint.get("current_based_output_torque"), 2),
+                self._fmt(joint.get("torque_sensor"), 2),
                 self._fmt(joint.get("friction_torque"), 2),
                 self._fmt(joint.get("measured_torque"), 2),
                 self._fmt(joint.get("expected_torque"), 2),
@@ -652,7 +619,6 @@ class CollisionMonitorWindow(QMainWindow):
             ext_values = config.get("external_torque_thresholds", [])
             friction_c_values = config.get("friction_coulomb_nm", [])
             friction_v_values = config.get("friction_viscous_nm_per_rad_s", [])
-            joint_models = config.get("joint_models", [])
             if row < len(effort_values):
                 self.threshold_inputs[joint_name]["effort"].setText(str(effort_values[row]))
             if row < len(follow_values):
@@ -663,23 +629,10 @@ class CollisionMonitorWindow(QMainWindow):
                 self.threshold_inputs[joint_name]["friction_coulomb"].setText(str(friction_c_values[row]))
             if row < len(friction_v_values):
                 self.threshold_inputs[joint_name]["friction_viscous"].setText(str(friction_v_values[row]))
-            if row < len(joint_models):
-                self.threshold_inputs[joint_name]["joint_model"].setText(str(joint_models[row]))
 
         self.confirm_cycles_input.setText(str(config.get("confirm_cycles", 1)))
         self.dynamics_estimator_mode_input.setText(str(config.get("dynamics_estimator_mode", "momentum_observer")))
-        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "drive_torque")))
         self.friction_deadband_input.setText(str(config.get("friction_velocity_deadband_rad_s", 0.01)))
-        model_names = config.get("model_names", [])
-        rated_currents = config.get("model_rated_current_ma", [])
-        output_constants = config.get("model_output_torque_constant_nm_per_a", [])
-        for row, model_name in enumerate(model_names):
-            if model_name not in self.model_inputs:
-                continue
-            if row < len(rated_currents):
-                self.model_inputs[model_name]["rated_current_ma"].setText(str(rated_currents[row]))
-            if row < len(output_constants):
-                self.model_inputs[model_name]["output_torque_constant"].setText(str(output_constants[row]))
         self._config_loaded = True
 
     def _load_collision_persisted_inputs(self) -> None:
@@ -697,7 +650,6 @@ class CollisionMonitorWindow(QMainWindow):
             ext_values = config.get("external_torque_thresholds", [])
             friction_c_values = config.get("friction_coulomb_nm", [])
             friction_v_values = config.get("friction_viscous_nm_per_rad_s", [])
-            joint_models = config.get("joint_models", [])
             if row < len(effort_values):
                 self.threshold_inputs[joint_name]["effort"].setText(str(effort_values[row]))
             if row < len(follow_values):
@@ -708,23 +660,10 @@ class CollisionMonitorWindow(QMainWindow):
                 self.threshold_inputs[joint_name]["friction_coulomb"].setText(str(friction_c_values[row]))
             if row < len(friction_v_values):
                 self.threshold_inputs[joint_name]["friction_viscous"].setText(str(friction_v_values[row]))
-            if row < len(joint_models):
-                self.threshold_inputs[joint_name]["joint_model"].setText(str(joint_models[row]))
 
         self.confirm_cycles_input.setText(str(config.get("confirm_cycles", 1)))
         self.dynamics_estimator_mode_input.setText(str(config.get("dynamics_estimator_mode", "momentum_observer")))
-        self.measured_torque_source_input.setText(str(config.get("measured_torque_source", "drive_torque")))
         self.friction_deadband_input.setText(str(config.get("friction_velocity_deadband_rad_s", 0.01)))
-        model_names = config.get("model_names", [])
-        rated_currents = config.get("model_rated_current_ma", [])
-        output_constants = config.get("model_output_torque_constant_nm_per_a", [])
-        for row, model_name in enumerate(model_names):
-            if model_name not in self.model_inputs:
-                continue
-            if row < len(rated_currents):
-                self.model_inputs[model_name]["rated_current_ma"].setText(str(rated_currents[row]))
-            if row < len(output_constants):
-                self.model_inputs[model_name]["output_torque_constant"].setText(str(output_constants[row]))
 
     def _apply_config(self) -> None:
         try:
@@ -735,13 +674,8 @@ class CollisionMonitorWindow(QMainWindow):
                 "external_torque_thresholds": [],
                 "friction_coulomb_nm": [],
                 "friction_viscous_nm_per_rad_s": [],
-                "joint_models": [],
                 "dynamics_estimator_mode": self.dynamics_estimator_mode_input.text().strip(),
-                "measured_torque_source": self.measured_torque_source_input.text().strip(),
                 "friction_velocity_deadband_rad_s": float(self.friction_deadband_input.text()),
-                "model_names": [],
-                "model_rated_current_ma": [],
-                "model_output_torque_constant_nm_per_a": [],
             }
             for joint_name in [f"Joint_{index}" for index in range(1, 7)]:
                 config["effort_thresholds"].append(
@@ -758,17 +692,6 @@ class CollisionMonitorWindow(QMainWindow):
                 )
                 config["friction_viscous_nm_per_rad_s"].append(
                     float(self.threshold_inputs[joint_name]["friction_viscous"].text())
-                )
-                config["joint_models"].append(
-                    self.threshold_inputs[joint_name]["joint_model"].text().strip()
-                )
-            for model_name in ["eRob70H100T", "eRob80H100T"]:
-                config["model_names"].append(model_name)
-                config["model_rated_current_ma"].append(
-                    float(self.model_inputs[model_name]["rated_current_ma"].text())
-                )
-                config["model_output_torque_constant_nm_per_a"].append(
-                    float(self.model_inputs[model_name]["output_torque_constant"].text())
                 )
         except ValueError:
             self.status_label.setText("Invalid config value")
@@ -836,22 +759,16 @@ class CollisionMonitorWindow(QMainWindow):
         joint_index = int(joint_name.split("_")[1]) - 1
         external_thresholds = self.ros_node.config.get("external_torque_thresholds", [])
         effort_thresholds = self.ros_node.config.get("effort_thresholds", [])
-        joint_models = self.ros_node.config.get("joint_models", [])
         external_threshold = external_thresholds[joint_index] if joint_index < len(external_thresholds) else float("nan")
         effort_threshold = effort_thresholds[joint_index] if joint_index < len(effort_thresholds) else float("nan")
-        source = str(self.ros_node.config.get("measured_torque_source", "drive_torque"))
-        model = str(joint_models[joint_index]) if joint_index < len(joint_models) else "?"
         return (
+            f"sens={self._fmt(joint.get('torque_sensor'), 2)}Nm "
             f"meas={self._fmt(joint.get('measured_torque'), 2)}Nm "
             f"exp={self._fmt(joint.get('expected_torque'), 2)}Nm "
             f"diff={self._fmt(joint.get('torque_difference'), 2)}Nm "
             f"ext={self._fmt(joint.get('external_torque'), 2)}Nm/{float(external_threshold):.2f} "
-            f"drv={self._fmt(joint.get('drive_output_torque'), 2)}Nm "
-            f"cur={self._fmt(joint.get('motor_current_a'), 3)}A "
-            f"cur_tau={self._fmt(joint.get('current_based_output_torque'), 2)}Nm "
             f"fric={self._fmt(joint.get('friction_torque'), 2)}Nm "
-            f"contact_thr={float(effort_threshold):.2f} "
-            f"src={source} model={model}"
+            f"contact_thr={float(effort_threshold):.2f}"
         )
 
 

@@ -228,7 +228,7 @@ pin_ros2_control() {
 pin_non_rt_away() {
   local quiet="${1:-0}"
   local non_rt_cores="$NON_RT_CORES"
-  local procs=(move_group rviz2 zeroerr_state_publisher ipp_helper ruckig_helper "main.py" spawner static_transform)
+  local procs=(move_group rviz2 zeroerr_state_publisher ipp_helper "main.py" spawner static_transform)
   if [ "$PIN_NON_RT_AWAY" != "1" ]; then
     if [ "$quiet" != "1" ]; then
       echo "Leaving non-RT ROS2 processes unpinned."

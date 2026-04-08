@@ -16,14 +16,17 @@ def _urdf_path_from_runtime(package_path: str) -> str:
     except Exception:
         pass
     return os.path.join(package_path, "config", "erob_arm_family_motor_masses.urdf")
-from launch.actions import ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.event_handlers import OnProcessExit, OnProcessStart
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_demo_launch
 
 
 def generate_launch_description():
+    torque_log_enabled = LaunchConfiguration("torque_log_enabled")
+    torque_log_path = LaunchConfiguration("torque_log_path")
     os.environ["DISPLAY"] = os.environ.get("DISPLAY", ":1")
     ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
     terminal_prefix = None
@@ -32,7 +35,6 @@ def generate_launch_description():
         if terminal:
             terminal_prefix = f"{terminal} -e"
     launch_collision_gui = os.environ.get("ZEROERR_COLLISION_MONITOR_GUI", "0") == "1"
-    launch_plotjuggler = os.environ.get("ZEROERR_PLOTJUGGLER", "0") == "1"
 
     package_path = get_package_share_directory("zeroerr")
     urdf_path = _urdf_path_from_runtime(package_path)
@@ -48,6 +50,13 @@ def generate_launch_description():
     )
 
     demo_ld = generate_demo_launch(moveit_config)
+    demo_ld.add_action(DeclareLaunchArgument("torque_log_enabled", default_value="false"))
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "torque_log_path",
+            default_value=os.path.join(package_path, "data", "torque_sensor_log.csv"),
+        )
+    )
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
 
@@ -131,20 +140,6 @@ def generate_launch_description():
     )
     demo_ld.add_action(ipp_helper_node)
 
-    ruckig_helper_node = Node(
-        package="erob_moveit_runtime",
-        executable="ruckig_helper",
-        name="ruckig_helper",
-        output="screen",
-        parameters=[
-            moveit_config.robot_description,
-            moveit_config.robot_description_semantic,
-            moveit_config.robot_description_kinematics,
-            moveit_config.joint_limits,
-        ],
-    )
-    demo_ld.add_action(ruckig_helper_node)
-
     # ZeroErr-specific state publisher: TCP position via TF2 lookup (URDF-consistent)
     # (joint vel/acc + Cartesian vel/acc from shared base class)
     zeroerr_state_publisher = Node(
@@ -168,30 +163,20 @@ def generate_launch_description():
             "poll_period_sec": 0.005,
             "confirm_cycles": 3,
             "print_table": False,
-        "use_inverse_dynamics": True,
-        "dynamics_estimator_mode": "momentum_observer",
-        "measured_torque_source": "drive_torque",
-        "static_torque_bias_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "joint_models": [
-                "eRob80H100T",
-                "eRob80H100T",
-                "eRob80H100T",
-                "eRob70H100T",
-                "eRob70H100T",
-                "eRob70H100T",
-            ],
-            "model_names": ["eRob70H100T", "eRob80H100T"],
-            "model_rated_current_ma": [3500.0, 5500.0],
-            "model_output_torque_constant_nm_per_a": [4.76, 8.475],
+            "use_inverse_dynamics": True,
+            "dynamics_estimator_mode": "momentum_observer",
+            "static_torque_bias_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "urdf_path": urdf_path,
             "base_link": "base_link",
-            "tip_link": "Link_6",
+            "tip_link": "disk_link",
             "num_joints": 6,
-        "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
-        "filter_alpha": 0.7,
-        "include_gravity": False,
+            "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
+            "filter_alpha": 0.7,
+            "include_gravity": True,
+            "torque_log_enabled": torque_log_enabled,
+            "torque_log_path": torque_log_path,
         }],
     }
     if terminal_prefix:
@@ -224,19 +209,21 @@ def generate_launch_description():
             )
         )
 
-    if launch_plotjuggler:
-        plotjuggler_node = ExecuteProcess(
-            cmd=["/opt/ros/rolling/lib/plotjuggler/plotjuggler"],
-            output="screen",
-        )
-        demo_ld.add_action(
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=wait_for_op_process,
-                    on_exit=[TimerAction(period=16.0, actions=[plotjuggler_node])],
-                )
+    plotjuggler_node = ExecuteProcess(
+        cmd=[
+            "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
+            "--disable_opengl",
+        ],
+        output="screen",
+    )
+    demo_ld.add_action(
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=wait_for_op_process,
+                on_exit=[TimerAction(period=16.0, actions=[plotjuggler_node])],
             )
         )
+    )
 
     velocity_monitor_gui = Node(
         package="zeroerr",

@@ -37,13 +37,14 @@ class SingleTargetStrategy(MotionStrategy):
 
 
 class PathStrategy(MotionStrategy):
-    def __init__(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
+    def __init__(self, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling, trajectory_optimizer=None):
         self.waypoints_mm = waypoints_mm
         self.rx = rx
         self.ry = ry
         self.rz = rz
         self.vel_scaling = vel_scaling
         self.acc_scaling = acc_scaling
+        self.trajectory_optimizer = trajectory_optimizer
 
     def execute(self, robot_controller) -> int:
         from .planning.trajectory import send_path_cartesian
@@ -51,4 +52,5 @@ class PathStrategy(MotionStrategy):
         return send_path_cartesian(
             planner_context,
             self.waypoints_mm, self.rx, self.ry, self.rz,
-            self.vel_scaling, self.acc_scaling)
+            self.vel_scaling, self.acc_scaling,
+            trajectory_optimizer_name=self.trajectory_optimizer)

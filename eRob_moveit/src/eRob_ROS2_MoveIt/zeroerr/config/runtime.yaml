@@ -6,7 +6,7 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - -3.188
-- 15.83
+- 16.83
 NUM_JOINTS: 6
 JOINT_NAMES:
 - Joint_1
@@ -19,9 +19,10 @@ PLANNING_GROUP: manipulator
 BASE_LINK: base_link
 EE_LINK: ee_link
 WRIST_LINK: Link_6
-COLLISION_TIP_LINK: Link_6
-URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_backup_corrected_mass.urdf
+COLLISION_TIP_LINK: disk_link
+URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
+TRAJECTORY_OPTIMIZER: TOTG
 TOOL_REGISTRY:
   TOOL_0:
   - 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ JOINT_NAMES = [f"Joint_{index}" for index in range(1, 7)]
 INTERFACE_DEFAULTS = {
     "motor_actual_current": None,
     "following_error_actual": None,
+    "torque_sensor": None,
     "statusword": None,
     "error_code": None,
     "mode_display": None,
@@ -29,9 +31,7 @@ PLOT_METRICS = {
     "position": lambda self, slave: slave.get("position"),
     "velocity": lambda self, slave: slave.get("velocity"),
     "following_error_actual": lambda self, slave: slave.get("following_error_actual"),
-    "motor_current_a": lambda self, slave: self._motor_current_a_by_joint.get(str(slave["joint"])),
-    "drive_output_torque": lambda self, slave: self._drive_output_torque_by_joint.get(str(slave["joint"])),
-    "current_based_output_torque": lambda self, slave: self._current_based_output_torque_by_joint.get(str(slave["joint"])),
+    "torque_sensor": lambda self, slave: slave.get("torque_sensor"),
     "friction_torque": lambda self, slave: self._friction_torque_by_joint.get(str(slave["joint"])),
     "measured_torque": lambda self, slave: self._measured_torque_by_joint.get(str(slave["joint"])),
     "expected_torque": lambda self, slave: self._expected_torque_by_joint.get(str(slave["joint"])),
@@ -65,29 +65,12 @@ class ZeroErrCollisionMonitor(Node):
         )
         self.declare_parameter("use_inverse_dynamics", False)
         self.declare_parameter("dynamics_estimator_mode", "momentum_observer")
-        self.declare_parameter("measured_torque_source", "drive_torque")
         self.declare_parameter("friction_coulomb_nm", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("friction_viscous_nm_per_rad_s", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("friction_velocity_deadband_rad_s", 0.01)
-        self.declare_parameter(
-            "joint_models",
-            ["eRob80H100T", "eRob80H100T", "eRob80H100T", "eRob70H100T", "eRob70H100T", "eRob70H100T"],
-        )
-        self.declare_parameter(
-            "model_names",
-            ["eRob70H100T", "eRob80H100T"],
-        )
-        self.declare_parameter(
-            "model_rated_current_ma",
-            [3500.0, 5500.0],
-        )
-        self.declare_parameter(
-            "model_output_torque_constant_nm_per_a",
-            [4.76, 8.475],
-        )
         self.declare_parameter("urdf_path", "")
         self.declare_parameter("base_link", "base_link")
-        self.declare_parameter("tip_link", "Link_6")
+        self.declare_parameter("tip_link", "disk_link")
         self.declare_parameter("num_joints", 6)
         self.declare_parameter("external_torque_thresholds", [12.0, 12.0, 10.0, 8.0, 6.0, 5.0])
         self.declare_parameter("filter_alpha", 0.7)
@@ -96,6 +79,11 @@ class ZeroErrCollisionMonitor(Node):
         self.declare_parameter("warmup_sec", 8.0)
         self.declare_parameter("warmup_vel_threshold_rad_s", 0.02)
         self.declare_parameter("collision_config_path", DEFAULT_COLLISION_CONFIG_PATH)
+        self.declare_parameter("torque_log_enabled", False)
+        self.declare_parameter(
+            "torque_log_path",
+            str(Path(__file__).resolve().parents[1] / "data" / "torque_sensor_log.csv"),
+        )
 
         self._slave_count = int(self.get_parameter("slave_count").value)
         self._print_table = bool(self.get_parameter("print_table").value)
@@ -104,21 +92,12 @@ class ZeroErrCollisionMonitor(Node):
         self._dynamics_estimator_mode = str(
             self.get_parameter("dynamics_estimator_mode").value
         ).strip().lower()
-        self._measured_torque_source = str(
-            self.get_parameter("measured_torque_source").value
-        ).strip().lower()
         friction_coulomb_nm = list(self.get_parameter("friction_coulomb_nm").value)
         friction_viscous_nm_per_rad_s = list(
             self.get_parameter("friction_viscous_nm_per_rad_s").value
         )
         self._friction_velocity_deadband_rad_s = float(
             self.get_parameter("friction_velocity_deadband_rad_s").value
-        )
-        joint_models = list(self.get_parameter("joint_models").value)
-        model_names = list(self.get_parameter("model_names").value)
-        model_rated_current_ma = list(self.get_parameter("model_rated_current_ma").value)
-        model_output_torque_constant = list(
-            self.get_parameter("model_output_torque_constant_nm_per_a").value
         )
         period = float(self.get_parameter("poll_period_sec").value)
         effort_thresholds = list(self.get_parameter("effort_thresholds").value)
@@ -140,10 +119,6 @@ class ZeroErrCollisionMonitor(Node):
             joint_name: float(external_torque_thresholds[index])
             for index, joint_name in enumerate(JOINT_NAMES[: self._slave_count])
         }
-        self._joint_models = {
-            joint_name: str(joint_models[index])
-            for index, joint_name in enumerate(JOINT_NAMES[: self._slave_count])
-        }
         self._friction_coulomb_nm = {
             joint_name: float(friction_coulomb_nm[index])
             for index, joint_name in enumerate(JOINT_NAMES[: self._slave_count])
@@ -151,14 +126,6 @@ class ZeroErrCollisionMonitor(Node):
         self._friction_viscous_nm_per_rad_s = {
             joint_name: float(friction_viscous_nm_per_rad_s[index])
             for index, joint_name in enumerate(JOINT_NAMES[: self._slave_count])
-        }
-        self._model_rated_current_ma = {
-            str(model_name): float(value)
-            for model_name, value in zip(model_names, model_rated_current_ma)
-        }
-        self._model_output_torque_constant = {
-            str(model_name): float(value)
-            for model_name, value in zip(model_names, model_output_torque_constant)
         }
 
         self._latest_payload: Dict[str, Dict[str, Optional[float]]] = {
@@ -185,12 +152,6 @@ class ZeroErrCollisionMonitor(Node):
         self._expected_torque_by_joint = {
             joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
         }
-        self._drive_output_torque_by_joint = {
-            joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
-        }
-        self._motor_current_a_by_joint = {
-            joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
-        }
         self._friction_torque_by_joint = {
             joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
         }
@@ -203,11 +164,12 @@ class ZeroErrCollisionMonitor(Node):
         self._external_torque_by_joint = {
             joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
         }
-        self._current_based_output_torque_by_joint = {
-            joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
-        }
         self._last_velocity_vector: Optional[np.ndarray] = None
         self._last_velocity_timestamp: Optional[float] = None
+        self._last_logged_velocity_by_joint = {
+            joint_name: None for joint_name in JOINT_NAMES[: self._slave_count]
+        }
+        self._last_logged_timestamp: Optional[float] = None
         self._estimator: Optional[object] = None
         self._dynamics_enabled = False
 
@@ -218,6 +180,11 @@ class ZeroErrCollisionMonitor(Node):
             str(self.get_parameter("collision_config_path").value)
         )
         self._load_persisted_config()
+        self._torque_log_enabled = bool(self.get_parameter("torque_log_enabled").value)
+        self._torque_log_path = Path(str(self.get_parameter("torque_log_path").value))
+        self._torque_log_header_written = False
+        if self._torque_log_enabled:
+            self._init_torque_log()
 
         self._json_pub = self.create_publisher(String, "/zeroerr/collision_monitor/json", 10)
         self._table_pub = self.create_publisher(String, "/zeroerr/collision_monitor/table", 10)
@@ -332,16 +299,8 @@ class ZeroErrCollisionMonitor(Node):
                                 self._friction_viscous_nm_per_rad_s[joint_name]
                                 for joint_name in JOINT_NAMES[: self._slave_count]
                             ],
-                            "joint_models": [
-                                self._joint_models[joint_name]
-                                for joint_name in JOINT_NAMES[: self._slave_count]
-                            ],
                             "friction_velocity_deadband_rad_s": self._friction_velocity_deadband_rad_s,
-                            "measured_torque_source": self._measured_torque_source,
                             "dynamics_estimator_mode": self._dynamics_estimator_mode,
-                            "model_names": list(self._model_rated_current_ma.keys()),
-                            "model_rated_current_ma": list(self._model_rated_current_ma.values()),
-                            "model_output_torque_constant_nm_per_a": list(self._model_output_torque_constant.values()),
                         },
                         indent=2,
                         sort_keys=True,
@@ -383,19 +342,6 @@ class ZeroErrCollisionMonitor(Node):
             payload.get("friction_viscous_nm_per_rad_s"),
             self._friction_viscous_nm_per_rad_s,
         )
-        updated |= self._apply_string_update(
-            payload.get("joint_models"),
-            self._joint_models,
-        )
-        updated |= self._apply_model_constant_update(
-            payload.get("model_rated_current_ma"),
-            self._model_rated_current_ma,
-        )
-        updated |= self._apply_model_constant_update(
-            payload.get("model_output_torque_constant_nm_per_a"),
-            self._model_output_torque_constant,
-        )
-
         friction_velocity_deadband_rad_s = payload.get("friction_velocity_deadband_rad_s")
         if friction_velocity_deadband_rad_s is not None:
             self._friction_velocity_deadband_rad_s = max(
@@ -403,13 +349,6 @@ class ZeroErrCollisionMonitor(Node):
                 float(friction_velocity_deadband_rad_s),
             )
             updated = True
-
-        measured_torque_source = payload.get("measured_torque_source")
-        if measured_torque_source is not None:
-            source = str(measured_torque_source).strip().lower()
-            if source in {"current_based_torque", "drive_torque"}:
-                self._measured_torque_source = source
-                updated = True
 
         dynamics_estimator_mode = payload.get("dynamics_estimator_mode")
         if dynamics_estimator_mode is not None:
@@ -454,36 +393,6 @@ class ZeroErrCollisionMonitor(Node):
             changed = True
         return changed
 
-    def _apply_string_update(
-        self,
-        values: Optional[List[str]],
-        target: Dict[str, str],
-    ) -> bool:
-        if values is None:
-            return False
-        changed = False
-        for index, joint_name in enumerate(JOINT_NAMES[: self._slave_count]):
-            if index >= len(values):
-                break
-            target[joint_name] = str(values[index]).strip()
-            changed = True
-        return changed
-
-    def _apply_model_constant_update(
-        self,
-        values: Optional[List[float]],
-        target: Dict[str, float],
-    ) -> bool:
-        if values is None:
-            return False
-        changed = False
-        for index, model_name in enumerate(target.keys()):
-            if index >= len(values):
-                break
-            target[model_name] = float(values[index])
-            changed = True
-        return changed
-
     def _publish_snapshot(self) -> None:
         if not self._joint_state_seen and not self._joint_state_warned:
             self.get_logger().warning("[ZeroErrCollisionMonitor] Waiting for /joint_states...")
@@ -508,29 +417,13 @@ class ZeroErrCollisionMonitor(Node):
             state = dict(self._latest_payload[joint_name])
             state["joint"] = joint_name
             state["slave"] = slave_index
-            state["motor_current_a"] = self._compute_motor_current_a(
-                joint_name,
-                state.get("motor_actual_current"),
-            )
-            self._motor_current_a_by_joint[joint_name] = state["motor_current_a"]
-            state["drive_output_torque"] = self._compute_output_torque_from_permille(
-                joint_name,
-                state.get("effort"),
-            )
-            self._drive_output_torque_by_joint[joint_name] = state["drive_output_torque"]
-            state["current_based_output_torque"] = self._compute_output_torque_from_permille(
-                joint_name,
-                state.get("motor_actual_current"),
-            )
-            self._current_based_output_torque_by_joint[joint_name] = state["current_based_output_torque"]
             state["friction_torque"] = self._compute_friction_torque(
                 joint_name,
                 state.get("velocity"),
             )
             self._friction_torque_by_joint[joint_name] = state["friction_torque"]
             state["measured_torque"] = self._compute_measured_torque(
-                joint_name,
-                state.get("velocity"),
+                state.get("torque_sensor"),
             )
             self._measured_torque_by_joint[joint_name] = state["measured_torque"]
             payload["slaves"].append(state)
@@ -552,6 +445,9 @@ class ZeroErrCollisionMonitor(Node):
 
         if self._print_table:
             self.get_logger().info("\n" + table_msg.data)
+
+        if self._torque_log_enabled:
+            self._append_torque_log(payload["slaves"], stamp)
 
     def _evaluate_collisions(self, slaves: List[Dict[str, Optional[float]]]) -> None:
         for slave in slaves:
@@ -763,8 +659,7 @@ class ZeroErrCollisionMonitor(Node):
             ):
                 return
             measured_torque = self._compute_measured_torque(
-                str(slave["joint"]),
-                slave.get("velocity"),
+                slave.get("torque_sensor"),
             )
             if measured_torque is None:
                 return
@@ -802,21 +697,17 @@ class ZeroErrCollisionMonitor(Node):
 
     def _format_table(self, slaves: List[Dict[str, Optional[float]]]) -> str:
         lines = [
-            "slv joint     drv_tau(Nm) cur(A) cur_tau(Nm) fric_tau(Nm) meas_tau(Nm) exp_tau(Nm) diff_tau(Nm) ext_tau(Nm) foll_err",
+            "slv joint     sens_tau(Nm) fric_tau(Nm) meas_tau(Nm) exp_tau(Nm) diff_tau(Nm) ext_tau(Nm) foll_err",
         ]
         for slave in slaves:
             joint_name = slave.get("joint", "")
             external_torque = self._external_torque_by_joint.get(slave.get("joint", ""))
             lines.append(
-                "{slave:>3} {joint:<7} {drive_output_torque:>11} {motor_current_a:>7} {current_based_output_torque:>11} {friction_torque:>12} "
+                "{slave:>3} {joint:<7} {torque_sensor:>12} {friction_torque:>12} "
                 "{measured_torque:>12} {expected_torque:>11} {torque_difference:>12} {external_torque:>11} {following_error_actual:>8}".format(
                     slave=slave.get("slave", "NA"),
                     joint=joint_name or "NA",
-                    drive_output_torque=self._fmt_float(self._drive_output_torque_by_joint.get(joint_name), 2),
-                    motor_current_a=self._fmt_float(self._motor_current_a_by_joint.get(joint_name), 3),
-                    current_based_output_torque=self._fmt_float(
-                        self._current_based_output_torque_by_joint.get(joint_name), 2
-                    ),
+                    torque_sensor=self._fmt_float(slave.get("torque_sensor"), 2),
                     friction_torque=self._fmt_float(self._friction_torque_by_joint.get(joint_name), 2),
                     measured_torque=self._fmt_float(self._measured_torque_by_joint.get(joint_name), 2),
                     expected_torque=self._fmt_float(self._expected_torque_by_joint.get(joint_name), 2),
@@ -830,6 +721,93 @@ class ZeroErrCollisionMonitor(Node):
             )
         return "\n".join(lines)
 
+    def _init_torque_log(self) -> None:
+        self._torque_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._torque_log_header_written = self._torque_log_path.exists() and self._torque_log_path.stat().st_size > 0
+        self.get_logger().info(
+            f"[ZeroErrCollisionMonitor] Torque logging enabled -> {self._torque_log_path}"
+        )
+
+    def _append_torque_log(self, slaves: List[Dict[str, Optional[float]]], stamp) -> None:
+        timestamp = f"{stamp.sec}.{stamp.nanosec:09d}"
+        timestamp_s = float(stamp.sec) + float(stamp.nanosec) / 1e9
+        acceleration_by_joint: Dict[str, Optional[float]] = {}
+        for slave in slaves:
+            joint_name = str(slave["joint"])
+            acceleration_by_joint[joint_name] = self._compute_joint_acceleration(
+                joint_name,
+                slave.get("velocity"),
+                timestamp_s,
+            )
+
+        with self._torque_log_path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            if not self._torque_log_header_written:
+                writer.writerow(
+                    [
+                        "timestamp",
+                        "joint",
+                        "position_rad",
+                        "velocity_rad_s",
+                        "acceleration_rad_s2",
+                        "torque_sensor_nm",
+                        "measured_torque_nm",
+                        "expected_torque_nm",
+                        "external_torque_nm",
+                        "following_error_actual",
+                    ]
+                )
+                self._torque_log_header_written = True
+
+            for slave in slaves:
+                joint_name = str(slave["joint"])
+                writer.writerow(
+                    [
+                        timestamp,
+                        joint_name,
+                        self._csv_value(slave.get("position")),
+                        self._csv_value(slave.get("velocity")),
+                        self._csv_value(acceleration_by_joint.get(joint_name)),
+                        self._csv_value(slave.get("torque_sensor")),
+                        self._csv_value(self._measured_torque_by_joint.get(joint_name)),
+                        self._csv_value(self._expected_torque_by_joint.get(joint_name)),
+                        self._csv_value(self._external_torque_by_joint.get(joint_name)),
+                        self._csv_value(slave.get("following_error_actual")),
+                    ]
+                )
+
+        self._last_logged_timestamp = timestamp_s
+        for slave in slaves:
+            joint_name = str(slave["joint"])
+            velocity = slave.get("velocity")
+            self._last_logged_velocity_by_joint[joint_name] = (
+                None if velocity is None else float(velocity)
+            )
+
+    def _compute_joint_acceleration(
+        self,
+        joint_name: str,
+        velocity: Optional[float],
+        timestamp_s: float,
+    ) -> Optional[float]:
+        if velocity is None:
+            return None
+        previous_velocity = self._last_logged_velocity_by_joint.get(joint_name)
+        if previous_velocity is None or self._last_logged_timestamp is None:
+            return None
+        dt = timestamp_s - self._last_logged_timestamp
+        if dt <= 1e-6:
+            return None
+        return (float(velocity) - previous_velocity) / dt
+
+    def _csv_value(self, value: Optional[float]) -> str:
+        if value is None:
+            return ""
+        value_f = float(value)
+        if not np.isfinite(value_f):
+            return ""
+        return f"{value_f:.9f}"
+
     def _build_state_msg(self, slaves: List[Dict[str, Optional[float]]]) -> DynamicJointState:
         msg = DynamicJointState()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -841,9 +819,7 @@ class ZeroErrCollisionMonitor(Node):
             interface_value.interface_names = [
                 "position",
                 "velocity",
-                "drive_output_torque",
-                "motor_current_a",
-                "current_based_output_torque",
+                "torque_sensor",
                 "friction_torque",
                 "measured_torque",
                 "expected_torque",
@@ -863,9 +839,7 @@ class ZeroErrCollisionMonitor(Node):
             interface_value.values = [
                 self._state_value(slave.get("position")),
                 self._state_value(slave.get("velocity")),
-                self._state_value(self._drive_output_torque_by_joint.get(str(slave["joint"]))),
-                self._state_value(self._motor_current_a_by_joint.get(str(slave["joint"]))),
-                self._state_value(self._current_based_output_torque_by_joint.get(str(slave["joint"]))),
+                self._state_value(slave.get("torque_sensor")),
                 self._state_value(self._friction_torque_by_joint.get(str(slave["joint"]))),
                 self._state_value(self._measured_torque_by_joint.get(str(slave["joint"]))),
                 self._state_value(self._expected_torque_by_joint.get(str(slave["joint"]))),
@@ -909,11 +883,6 @@ class ZeroErrCollisionMonitor(Node):
                     for joint_name in JOINT_NAMES[: self._slave_count]
                 ],
                 "dynamics_estimator_mode": self._dynamics_estimator_mode,
-                "measured_torque_source": self._measured_torque_source,
-                "joint_models": [
-                    self._joint_models[joint_name]
-                    for joint_name in JOINT_NAMES[: self._slave_count]
-                ],
                 "friction_coulomb_nm": [
                     self._friction_coulomb_nm[joint_name]
                     for joint_name in JOINT_NAMES[: self._slave_count]
@@ -923,15 +892,6 @@ class ZeroErrCollisionMonitor(Node):
                     for joint_name in JOINT_NAMES[: self._slave_count]
                 ],
                 "friction_velocity_deadband_rad_s": self._friction_velocity_deadband_rad_s,
-                "model_names": list(self._model_rated_current_ma.keys()),
-                "model_rated_current_ma": [
-                    self._model_rated_current_ma[model_name]
-                    for model_name in self._model_rated_current_ma.keys()
-                ],
-                "model_output_torque_constant_nm_per_a": [
-                    self._model_output_torque_constant[model_name]
-                    for model_name in self._model_output_torque_constant.keys()
-                ],
             },
             sort_keys=True,
         )
@@ -948,43 +908,6 @@ class ZeroErrCollisionMonitor(Node):
                 for slave in slaves
             ]
             publisher.publish(msg)
-
-    def _compute_current_based_output_torque(
-        self,
-        joint_name: str,
-        motor_actual_current_permille: Optional[float],
-    ) -> Optional[float]:
-        return self._compute_output_torque_from_permille(joint_name, motor_actual_current_permille)
-
-    def _compute_motor_current_a(
-        self,
-        joint_name: str,
-        motor_actual_current_permille: Optional[float],
-    ) -> Optional[float]:
-        if motor_actual_current_permille is None:
-            return None
-        model = self._joint_models.get(joint_name)
-        if model is None:
-            return None
-        rated_current_ma = self._model_rated_current_ma.get(model)
-        if rated_current_ma is None:
-            return None
-
-        return (float(motor_actual_current_permille) * rated_current_ma / 1000.0) / 1000.0
-
-    def _compute_output_torque_from_permille(
-        self,
-        joint_name: str,
-        raw_permille: Optional[float],
-    ) -> Optional[float]:
-        motor_current_a = self._compute_motor_current_a(joint_name, raw_permille)
-        if motor_current_a is None:
-            return None
-        model = self._joint_models.get(joint_name)
-        output_torque_constant = self._model_output_torque_constant.get(model) if model is not None else None
-        if output_torque_constant is None:
-            return None
-        return output_torque_constant * motor_current_a
 
     def _compute_friction_torque(
         self,
@@ -1005,19 +928,11 @@ class ZeroErrCollisionMonitor(Node):
 
     def _compute_measured_torque(
         self,
-        joint_name: str,
-        velocity: Optional[float],
+        torque_sensor: Optional[float],
     ) -> Optional[float]:
-        if self._measured_torque_source == "current_based_torque":
-            raw_torque = self._current_based_output_torque_by_joint.get(joint_name)
-        else:
-            raw_torque = self._drive_output_torque_by_joint.get(joint_name)
-        if raw_torque is None:
+        if torque_sensor is None or not np.isfinite(torque_sensor):
             return None
-        friction_torque = self._compute_friction_torque(joint_name, velocity)
-        if friction_torque is None:
-            friction_torque = 0.0
-        return float(raw_torque) - float(friction_torque)
+        return float(torque_sensor)
 
     def _fmt_float(self, value: Optional[float], decimals: int) -> str:
         if value is None:

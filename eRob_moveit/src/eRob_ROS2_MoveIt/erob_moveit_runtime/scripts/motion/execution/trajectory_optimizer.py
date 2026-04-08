@@ -2,6 +2,7 @@
 """Strategy seam for trajectory time parameterization."""
 
 from abc import ABC, abstractmethod
+import config
 
 
 class ITrajectoryOptimizer(ABC):
@@ -53,6 +54,17 @@ def build_trajectory_optimizer(name, node, fallback_name=None):
 
 
 def resolve_trajectory_optimizer(name, node, default_optimizer):
-    if not name:
+    requested = (name or "").upper()
+    configured = str(getattr(config, "TRAJECTORY_OPTIMIZER", "") or "").upper()
+
+    if configured == "TOTG" and requested == "RUCKIG":
+        logger = getattr(node, "get_logger", lambda: None)()
+        if logger is not None:
+            logger.warning(
+                "[TrajectoryOptimizer] Ignoring per-request optimizer 'RUCKIG' because runtime is pinned to 'TOTG'"
+            )
         return default_optimizer
-    return build_trajectory_optimizer(name, node=node, fallback_name="TOTG")
+
+    if not requested:
+        return default_optimizer
+    return build_trajectory_optimizer(requested, node=node, fallback_name="TOTG")

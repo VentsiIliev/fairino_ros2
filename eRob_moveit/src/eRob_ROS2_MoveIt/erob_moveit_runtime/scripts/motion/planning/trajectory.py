@@ -12,15 +12,33 @@ import numpy as np
 import config
 
 
-def send_path_cartesian(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
+def send_path_cartesian(
+    robot_controller,
+    waypoints_mm,
+    rx,
+    ry,
+    rz,
+    vel_scaling,
+    acc_scaling,
+    trajectory_optimizer_name=None,
+):
     robot_controller.force_safety_update()
-    result = _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling)
+    result = _execute_path(
+        robot_controller,
+        waypoints_mm,
+        rx,
+        ry,
+        rz,
+        vel_scaling,
+        acc_scaling,
+        trajectory_optimizer_name=trajectory_optimizer_name,
+    )
     if result != 0:
         robot_controller.mark_current_motion_complete(result)
     return result
 
 
-def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling):
+def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
     robot_controller.set_last_requested_delta_mm(0.0)
     num_waypoints = len(waypoints_mm)
     robot_controller.get_logger().info(f'[EXECUTE_PATH] Received path with {num_waypoints} waypoints')
@@ -64,7 +82,7 @@ def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_s
                 f'[EXECUTE_PATH] Gap {approach_dist:.1f}mm > {config.PATH_APPROACH_THRESHOLD_MM}mm threshold — '
                 f'planning first, then approaching')
             _plan_then_approach(robot_controller, waypoints, waypoints_mm[0], rx, ry, rz,
-                                vel_scaling, acc_scaling, max_step)
+                                vel_scaling, acc_scaling, max_step, trajectory_optimizer_name)
             return 0
 
     # Normal flow: robot is close to first waypoint, plan from current state
@@ -72,12 +90,21 @@ def _execute_path(robot_controller, waypoints_mm, rx, ry, rz, vel_scaling, acc_s
     robot_controller.get_logger().info(f'[Cartesian Path] max_step={max_step*1000:.1f}mm')
     gen = _begin_execution(robot_controller)
     future = robot_controller.request_cartesian_path(request)
-    future.add_done_callback(lambda f: _cartesian_path_response(robot_controller, f, vel_scaling, acc_scaling, gen))
+    future.add_done_callback(
+        lambda f: _cartesian_path_response(
+            robot_controller,
+            f,
+            vel_scaling,
+            acc_scaling,
+            gen,
+            trajectory_optimizer_name=trajectory_optimizer_name,
+        )
+    )
     return 0
 
 
 def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
-                        vel_scaling, acc_scaling, max_step):
+                        vel_scaling, acc_scaling, max_step, trajectory_optimizer_name=None):
     """
     Three-phase execution for when the robot is far from the path start:
 
@@ -91,7 +118,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
     """
 
     # ── Phase 1: Quick IK for first waypoint ──────────────────────────────────
-    ik_request = _build_cartesian_request(robot_controller, [waypoints[0]], 0.1, 0.0, 0.0,
+    ik_request = _build_cartesian_request(robot_controller, [waypoints[0]], 0.1, 1.0, 1.0,
                                           avoid_collisions=False)
 
     robot_controller.get_logger().info('[EXECUTE_PATH] Phase 1: IK query for first waypoint...')
@@ -184,7 +211,12 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             return
 
         # Store trajectory for deferred execution
-        robot_controller.stage_pending_path(resp.solution, vel_scaling, acc_scaling)
+        robot_controller.stage_pending_path(
+            resp.solution,
+            vel_scaling,
+            acc_scaling,
+            trajectory_optimizer_name=trajectory_optimizer_name,
+        )
 
         # Queue trajectory execution — fires after approach completes
         robot_controller.submit_motion_task(_execute_pending_trajectory, [robot_controller])
@@ -223,7 +255,7 @@ def _execute_pending_trajectory(robot_controller):
         robot_controller.clear_pending_path()
         return -1
 
-    trajectory, vel_scaling, acc_scaling = robot_controller.consume_pending_path()
+    trajectory, vel_scaling, acc_scaling, trajectory_optimizer_name = robot_controller.consume_pending_path()
     if vel_scaling is None:
         vel_scaling = config.DEFAULT_VEL_SCALING
     if acc_scaling is None:
@@ -244,6 +276,13 @@ def _execute_pending_trajectory(robot_controller):
         return 0
 
     gen = _begin_execution(robot_controller)
-    _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
-                      gen, log_prefix='[EXECUTE_PATH]')
+    _apply_time_param(
+        robot_controller,
+        trajectory,
+        vel_scaling,
+        acc_scaling,
+        gen,
+        log_prefix='[EXECUTE_PATH]',
+        trajectory_optimizer_name=trajectory_optimizer_name,
+    )
     return 0

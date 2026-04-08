@@ -175,6 +175,7 @@ def start_rest_server(
                 vel=payload["vel"],
                 acc=payload["acc"],
                 blocking=payload["blocking"],
+                trajectory_optimizer=payload["trajectory_optimizer"],
             )
         except Exception as e:
             import traceback

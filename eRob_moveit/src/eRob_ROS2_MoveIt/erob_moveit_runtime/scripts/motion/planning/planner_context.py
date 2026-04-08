@@ -32,6 +32,7 @@ class PlannerContext:
         self._pending_path_trajectory = None
         self._pending_path_vel_scaling = None
         self._pending_path_acc_scaling = None
+        self._pending_path_trajectory_optimizer = None
 
     def get_logger(self):
         return self._node.get_logger()
@@ -142,16 +143,18 @@ class PlannerContext:
     def get_last_full_waypoints(self):
         return self._last_full_waypoints
 
-    def stage_pending_path(self, trajectory, vel_scaling, acc_scaling):
+    def stage_pending_path(self, trajectory, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
         self._pending_path_trajectory = trajectory
         self._pending_path_vel_scaling = vel_scaling
         self._pending_path_acc_scaling = acc_scaling
+        self._pending_path_trajectory_optimizer = trajectory_optimizer_name
 
     def consume_pending_path(self):
         result = (
             self._pending_path_trajectory,
             self._pending_path_vel_scaling,
             self._pending_path_acc_scaling,
+            self._pending_path_trajectory_optimizer,
         )
         self.clear_pending_path()
         return result
@@ -160,6 +163,7 @@ class PlannerContext:
         self._pending_path_trajectory = None
         self._pending_path_vel_scaling = None
         self._pending_path_acc_scaling = None
+        self._pending_path_trajectory_optimizer = None
 
     def get_fk_client(self):
         return self._planner_support.get_fk_client()

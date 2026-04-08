@@ -13,6 +13,7 @@ class TrajectoryExecutor:
         self._motion = coordinator
         self._queue = motion_queue
         self._controller_client = controller_client
+        self._last_sent_trajectory = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
@@ -58,6 +59,67 @@ class TrajectoryExecutor:
             whole += 1
             nanos -= 1_000_000_000
         return Duration(sec=whole, nanosec=nanos)
+
+    def _log_final_trajectory_segment(self, joint_trajectory, count=5):
+        if not joint_trajectory or not joint_trajectory.points:
+            return
+        tail = joint_trajectory.points[-count:]
+        self._node.get_logger().info(
+            f'[Controller] Final {len(tail)} commanded points:'
+        )
+        start_index = len(joint_trajectory.points) - len(tail)
+        for offset, point in enumerate(tail):
+            index = start_index + offset
+            timestamp = self._duration_to_sec(point.time_from_start)
+            self._node.get_logger().info(
+                f'[Controller]   Point[{index}] t={timestamp:.3f}s pos='
+                f'{[round(p, 6) for p in point.positions]}'
+            )
+
+    def _get_latest_joint_state_in_trajectory_order(self, joint_names):
+        current_joint_state = getattr(self._node, 'current_joint_state', None)
+        if current_joint_state is None:
+            return None
+
+        state_names = list(getattr(current_joint_state, 'name', []) or [])
+        state_positions = list(getattr(current_joint_state, 'position', []) or [])
+        if not state_names or len(state_names) != len(state_positions):
+            return None
+
+        position_by_name = {
+            name: position
+            for name, position in zip(state_names, state_positions)
+        }
+        ordered_positions = []
+        for joint_name in joint_names:
+            if joint_name not in position_by_name:
+                return None
+            ordered_positions.append(position_by_name[joint_name])
+        return ordered_positions
+
+    def _log_final_tracking_error(self):
+        joint_trajectory = self._last_sent_trajectory
+        if joint_trajectory is None or not joint_trajectory.points:
+            return
+
+        expected = list(joint_trajectory.points[-1].positions)
+        actual = self._get_latest_joint_state_in_trajectory_order(joint_trajectory.joint_names)
+        if actual is None or len(actual) != len(expected):
+            self._node.get_logger().warning(
+                '[Controller] Final joint-state diagnostics unavailable'
+            )
+            return
+
+        errors = [actual_i - expected_i for actual_i, expected_i in zip(actual, expected)]
+        self._node.get_logger().error(
+            f'[Controller] Actual final joint state: {[round(v, 6) for v in actual]}'
+        )
+        self._node.get_logger().error(
+            f'[Controller] Expected final joint state: {[round(v, 6) for v in expected]}'
+        )
+        self._node.get_logger().error(
+            f'[Controller] Final joint error (actual - expected): {[round(v, 6) for v in errors]}'
+        )
 
     def _soften_trajectory_start(self, joint_trajectory):
         """Insert a short ramp-in sequence after the live start state."""
@@ -146,6 +208,9 @@ class TrajectoryExecutor:
 
         self._overwrite_first_point_with_live_state(joint_trajectory)
         self._soften_trajectory_start(joint_trajectory)
+        log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
+        if callable(log_drive_state):
+            log_drive_state()
 
         with self._motion.lock:
             self._motion.is_executing = True
@@ -163,6 +228,7 @@ class TrajectoryExecutor:
         controller_goal.trajectory = joint_trajectory
         controller_goal.path_tolerance = []
         controller_goal.goal_tolerance = goal_tolerance
+        self._last_sent_trajectory = deepcopy(joint_trajectory)
 
         if len(joint_trajectory.points) > 0:
             last_point = joint_trajectory.points[-1]
@@ -178,6 +244,7 @@ class TrajectoryExecutor:
             self._node.get_logger().info(
                 f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
             self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+            self._log_final_trajectory_segment(joint_trajectory)
         else:
             time_tolerance_sec = config.EXECUTOR_TIME_MIN_S
 
@@ -254,6 +321,7 @@ class TrajectoryExecutor:
             else:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution failed with error: {result.error_code}')
+                self._log_final_tracking_error()
                 self._motion.last_move_result = result.error_code
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Result error: {e}')

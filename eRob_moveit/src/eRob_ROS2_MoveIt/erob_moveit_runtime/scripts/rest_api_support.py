@@ -99,6 +99,11 @@ def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError("No path provided")
     if isinstance(path, list) and path and isinstance(path[0], list) and path[0] and isinstance(path[0][0], list):
         path = path[0]
+    trajectory_optimizer = payload.get("trajectory_optimizer")
+    if trajectory_optimizer is not None:
+        trajectory_optimizer = str(trajectory_optimizer).strip().upper()
+        if trajectory_optimizer not in {"TOTG", "RUCKIG"}:
+            raise ValueError("Invalid trajectory_optimizer; expected TOTG or RUCKIG")
     return {
         "path": path,
         "rx": payload.get("rx"),
@@ -107,6 +112,7 @@ def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
         "vel": _normalize_scaling(payload.get("vel"), config.DEFAULT_VEL_SCALING),
         "acc": _normalize_scaling(payload.get("acc"), config.DEFAULT_ACC_SCALING),
         "blocking": payload.get("blocking", False),
+        "trajectory_optimizer": trajectory_optimizer,
     }
 
 

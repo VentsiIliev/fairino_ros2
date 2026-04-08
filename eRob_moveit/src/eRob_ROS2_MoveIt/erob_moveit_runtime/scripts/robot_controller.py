@@ -237,6 +237,11 @@ class RobotController(Node):
         self._ethercat_motion_fault = False
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
+        self._collision_monitor_fault_enabled = False
+        self._collision_fault_lock = Lock()
+        self._collision_motion_fault = False
+        self._collision_fault_reason = ""
+        self._collision_following_error_thresholds = np.zeros(NUM_JOINTS, dtype=float)
         self._ethercat_watchdog_enabled = bool(ETHERCAT_WATCHDOG_ENABLED)
         self._ethercat_watchdog_running = False
         self._ethercat_watchdog_thread = None
@@ -286,6 +291,11 @@ class RobotController(Node):
         self._drag_mode_display = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
         self._drag_statusword = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_error_code = np.zeros(NUM_JOINTS, dtype=float)
+        self._drive_effort_actual = np.zeros(NUM_JOINTS, dtype=float)
+        self._drive_motor_actual_current = np.zeros(NUM_JOINTS, dtype=float)
+        self._drive_following_error_actual = np.zeros(NUM_JOINTS, dtype=float)
+        self._drive_startup_snapshot_logged = False
+        self._drive_pre_motion_snapshot_logged = False
         self._drag_last_mode_command = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
         self._drag_last_effort_command = np.zeros(NUM_JOINTS, dtype=float)
         self._drag_last_torque_offset_command = np.zeros(NUM_JOINTS, dtype=float)
@@ -370,6 +380,18 @@ class RobotController(Node):
                 String,
                 '/zeroerr/collision_monitor/config_state',
                 self._drag_config_callback,
+                10,
+            )
+            self.create_subscription(
+                DynamicJointState,
+                '/zeroerr/collision_monitor/state',
+                self._collision_monitor_state_callback,
+                10,
+            )
+            self.create_subscription(
+                String,
+                '/zeroerr/collision_monitor/config_state',
+                self._collision_monitor_config_callback,
                 10,
             )
             self._drag_timer = self.create_timer(self._drag_update_dt, self._drag_mode_step)
@@ -558,6 +580,80 @@ class RobotController(Node):
             self.get_logger().error('[COLLISION] Stopping motion immediately!')
             self.stop_motion()
 
+    def _collision_monitor_config_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        thresholds = payload.get("following_error_thresholds")
+        if not isinstance(thresholds, list):
+            return
+        try:
+            threshold_array = np.array(thresholds[:NUM_JOINTS], dtype=float)
+        except Exception:
+            return
+        if threshold_array.size != NUM_JOINTS:
+            return
+        with self._collision_fault_lock:
+            self._collision_following_error_thresholds = threshold_array
+
+    def _collision_monitor_state_callback(self, msg: DynamicJointState):
+        if not self._collision_monitor_fault_enabled:
+            return
+        joint_index = {name: idx for idx, name in enumerate(JOINT_NAMES)}
+        with self._collision_fault_lock:
+            if self._collision_motion_fault:
+                return
+            thresholds = self._collision_following_error_thresholds.copy()
+
+        for joint_name, interface_value in zip(msg.joint_names, msg.interface_values):
+            index = joint_index.get(joint_name)
+            if index is None:
+                continue
+            following_error = None
+            contact_latched = False
+            dynamics_latched = False
+            for name, value in zip(interface_value.interface_names, interface_value.values):
+                if name == 'following_error_actual' and np.isfinite(value):
+                    following_error = abs(float(value))
+                elif name == 'contact_latched':
+                    contact_latched = bool(value >= 0.5)
+                elif name == 'dynamics_latched':
+                    dynamics_latched = bool(value >= 0.5)
+
+            if not (contact_latched or dynamics_latched):
+                continue
+
+            threshold = float(thresholds[index]) if index < thresholds.size else 0.0
+            if following_error is None or following_error < threshold:
+                continue
+
+            collision_type = 'dynamics_latched' if dynamics_latched else 'contact_latched'
+            reason = (
+                f'Collision detected on {joint_name}: {collision_type}=true and '
+                f'following_error={following_error:.1f} >= threshold={threshold:.1f}'
+            )
+            self._trip_collision_motion_fault(reason)
+            return
+
+    def _trip_collision_motion_fault(self, reason: str):
+        with self._collision_fault_lock:
+            if self._collision_motion_fault:
+                return
+            self._collision_motion_fault = True
+            self._collision_fault_reason = reason
+
+        self.get_logger().error(f'[CollisionMonitor] {reason}')
+        try:
+            stop_result = self.stop_motion()
+            self.get_logger().error(
+                f'[CollisionMonitor] Motion stopped, queue cleared, and new motion blocked | stop_result={stop_result}'
+            )
+        except Exception as exc:
+            self.get_logger().error(
+                f'[CollisionMonitor] Failed to stop motion after collision latch: {exc}'
+            )
+
     def _controller_status_callback(self, msg):
         """Monitor controller action status for side effects only.
 
@@ -602,6 +698,10 @@ class RobotController(Node):
                 timestamp=time.time()
             )
 
+        if len(msg.effort) >= NUM_JOINTS:
+            with self._drag_lock:
+                self._drive_effort_actual = np.array(msg.effort[:NUM_JOINTS], dtype=float)
+
         with self.lock:
             if len(msg.position) < 6:
                 return
@@ -627,6 +727,8 @@ class RobotController(Node):
 
             # Send data to UI
             # self.ui_callback(data)
+
+        self._maybe_log_drive_state_snapshot('startup')
 
     def get_latest_data(self):
         """Return a copy of the latest joint/cartesian data."""
@@ -670,8 +772,13 @@ class RobotController(Node):
     def get_last_full_waypoints(self):
         return self.planner_context.get_last_full_waypoints()
 
-    def stage_pending_path(self, trajectory, vel_scaling, acc_scaling):
-        self.planner_context.stage_pending_path(trajectory, vel_scaling, acc_scaling)
+    def stage_pending_path(self, trajectory, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
+        self.planner_context.stage_pending_path(
+            trajectory,
+            vel_scaling,
+            acc_scaling,
+            trajectory_optimizer_name=trajectory_optimizer_name,
+        )
 
     def consume_pending_path(self):
         return self.planner_context.consume_pending_path()
@@ -993,6 +1100,9 @@ class RobotController(Node):
             return self._ethercat_fault_reason or 'EtherCAT hardware fault'
 
     def is_motion_stack_ready(self) -> bool:
+        with self._collision_fault_lock:
+            if self._collision_motion_fault:
+                return False
         if self.current_joint_state is None:
             return False
         if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
@@ -1013,6 +1123,9 @@ class RobotController(Node):
         return True
 
     def get_motion_stack_fault_reason(self) -> str:
+        with self._collision_fault_lock:
+            if self._collision_motion_fault:
+                return self._collision_fault_reason or 'collision monitor latched a motion fault'
         if self.current_joint_state is None:
             return 'joint_states not available yet'
         if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
@@ -1089,6 +1202,9 @@ class RobotController(Node):
         joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
         statusword = np.zeros(NUM_JOINTS, dtype=float)
         error_code = np.zeros(NUM_JOINTS, dtype=float)
+        motor_actual_current = np.zeros(NUM_JOINTS, dtype=float)
+        following_error_actual = np.zeros(NUM_JOINTS, dtype=float)
+        mode_display = self._drag_mode_display.copy()
         for joint_name, interface_value in zip(msg.joint_names, msg.interface_values):
             index = joint_index.get(joint_name)
             if index is None:
@@ -1098,9 +1214,86 @@ class RobotController(Node):
                     statusword[index] = float(value)
                 elif name == 'error_code' and np.isfinite(value):
                     error_code[index] = float(value)
+                elif name == 'motor_actual_current' and np.isfinite(value):
+                    motor_actual_current[index] = float(value)
+                elif name == 'following_error_actual' and np.isfinite(value):
+                    following_error_actual[index] = float(value)
+                elif name == 'mode_display' and np.isfinite(value):
+                    mode_display[index] = float(value)
         with self._drag_lock:
             self._drag_statusword = statusword
             self._drag_error_code = error_code
+            self._drive_motor_actual_current = motor_actual_current
+            self._drive_following_error_actual = following_error_actual
+            self._drag_mode_display = mode_display
+
+    def _format_drive_state_snapshot(self, label: str):
+        with self._drag_lock:
+            statusword = [int(round(value)) for value in self._drag_statusword.tolist()]
+            mode_display = [int(round(value)) for value in self._drag_mode_display.tolist()]
+            effort = [round(value, 3) for value in self._drive_effort_actual.tolist()]
+            motor_current = [round(value, 3) for value in self._drive_motor_actual_current.tolist()]
+            following_error = [round(value, 3) for value in self._drive_following_error_actual.tolist()]
+        statusword_bits = [self._decode_statusword_bits(value) for value in statusword]
+        statusword_state = [self._decode_statusword_state(value) for value in statusword]
+        return (
+            f'[DriveState] {label}: '
+            f'statusword={statusword} '
+            f'status_state={statusword_state} '
+            f'status_bits={statusword_bits} '
+            f'mode_display={mode_display} '
+            f'effort={effort} '
+            f'motor_actual_current={motor_current} '
+            f'following_error_actual={following_error}'
+        )
+
+    def _decode_statusword_bits(self, statusword: int) -> str:
+        flags = (
+            ("rtso", 0),
+            ("so", 1),
+            ("oe", 2),
+            ("f", 3),
+            ("ve", 4),
+            ("qs", 5),
+            ("sod", 6),
+            ("w", 7),
+            ("rm", 9),
+            ("tr", 10),
+            ("ila", 11),
+        )
+        active = [name for name, bit in flags if statusword & (1 << bit)]
+        return "+".join(active) if active else "-"
+
+    def _decode_statusword_state(self, statusword: int) -> str:
+        state_code = statusword & 0x006F
+        state_map = {
+            0x0000: 'not_ready_to_switch_on',
+            0x0040: 'switch_on_disabled',
+            0x0021: 'ready_to_switch_on',
+            0x0023: 'switched_on',
+            0x0027: 'operation_enabled',
+            0x0007: 'quick_stop_active',
+            0x000F: 'fault_reaction_active',
+            0x0008: 'fault',
+        }
+        return state_map.get(state_code, f'unknown(0x{state_code:04X})')
+
+    def _maybe_log_drive_state_snapshot(self, label: str):
+        with self._drag_lock:
+            if label == 'startup':
+                if self._drive_startup_snapshot_logged:
+                    return
+                self._drive_startup_snapshot_logged = True
+            elif label == 'before_first_motion':
+                if self._drive_pre_motion_snapshot_logged:
+                    return
+                self._drive_pre_motion_snapshot_logged = True
+            else:
+                return
+        self.get_logger().info(self._format_drive_state_snapshot(label))
+
+    def log_drive_state_before_first_motion(self):
+        self._maybe_log_drive_state_snapshot('before_first_motion')
 
     def _drag_mode_step(self):
         with self._drag_lock:
@@ -1473,6 +1666,9 @@ class RobotController(Node):
     def reset_collision_state(self):
         """Reset collision detector state."""
         self.collision_detector.arm()
+        with self._collision_fault_lock:
+            self._collision_motion_fault = False
+            self._collision_fault_reason = ""
         self.get_logger().info('[CollisionDetector] State reset and re-armed')
 
     def get_collision_status(self):

@@ -18,7 +18,7 @@
     <parent link="base_link"/>
     <child link="Link_1"/>
     <axis xyz="0.00000 0.00000 1.00000"/>
-    <limit effort="2.0" lower="-6.28318" upper="6.28318" velocity="1000.0" acceleration="10.0" />
+    <limit effort="2.0" lower="-6.28318" upper="6.28318" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-6.28" soft_upper_limit="6.28" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -27,7 +27,7 @@
     <parent link="Link_1"/>
     <child link="Link_2"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="2.0" lower="-3.14159" upper="3.14159" velocity="1000.0" acceleration="10.0" />
+    <limit effort="2.0" lower="-3.14159" upper="3.14159" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -36,7 +36,7 @@
     <parent link="Link_2"/>
     <child link="Link_3"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="2.0" lower="-3.14159" upper="3.14159" velocity="1000.0" acceleration="10.0" />
+    <limit effort="2.0" lower="-3.14159" upper="3.14159" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -45,7 +45,7 @@
     <parent link="Link_3"/>
     <child link="Link_4"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="1.5" lower="-4.88692" upper="3.14159" velocity="1000.0" acceleration="12.0" />
+    <limit effort="1.5" lower="-4.88692" upper="3.14159" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-4.88" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -54,7 +54,7 @@
     <parent link="Link_4"/>
     <child link="Link_5"/>
     <axis xyz="0.00000 0.00000 1.00000"/>
-    <limit effort="1.5" lower="-3.14159" upper="3.14159" velocity="1000.0" acceleration="12.0" />
+    <limit effort="1.5" lower="-3.14159" upper="3.14159" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -63,7 +63,7 @@
     <parent link="Link_5"/>
     <child link="Link_6"/>
     <axis xyz="0.00000 1.00000 0.00000"/>
-    <limit effort="4.0" lower="-12.5664" upper="12.5664" velocity="1000.0" acceleration="25.0" />
+    <limit effort="4.0" lower="-12.5664" upper="12.5664" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="100.0" soft_lower_limit="-12.56" soft_upper_limit="12.56" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -71,7 +71,7 @@
 
 
   <link name="Link_1">
-    <collision name="Link_1_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_1.stl" scale="1.00000 1.00000 1.00000"/>
@@ -82,7 +82,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02165 0.08389"/>
       <mass value="2.44622"/>
     </inertial>
-    <visual name="Link_1_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -91,7 +91,7 @@
     </visual>
   </link>
   <link name="Link_2">
-    <collision name="Link_2_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_2_extended.stl" scale="1.00000 1.00000 1.00000"/>
@@ -102,7 +102,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.01913 0.17871"/>
       <mass value="3.53000"/>
     </inertial>
-    <visual name="Link_2_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -111,7 +111,7 @@
     </visual>
   </link>
   <link name="Link_3">
-    <collision name="Link_3_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_3_extended.stl" scale="1.00000 1.00000 1.00000"/>
@@ -122,7 +122,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 -0.02358 0.14840"/>
       <mass value="2.98000"/>
     </inertial>
-    <visual name="Link_3_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -131,7 +131,7 @@
     </visual>
   </link>
   <link name="Link_4">
-    <collision name="Link_4_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_4.stl" scale="1.00000 1.00000 1.00000"/>
@@ -142,7 +142,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02708 0.01584"/>
       <mass value="1.55668"/>
     </inertial>
-    <visual name="Link_4_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -151,7 +151,7 @@
     </visual>
   </link>
   <link name="Link_5">
-    <collision name="Link_5_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_5.stl" scale="1.00000 1.00000 1.00000"/>
@@ -162,7 +162,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.02452 0.02708"/>
       <mass value="1.55668"/>
     </inertial>
-    <visual name="Link_5_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -171,7 +171,7 @@
     </visual>
   </link>
   <link name="Link_6">
-    <collision name="Link_6_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/Link_6.stl" scale="1.00000 1.00000 1.00000"/>
@@ -182,7 +182,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.01898 -0.01386"/>
       <mass value="1.34121"/>
     </inertial>
-    <visual name="Link_6_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
@@ -196,7 +196,7 @@
 
   <!-- child link holding the physical representation and inertial properties -->
   <link name="base_link_inertial">
-    <collision name="base_link_collision">
+    <collision>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/base_link.stl" scale="1.00000 1.00000 1.00000"/>
@@ -207,7 +207,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00095 -0.00172 0.03600"/>
       <mass value="0.47602"/>
     </inertial>
-    <visual name="base_link_visual">
+    <visual>
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="base"/>
       <geometry>
@@ -254,7 +254,7 @@
       <!-- Ixx=Iyy = m*(3r²+h²)/12  Izz = m*r²/2 -->
       <inertia ixx="0.001693" ixy="0" ixz="0" iyy="0.001693" iyz="0" izz="0.003125"/>
     </inertial>
-    <visual name="RingRasterM5_visual">
+    <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/disk.stl" scale="0.001 0.001 0.001"/>
@@ -263,7 +263,7 @@
         <color rgba="0.7 0.7 0.7 1"/>
       </material>
     </visual>
-    <collision name="RingRasterM5_collision">
+    <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="package://zeroerr/meshes/disk.stl" scale="0.001 0.001 0.001"/>

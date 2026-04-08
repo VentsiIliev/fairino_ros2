@@ -18,6 +18,8 @@
         <joint name="Joint_5"/>
         <joint name="Joint_6"/>
         <link name="ee_link"/>
+        <link name="disk_mount"/>
+        <link name="disk_link"/>
     </group>
     <group_state name="home" group="manipulator">
         <joint name="Joint_1" value="-1.57"/>
@@ -42,6 +44,9 @@
     <disable_collisions link1="Link_4" link2="Link_5" reason="Adjacent"/>
     <disable_collisions link1="Link_5" link2="Link_6" reason="Adjacent"/>
     <disable_collisions link1="Link_6" link2="ee_link" reason="Adjacent"/>
+    <disable_collisions link1="ee_link" link2="disk_mount" reason="Adjacent"/>
+    <disable_collisions link1="Link_6" link2="disk_mount" reason="Adjacent"/>
+    <disable_collisions link1="disk_mount" link2="disk_link" reason="Adjacent"/>
     <disable_collisions link1="ee_link" link2="disk_link" reason="Adjacent"/>
     <disable_collisions link1="disk_link" link2="Link_6" reason="Adjacent"/>
     <!--<disable_collisions link1="ee_link" link2="camera_link" reason="Adjacent"/>-->
@@ -71,16 +76,6 @@
     <disable_collisions link1="Link_5" link2="base_link_inertial" reason="Never"/>
     <disable_collisions link1="Link_6" link2="base_link" reason="Never"/>
     <disable_collisions link1="Link_6" link2="base_link_inertial" reason="Never"/>
-
-    <!-- disk tool - disable collisions with adjacent and unreachable links -->
-    <disable_collisions link1="disk_link" link2="Link_6" reason="Adjacent"/>
-    <disable_collisions link1="disk_link" link2="Link_5" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="Link_4" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="Link_3" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="Link_2" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="Link_1" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="base_link" reason="Never"/>
-    <disable_collisions link1="disk_link" link2="base_link_inertial" reason="Never"/>
 
     <!-- Tool contains ToolPointer mesh - disable collisions with nearby wrist links -->
     <disable_collisions link1="ee_link" link2="base_link" reason="Never"/>
