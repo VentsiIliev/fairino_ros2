@@ -123,7 +123,18 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"move_liner error: {e}")
             return -1
 
-    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True, trajectory_optimizer=None):
+    def execute_path(
+        self,
+        path,
+        rx=None,
+        ry=None,
+        rz=None,
+        vel=0.6,
+        acc=0.4,
+        blocking=True,
+        trajectory_optimizer=None,
+        orientation_mode="constant",
+    ):
         """Execute path with automatic selection of best execution strategy.
 
         Strategy selection based on path density:
@@ -143,11 +154,12 @@ class MoveItRobotBackend(IRobotBackend):
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
 
-        waypoints_xyz = []
+        orientation_mode = str(orientation_mode or "constant").strip().lower()
+        waypoints_pose = []
 
         for wp in path:
             if len(wp) == 3:
-                waypoints_xyz.append([wp[0], wp[1], wp[2]])
+                waypoints_pose.append([wp[0], wp[1], wp[2]])
                 # Get current TCP orientation if not provided
                 if rx is None or ry is None or rz is None:
                     current_pose = self.get_current_position()
@@ -158,7 +170,10 @@ class MoveItRobotBackend(IRobotBackend):
                         rx, ry, rz = config.DEFAULT_ORIENTATION
             elif len(wp) == 6:
                 wx, wy, wz, wrx, wry, wrz = wp
-                waypoints_xyz.append([wx, wy, wz])
+                if orientation_mode == "per_waypoint":
+                    waypoints_pose.append([wx, wy, wz, wrx, wry, wrz])
+                else:
+                    waypoints_pose.append([wx, wy, wz])
                 if rx is None:
                     rx = wrx
                 if ry is None:
@@ -168,51 +183,63 @@ class MoveItRobotBackend(IRobotBackend):
             else:
                 continue
 
-        if not waypoints_xyz:
+        if not waypoints_pose:
             return -1
 
         # Transform waypoints from workobject frame to base frame if the workobject is set
         if self.workobject is not None:
             self.node.get_logger().info(f"[EXECUTE_PATH] Transforming waypoints from work object to base frame")
             waypoints_base = []
-            for wp_xyz in waypoints_xyz:
-                # Combine XYZ with orientation for transformation
-                wp_full = [wp_xyz[0], wp_xyz[1], wp_xyz[2], rx, ry, rz]
+            for wp in waypoints_pose:
+                if len(wp) >= 6 and orientation_mode == "per_waypoint":
+                    wp_full = list(wp[:6])
+                else:
+                    wp_full = [wp[0], wp[1], wp[2], rx, ry, rz]
                 # Transform from workobject to base frame using WorkObject.apply()
                 wp_base = self.workobject.apply(wp_full)
-                waypoints_base.append([wp_base[0], wp_base[1], wp_base[2]])
-            waypoints_xyz = waypoints_base
-            # Also transform orientation to base frame
-            orientation_full = [0, 0, 0, rx, ry, rz]  # dummy position, only orientation matters
-            orientation_base = self.workobject.apply(orientation_full)
-            rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
+                if orientation_mode == "per_waypoint":
+                    waypoints_base.append(list(wp_base[:6]))
+                else:
+                    waypoints_base.append([wp_base[0], wp_base[1], wp_base[2]])
+            waypoints_pose = waypoints_base
+            if orientation_mode != "per_waypoint":
+                # Also transform orientation to base frame
+                orientation_full = [0, 0, 0, rx, ry, rz]  # dummy position, only orientation matters
+                orientation_base = self.workobject.apply(orientation_full)
+                rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
 
         # Calculate average distance between consecutive waypoints
-        if len(waypoints_xyz) > 1:
+        if len(waypoints_pose) > 1:
             total_dist = 0.0
-            for i in range(len(waypoints_xyz) - 1):
-                dx = waypoints_xyz[i+1][0] - waypoints_xyz[i][0]
-                dy = waypoints_xyz[i+1][1] - waypoints_xyz[i][1]
-                dz = waypoints_xyz[i+1][2] - waypoints_xyz[i][2]
+            for i in range(len(waypoints_pose) - 1):
+                dx = waypoints_pose[i+1][0] - waypoints_pose[i][0]
+                dy = waypoints_pose[i+1][1] - waypoints_pose[i][1]
+                dz = waypoints_pose[i+1][2] - waypoints_pose[i][2]
                 total_dist += (dx**2 + dy**2 + dz**2) ** 0.5
-            avg_spacing = total_dist / (len(waypoints_xyz) - 1)
+            avg_spacing = total_dist / (len(waypoints_pose) - 1)
         else:
             avg_spacing = 0.0
 
-        self.node.get_logger().info(f"[EXECUTE_PATH] {len(waypoints_xyz)} waypoints, avg spacing: {avg_spacing:.2f}mm")
-        self.node.get_logger().info(f"[EXECUTE_PATH] First waypoint: {waypoints_xyz[0]}")
-        self.node.get_logger().info(f"[EXECUTE_PATH] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
+        self.node.get_logger().info(f"[EXECUTE_PATH] {len(waypoints_pose)} waypoints, avg spacing: {avg_spacing:.2f}mm")
+        self.node.get_logger().info(f"[EXECUTE_PATH] First waypoint: {waypoints_pose[0][:3]}")
+        if orientation_mode == "per_waypoint" and len(waypoints_pose[0]) >= 6:
+            self.node.get_logger().info(
+                "[EXECUTE_PATH] Per-waypoint orientation enabled; first waypoint orientation: "
+                f"RX={waypoints_pose[0][3]}° RY={waypoints_pose[0][4]}° RZ={waypoints_pose[0][5]}°"
+            )
+        else:
+            self.node.get_logger().info(f"[EXECUTE_PATH] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
 
         # A single waypoint is not a real path. Route it through the single-target
         # pipeline so adaptive interpolation / micro-move Jacobian fallback are applied
         # before MoveIt + TOTG are involved.
-        if len(waypoints_xyz) == 1:
+        if len(waypoints_pose) == 1:
             self.node.get_logger().info(
                 "[EXECUTE_PATH] Single waypoint detected — delegating to single-target planner"
             )
             from motion.strategies import SingleTargetStrategy
 
-            target = waypoints_xyz[0]
+            target = waypoints_pose[0]
             result = self.node.execute(
                 SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel, acc)
             )
@@ -224,7 +251,18 @@ class MoveItRobotBackend(IRobotBackend):
                 + (f" with {trajectory_optimizer}" if trajectory_optimizer else "")
             )
             from motion.strategies import PathStrategy
-            result = self.node.execute(PathStrategy(waypoints_xyz, rx, ry, rz, vel, acc, trajectory_optimizer))
+            result = self.node.execute(
+                PathStrategy(
+                    waypoints_pose,
+                    rx,
+                    ry,
+                    rz,
+                    vel,
+                    acc,
+                    trajectory_optimizer,
+                    orientation_mode=orientation_mode,
+                )
+            )
 
         # Return error code if planning/submission failed
         if result < 0:

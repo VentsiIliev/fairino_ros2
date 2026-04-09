@@ -10,8 +10,11 @@ Publishes the common topic interface used by erob_moveit_runtime:
   /cartesian_jerk          (geometry_msgs/TwistStamped)
   /cartesian_position_norm_mm   (std_msgs/Float64)
   /cartesian_velocity_norm_mps  (std_msgs/Float64)
+  /cartesian_velocity_norm_mmps (std_msgs/Float64)
   /cartesian_acceleration_norm_mps2 (std_msgs/Float64)
+  /cartesian_acceleration_norm_mmps2 (std_msgs/Float64)
   /cartesian_jerk_norm_mps3     (std_msgs/Float64)
+  /cartesian_jerk_norm_mmps3    (std_msgs/Float64)
   /joint_velocity          (std_msgs/Float64MultiArray)
   /joint_acceleration      (std_msgs/Float64MultiArray)
   /joint_jerk              (std_msgs/Float64MultiArray)
@@ -35,7 +38,9 @@ from std_msgs.msg import Float64, Float64MultiArray
 
 
 _PUBLISH_HZ = 50
-_CART_HISTORY = 5   # positions kept for vel/acc differentiation
+_CART_HISTORY = 5   # samples kept for Cartesian derivative estimation
+_STATIONARY_JOINT_VEL_NORM_RAD_S = 0.02
+_STATIONARY_CART_SPAN_M = 0.0005
 
 
 def _fa(data: np.ndarray) -> Float64MultiArray:
@@ -48,6 +53,74 @@ def _f64(value: float) -> Float64:
     msg = Float64()
     msg.data = float(value)
     return msg
+
+
+def _estimate_first_derivative(
+        samples: deque[tuple[np.ndarray, float]]) -> np.ndarray:
+    """Estimate d/dt from newest-first sample history with low added lag."""
+    n = len(samples)
+    if n < 2:
+        return np.zeros(3)
+
+    newest_t = samples[-1][1]
+    oldest_t = samples[0][1]
+    total_dt = newest_t - oldest_t
+    if total_dt <= 1e-6:
+        return np.zeros(3)
+
+    dt = total_dt / (n - 1)
+    values = [entry[0] for entry in reversed(samples)]
+    p0 = values[0]
+    p1 = values[1]
+
+    if n == 2:
+        return (p0 - p1) / dt
+    if n == 3:
+        p2 = values[2]
+        return (3.0 * p0 - 4.0 * p1 + p2) / (2.0 * dt)
+    if n == 4:
+        p2 = values[2]
+        p3 = values[3]
+        return (11.0 * p0 - 18.0 * p1 + 9.0 * p2 - 2.0 * p3) / (6.0 * dt)
+
+    p2 = values[2]
+    p3 = values[3]
+    p4 = values[4]
+    return (
+        25.0 * p0 - 48.0 * p1 + 36.0 * p2 - 16.0 * p3 + 3.0 * p4
+    ) / (12.0 * dt)
+
+
+def _estimate_second_derivative(
+        samples: deque[tuple[np.ndarray, float]]) -> np.ndarray:
+    """Estimate d2/dt2 directly from position history."""
+    n = len(samples)
+    if n < 3:
+        return np.zeros(3)
+
+    newest_t = samples[-1][1]
+    oldest_t = samples[0][1]
+    total_dt = newest_t - oldest_t
+    if total_dt <= 1e-6:
+        return np.zeros(3)
+
+    dt = total_dt / (n - 1)
+    values = [entry[0] for entry in reversed(samples)]
+    p0 = values[0]
+    p1 = values[1]
+    p2 = values[2]
+
+    if n == 3:
+        return (p0 - 2.0 * p1 + p2) / (dt * dt)
+    if n == 4:
+        p3 = values[3]
+        return (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) / (dt * dt)
+
+    p3 = values[3]
+    p4 = values[4]
+    return (
+        35.0 * p0 - 104.0 * p1 + 114.0 * p2 - 56.0 * p3 + 11.0 * p4
+    ) / (12.0 * dt * dt)
 
 
 class CartesianPublisherBase(Node):
@@ -74,10 +147,16 @@ class CartesianPublisherBase(Node):
             Float64, '/cartesian_position_norm_mm', 10)
         self._cart_vel_norm_mps_pub = self.create_publisher(
             Float64, '/cartesian_velocity_norm_mps', 10)
+        self._cart_vel_norm_mmps_pub = self.create_publisher(
+            Float64, '/cartesian_velocity_norm_mmps', 10)
         self._cart_acc_norm_mps2_pub = self.create_publisher(
             Float64, '/cartesian_acceleration_norm_mps2', 10)
+        self._cart_acc_norm_mmps2_pub = self.create_publisher(
+            Float64, '/cartesian_acceleration_norm_mmps2', 10)
         self._cart_jerk_norm_mps3_pub = self.create_publisher(
             Float64, '/cartesian_jerk_norm_mps3', 10)
+        self._cart_jerk_norm_mmps3_pub = self.create_publisher(
+            Float64, '/cartesian_jerk_norm_mmps3', 10)
         self._joint_vel_pub = self.create_publisher(
             Float64MultiArray, '/joint_velocity', 10)
         self._joint_acc_pub = self.create_publisher(
@@ -91,10 +170,16 @@ class CartesianPublisherBase(Node):
         self._prev_velocities: Optional[np.ndarray] = None
         self._prev_accelerations: Optional[np.ndarray] = None
         self._prev_joint_time: Optional[float] = None
+        self._latest_joint_velocity_norm: float = 0.0
 
-        # ── Cartesian history for vel/acc/jerk differentiation ────────────────
-        # Each entry: (position_xyz_m, velocity_xyz_m_s, acceleration_xyz_m_s2, timestamp_s)
-        self._cart_history: deque = deque(maxlen=_CART_HISTORY)
+        # ── Cartesian history for low-noise derivative estimation ──────────────
+        # History is oldest -> newest. Velocity/acceleration are estimated from
+        # actual Cartesian position samples, not by repeatedly differencing the
+        # previously estimated signal.
+        self._cart_history: deque[tuple[np.ndarray, float]] = deque(
+            maxlen=_CART_HISTORY)
+        self._cart_acc_history: deque[tuple[np.ndarray, float]] = deque(
+            maxlen=_CART_HISTORY)
 
         # ── Subscriptions ─────────────────────────────────────────────────────
         self.create_subscription(
@@ -162,6 +247,7 @@ class CartesianPublisherBase(Node):
         self._joint_vel_pub.publish(_fa(velocities))
         self._joint_acc_pub.publish(_fa(accelerations))
         self._joint_jerk_pub.publish(_fa(jerks))
+        self._latest_joint_velocity_norm = float(np.linalg.norm(velocities))
 
         self._joint_positions = positions
         self._prev_positions = positions
@@ -185,18 +271,25 @@ class CartesianPublisherBase(Node):
         pos_norm = np.linalg.norm(pos)
         self._cart_pos_norm_mm_pub.publish(_f64(pos_norm * 1000.0))
 
-        vel = np.zeros(3)
-        acc = np.zeros(3)
-        jerk = np.zeros(3)
-        if self._cart_history:
-            prev_pos, prev_vel, prev_acc, prev_t = self._cart_history[-1]
-            dt = now - prev_t
-            if dt > 1e-6:
-                vel = (pos - prev_pos) / dt
-                acc = (vel - prev_vel) / dt
-                jerk = (acc - prev_acc) / dt
+        self._cart_history.append((pos, now))
+        vel = _estimate_first_derivative(self._cart_history)
+        acc = _estimate_second_derivative(self._cart_history)
+        self._cart_acc_history.append((acc, now))
+        jerk = _estimate_first_derivative(self._cart_acc_history)
 
-        self._cart_history.append((pos, vel, acc, now))
+        # Native Cartesian pose can jitter slightly at rest. When joint-space
+        # motion is effectively zero and the recent Cartesian sample spread is
+        # tiny, clamp derivatives to zero instead of publishing numerical noise.
+        if self._cart_history:
+            positions = np.stack([entry[0] for entry in self._cart_history], axis=0)
+            cart_span = float(np.linalg.norm(np.ptp(positions, axis=0)))
+            if (self._latest_joint_velocity_norm < _STATIONARY_JOINT_VEL_NORM_RAD_S
+                    and cart_span < _STATIONARY_CART_SPAN_M):
+                vel = np.zeros(3)
+                acc = np.zeros(3)
+                jerk = np.zeros(3)
+                self._cart_acc_history.clear()
+                self._cart_acc_history.append((acc, now))
 
         stamp = pose.header.stamp
         frame = pose.header.frame_id
@@ -210,6 +303,7 @@ class CartesianPublisherBase(Node):
         self._cart_vel_pub.publish(vel_msg)
         vel_norm = np.linalg.norm(vel)
         self._cart_vel_norm_mps_pub.publish(_f64(vel_norm))
+        self._cart_vel_norm_mmps_pub.publish(_f64(vel_norm * 1000.0))
 
         acc_msg = TwistStamped()
         acc_msg.header.stamp = stamp
@@ -220,6 +314,7 @@ class CartesianPublisherBase(Node):
         self._cart_acc_pub.publish(acc_msg)
         acc_norm = np.linalg.norm(acc)
         self._cart_acc_norm_mps2_pub.publish(_f64(acc_norm))
+        self._cart_acc_norm_mmps2_pub.publish(_f64(acc_norm * 1000.0))
 
         jerk_msg = TwistStamped()
         jerk_msg.header.stamp = stamp
@@ -230,3 +325,4 @@ class CartesianPublisherBase(Node):
         self._cart_jerk_pub.publish(jerk_msg)
         jerk_norm = np.linalg.norm(jerk)
         self._cart_jerk_norm_mps3_pub.publish(_f64(jerk_norm))
+        self._cart_jerk_norm_mmps3_pub.publish(_f64(jerk_norm * 1000.0))

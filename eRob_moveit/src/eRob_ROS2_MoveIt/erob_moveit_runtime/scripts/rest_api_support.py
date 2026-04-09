@@ -104,15 +104,19 @@ def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
         trajectory_optimizer = str(trajectory_optimizer).strip().upper()
         if trajectory_optimizer not in {"TOTG", "RUCKIG"}:
             raise ValueError("Invalid trajectory_optimizer; expected TOTG or RUCKIG")
+    orientation_mode = str(payload.get("orientation_mode", "constant")).strip().lower()
+    if orientation_mode not in {"constant", "per_waypoint"}:
+        raise ValueError("Invalid orientation_mode; expected constant or per_waypoint")
     return {
         "path": path,
-        "rx": payload.get("rx"),
-        "ry": payload.get("ry"),
-        "rz": payload.get("rz"),
+        "rx": payload.get("rx", payload.get("rx_degrees")),
+        "ry": payload.get("ry", payload.get("ry_degrees")),
+        "rz": payload.get("rz", payload.get("rz_degrees")),
         "vel": _normalize_scaling(payload.get("vel"), config.DEFAULT_VEL_SCALING),
         "acc": _normalize_scaling(payload.get("acc"), config.DEFAULT_ACC_SCALING),
         "blocking": payload.get("blocking", False),
         "trajectory_optimizer": trajectory_optimizer,
+        "orientation_mode": orientation_mode,
     }
 
 

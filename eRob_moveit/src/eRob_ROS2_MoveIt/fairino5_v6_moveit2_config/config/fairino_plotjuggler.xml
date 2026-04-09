@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <version>3</version>
+  <plugins>
+    <plugin name="DataStreamROS2">
+      <selected_topics>
+        <topic name="/cartesian_position"/>
+        <topic name="/cartesian_velocity"/>
+        <topic name="/cartesian_acceleration"/>
+        <topic name="/joint_velocity"/>
+        <topic name="/joint_acceleration"/>
+        <topic name="/joint_states"/>
+      </selected_topics>
+    </plugin>
+  </plugins>
+  <previouslyLoaded_Plugins>
+    <plugin filename="DataStreamROS2" type="datastreamer"/>
+  </previouslyLoaded_Plugins>
+</root>

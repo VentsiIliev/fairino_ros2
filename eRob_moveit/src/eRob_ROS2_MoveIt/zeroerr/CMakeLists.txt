@@ -8,6 +8,7 @@ install(PROGRAMS
   scripts/zeroerr_error_monitor.py
   scripts/zeroerr_torque_sensor_probe.py
   scripts/zeroerr_torque_model_fit.py
+  scripts/zeroerr_torque_threshold_fit.py
   scripts/zeroerr_collision_monitor.py
   scripts/zeroerr_collision_monitor_gui.py
   scripts/zeroerr_runtime.py

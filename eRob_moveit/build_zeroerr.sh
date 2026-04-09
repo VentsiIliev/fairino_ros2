@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 source_setup() {
   local file="$1"
@@ -18,9 +19,6 @@ source_setup() {
 }
 
 source_setup /opt/ros/rolling/setup.bash
-if [[ -f /home/ilv/ros2_ws/install/local_setup.bash ]]; then
-  source_setup /home/ilv/ros2_ws/install/local_setup.bash
-fi
 
-cd "${SCRIPT_DIR}"
+cd "${ROOT_WS_DIR}"
 colcon build --packages-select erob_moveit_runtime zeroerr

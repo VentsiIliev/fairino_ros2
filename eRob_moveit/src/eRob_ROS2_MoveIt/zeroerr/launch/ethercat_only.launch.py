@@ -23,9 +23,17 @@ def _urdf_path_from_runtime(package_path: str) -> str:
     return os.path.join(package_path, "config", "erob_arm_family_motor_masses.urdf")
 
 
+def _runtime_value(package_path: str, key: str, default):
+    rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
+    try:
+        with open(rt_yaml) as f:
+            rt = yaml.safe_load(f) or {}
+        return rt.get(key, default)
+    except Exception:
+        return default
+
+
 def generate_launch_description():
-    torque_log_enabled = LaunchConfiguration("torque_log_enabled")
-    torque_log_path = LaunchConfiguration("torque_log_path")
     terminal_prefix = None
     if os.environ.get("ZEROERR_COLLISION_MONITOR_TERMINAL", "0") == "1":
         terminal = shutil.which("x-terminal-emulator") or shutil.which("xterm")
@@ -43,6 +51,18 @@ def generate_launch_description():
     )
 
     package_path = get_package_share_directory("zeroerr")
+    runtime_torque_log_enabled = str(
+        _runtime_value(package_path, "TORQUE_LOG_ENABLED", False)
+    ).lower()
+    runtime_torque_log_path = str(
+        _runtime_value(
+            package_path,
+            "TORQUE_LOG_PATH",
+            os.path.join(package_path, "data", "torque_sensor_log.csv"),
+        )
+    )
+    torque_log_enabled = LaunchConfiguration("torque_log_enabled")
+    torque_log_path = LaunchConfiguration("torque_log_path")
     ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
 
@@ -120,6 +140,29 @@ def generate_launch_description():
         output="screen",
     )
 
+    helper_parameters = [
+        moveit_config.robot_description,
+        moveit_config.robot_description_semantic,
+        moveit_config.robot_description_kinematics,
+        moveit_config.joint_limits,
+    ]
+
+    ipp_helper_node = Node(
+        package="erob_moveit_runtime",
+        executable="ipp_helper",
+        name="ipp_helper",
+        output="screen",
+        parameters=helper_parameters,
+    )
+
+    ruckig_helper_node = Node(
+        package="erob_moveit_runtime",
+        executable="ruckig_helper",
+        name="ruckig_helper",
+        output="screen",
+        parameters=helper_parameters,
+    )
+
     collision_monitor_kwargs = {
         "package": "zeroerr",
         "executable": "zeroerr_collision_monitor.py",
@@ -166,10 +209,10 @@ def generate_launch_description():
         )
 
     return LaunchDescription([
-        DeclareLaunchArgument("torque_log_enabled", default_value="false"),
+        DeclareLaunchArgument("torque_log_enabled", default_value=runtime_torque_log_enabled),
         DeclareLaunchArgument(
             "torque_log_path",
-            default_value=os.path.join(package_path, "data", "torque_sensor_log.csv"),
+            default_value=runtime_torque_log_path,
         ),
         SetEnvironmentVariable("EROB_CONFIG_PACKAGE", "zeroerr"),
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
@@ -187,6 +230,8 @@ def generate_launch_description():
         load_drag_enable_set_controller,
         load_drag_disable_set_controller,
         ethercat_sdo_server,
+        ipp_helper_node,
+        ruckig_helper_node,
         wait_for_op_process,
         RegisterEventHandler(
             OnProcessExit(

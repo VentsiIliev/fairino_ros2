@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <version>3</version>
+  <plugins>
+    <plugin name="DataStreamROS2">
+      <selected_topics>
+        <topic name="/cartesian_position"/>
+        <topic name="/cartesian_position_norm_mm"/>
+        <topic name="/cartesian_velocity"/>
+        <topic name="/cartesian_velocity_norm_mps"/>
+        <topic name="/cartesian_acceleration"/>
+        <topic name="/cartesian_acceleration_norm_mps2"/>
+        <topic name="/cartesian_jerk"/>
+        <topic name="/cartesian_jerk_norm_mps3"/>
+        <topic name="/joint_states"/>
+        <topic name="/joint_velocity"/>
+        <topic name="/joint_acceleration"/>
+        <topic name="/joint_jerk"/>
+      </selected_topics>
+    </plugin>
+  </plugins>
+  <previouslyLoaded_Plugins>
+    <plugin filename="DataStreamROS2" type="datastreamer"/>
+  </previouslyLoaded_Plugins>
+</root>

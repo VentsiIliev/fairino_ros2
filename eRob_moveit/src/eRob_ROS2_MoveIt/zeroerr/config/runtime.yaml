@@ -6,7 +6,7 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - -3.188
-- 16.83
+- 15.83
 NUM_JOINTS: 6
 JOINT_NAMES:
 - Joint_1
@@ -22,7 +22,7 @@ WRIST_LINK: Link_6
 COLLISION_TIP_LINK: disk_link
 URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
-TRAJECTORY_OPTIMIZER: TOTG
+TRAJECTORY_OPTIMIZER: RUCKIG
 TOOL_REGISTRY:
   TOOL_0:
   - 0
@@ -68,3 +68,5 @@ JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
 # each joint to cancel gravity-model mismatch between the URDF and firmware.
 # Example: J3 reads ~3.68 Nm at the home pose → set index 2 = 3.68.
 STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+TORQUE_LOG_ENABLED: True
+TORQUE_LOG_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/data/torque_sensor_log.csv

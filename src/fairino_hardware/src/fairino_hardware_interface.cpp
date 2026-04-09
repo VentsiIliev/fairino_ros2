@@ -2,6 +2,95 @@
 
 namespace fairino_hardware{
 
+namespace {
+
+double estimate_velocity_from_history(
+    const std::deque<std::array<double, 6>> & position_history,
+    size_t joint_index,
+    double dt)
+{
+    const size_t n = position_history.size();
+    if (n < 2 || dt <= 0.0) {
+        return 0.0;
+    }
+
+    const auto & p0 = position_history[n - 1];
+    const auto & p1 = position_history[n - 2];
+
+    if (n == 2) {
+        return (p0[joint_index] - p1[joint_index]) / dt;
+    }
+
+    const auto & p2 = position_history[n - 3];
+    if (n == 3) {
+        return (3.0 * p0[joint_index] - 4.0 * p1[joint_index] + p2[joint_index]) / (2.0 * dt);
+    }
+
+    const auto & p3 = position_history[n - 4];
+    if (n == 4) {
+        return (
+            11.0 * p0[joint_index]
+            - 18.0 * p1[joint_index]
+            + 9.0 * p2[joint_index]
+            - 2.0 * p3[joint_index]
+        ) / (6.0 * dt);
+    }
+
+    const auto & p4 = position_history[n - 5];
+    return (
+        25.0 * p0[joint_index]
+        - 48.0 * p1[joint_index]
+        + 36.0 * p2[joint_index]
+        - 16.0 * p3[joint_index]
+        + 3.0 * p4[joint_index]
+    ) / (12.0 * dt);
+}
+
+
+double estimate_acceleration_from_history(
+    const std::deque<std::array<double, 6>> & position_history,
+    size_t joint_index,
+    double dt)
+{
+    const size_t n = position_history.size();
+    if (n < 3 || dt <= 0.0) {
+        return 0.0;
+    }
+
+    const auto & p0 = position_history[n - 1];
+    const auto & p1 = position_history[n - 2];
+    const auto & p2 = position_history[n - 3];
+
+    if (n == 3) {
+        return (
+            p0[joint_index]
+            - 2.0 * p1[joint_index]
+            + p2[joint_index]
+        ) / (dt * dt);
+    }
+
+    const auto & p3 = position_history[n - 4];
+    if (n == 4) {
+        return (
+            2.0 * p0[joint_index]
+            - 5.0 * p1[joint_index]
+            + 4.0 * p2[joint_index]
+            - p3[joint_index]
+        ) / (dt * dt);
+    }
+
+    const auto & p4 = position_history[n - 5];
+    return (
+        35.0 * p0[joint_index]
+        - 104.0 * p1[joint_index]
+        + 114.0 * p2[joint_index]
+        - 56.0 * p3[joint_index]
+        + 11.0 * p4[joint_index]
+    ) / (12.0 * dt * dt);
+}
+
+}  // namespace
+
 hardware_interface::CallbackReturn FairinoHardwareInterface::on_init(const hardware_interface::HardwareComponentInterfaceParams& params){
     if (hardware_interface::SystemInterface::on_init(params) != hardware_interface::CallbackReturn::SUCCESS) {
         return hardware_interface::CallbackReturn::ERROR;
@@ -109,6 +198,8 @@ hardware_interface::CallbackReturn FairinoHardwareInterface::on_activate(const r
         _prev_velocity_state[i] = 0;
     }
     _control_mode = 0;
+    _position_history.clear();
+    _sample_period_history.clear();
     errno_t returncode = _ptr_robot->RPC(_controller_ip.c_str());
     rclcpp::sleep_for(200ms);
     if(returncode != 0){
@@ -171,14 +262,25 @@ hardware_interface::return_type FairinoHardwareInterface::read(const rclcpp::Tim
     error_t returncode = _ptr_robot->GetActualJointPosDegree(1,&state_data);
     if(returncode == 0){
         double dt = period.seconds();
+        std::array<double, 6> current_positions{};
         for(int i=0;i<6;i++){
-            double prev_pos = _jnt_position_state[i];
             _jnt_position_state[i] = state_data.jPos[i]/180.0*M_PI;
+            current_positions[i] = _jnt_position_state[i];
+        }
 
-            if(dt > 0){
-                double prev_vel = _jnt_velocity_state[i];
-                _jnt_velocity_state[i] = (_jnt_position_state[i] - prev_pos) / dt;
-                _jnt_acceleration_state[i] = (_jnt_velocity_state[i] - prev_vel) / dt;
+        if (dt > 0.0) {
+            _position_history.push_back(current_positions);
+            _sample_period_history.push_back(dt);
+            while (_position_history.size() > 5) {
+                _position_history.pop_front();
+            }
+            while (_sample_period_history.size() > 5) {
+                _sample_period_history.pop_front();
+            }
+
+            for (int i = 0; i < 6; i++) {
+                _jnt_velocity_state[i] = estimate_velocity_from_history(_position_history, i, dt);
+                _jnt_acceleration_state[i] = estimate_acceleration_from_history(_position_history, i, dt);
             }
         }
     }else{

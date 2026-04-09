@@ -143,22 +143,12 @@ class TrajectoryExecutor:
         insert_count = max(1, ramp_points)
         ramp_points_to_insert = []
         for idx in range(insert_count):
-            ratio = (idx + 1) / insert_count
             inserted_point = deepcopy(first_point)
+            ratio = (idx + 1) / insert_count
             inserted_point.time_from_start = self._sec_to_duration(effective_hold_s * ratio)
-
-            if idx < insert_count - 1:
-                position_ratio = 0.5 * ratio
-                inserted_point.positions = [
-                    start + (target - start) * position_ratio
-                    for start, target in zip(first_point.positions, second_point.positions)
-                ]
-                inserted_point.velocities = [0.0] * len(first_point.positions)
-                inserted_point.accelerations = [0.0] * len(first_point.positions)
-            else:
-                inserted_point.positions = list(first_point.positions)
-                inserted_point.velocities = [0.0] * len(first_point.positions)
-                inserted_point.accelerations = [0.0] * len(first_point.positions)
+            inserted_point.positions = list(first_point.positions)
+            inserted_point.velocities = [0.0] * len(first_point.positions)
+            inserted_point.accelerations = [0.0] * len(first_point.positions)
 
             ramp_points_to_insert.append(inserted_point)
 

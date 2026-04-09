@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -67,8 +68,14 @@ TABLE_COLUMNS = [
 ]
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+SCRIPT_DIR = Path(__file__).resolve().parent
 COLLISION_CONFIG_PATH = CONFIG_DIR / "collision_monitor_config.json"
 DRAG_CONFIG_PATH = CONFIG_DIR / "drag_mode_config.json"
+TORQUE_SENSOR_LOG_PATH = DATA_DIR / "torque_sensor_log.csv"
+TORQUE_SENSOR_MODEL_PATH = CONFIG_DIR / "torque_sensor_model.json"
+TORQUE_MODEL_FIT_SCRIPT = SCRIPT_DIR / "zeroerr_torque_model_fit.py"
+TORQUE_THRESHOLD_FIT_SCRIPT = SCRIPT_DIR / "zeroerr_torque_threshold_fit.py"
 
 
 class CollisionMonitorGuiNode(Node):
@@ -194,13 +201,10 @@ class CollisionMonitorWindow(QMainWindow):
         threshold_layout.addWidget(self.friction_deadband_input, 7, 5)
         self.apply_button = QPushButton("Apply Config")
         self.apply_button.clicked.connect(self._apply_config)
-        threshold_layout.addWidget(self.apply_button, 8, 4, 1, 2)
-        self.capture_baseline_button = QPushButton("Capture Baseline")
-        self.capture_baseline_button.clicked.connect(self._start_baseline_capture)
-        threshold_layout.addWidget(self.capture_baseline_button, 8, 0, 1, 2)
-        self.baseline_status_label = QLabel("Baseline idle")
-        self.baseline_status_label.setStyleSheet("color: #555;")
-        threshold_layout.addWidget(self.baseline_status_label, 8, 2, 1, 2)
+        threshold_layout.addWidget(self.apply_button, 8, 2, 1, 2)
+        self.refit_button = QPushButton("Refit Model")
+        self.refit_button.clicked.connect(self._refit_torque_model)
+        threshold_layout.addWidget(self.refit_button, 8, 4, 1, 2)
         collision_layout.addWidget(threshold_group)
 
         summary_group = QGroupBox("Detector Summary")
@@ -310,10 +314,6 @@ class CollisionMonitorWindow(QMainWindow):
         self._config_loaded = False
         self._last_joint_states: Dict[str, str] = {}
         self._max_log_lines = 250
-        self._baseline_capture_active = False
-        self._baseline_capture_started_at = 0.0
-        self._baseline_capture_duration_s = 5.0
-        self._baseline_ext_tau_max = {f"Joint_{index}": 0.0 for index in range(1, 7)}
         self._drag_endpoint = "http://localhost:5000"
         self._drag_enabled = None
         self._drag_config_loaded = False
@@ -324,8 +324,6 @@ class CollisionMonitorWindow(QMainWindow):
         self._refresh_config_inputs()
         if not data:
             return
-
-        self._update_baseline_capture(data)
 
         joints = sorted(data.keys(), key=lambda name: int(name.split("_")[1]))
         self.table.setRowCount(len(joints))
@@ -390,48 +388,6 @@ class CollisionMonitorWindow(QMainWindow):
 
         self.stamp_label.setText(self.ros_node.stamp_text)
         self.table.resizeColumnsToContents()
-
-    def _start_baseline_capture(self) -> None:
-        self._baseline_capture_active = True
-        self._baseline_capture_started_at = time.time()
-        self._baseline_ext_tau_max = {f"Joint_{index}": 0.0 for index in range(1, 7)}
-        self.baseline_status_label.setText("Capturing baseline...")
-        self.baseline_status_label.setStyleSheet("color: #1565c0; font-weight: bold;")
-        self.event_log.append(
-            f"[{time.strftime('%H:%M:%S')}] Baseline capture started ({self._baseline_capture_duration_s:.0f}s)"
-        )
-
-    def _update_baseline_capture(self, data: Dict[str, Dict[str, float]]) -> None:
-        if not self._baseline_capture_active:
-            return
-
-        elapsed = time.time() - self._baseline_capture_started_at
-        remaining = max(0.0, self._baseline_capture_duration_s - elapsed)
-        self.baseline_status_label.setText(f"Capturing baseline... {remaining:.1f}s")
-
-        for joint_name, joint in data.items():
-            ext_tau = abs(joint.get("external_torque", 0.0))
-            if not math.isnan(ext_tau):
-                self._baseline_ext_tau_max[joint_name] = max(self._baseline_ext_tau_max[joint_name], ext_tau)
-
-        if elapsed < self._baseline_capture_duration_s:
-            return
-
-        self._baseline_capture_active = False
-        suggestions = []
-        for joint_name in [f"Joint_{index}" for index in range(1, 7)]:
-            baseline = self._baseline_ext_tau_max.get(joint_name, 0.0)
-            suggested = max(1.0, baseline * 1.5 + 1.0)
-            self.threshold_inputs[joint_name]["external_torque"].setText(f"{suggested:.2f}")
-            suggestions.append(f"{joint_name}={suggested:.2f}")
-
-        self.baseline_status_label.setText("Baseline applied to ExtTau fields")
-        self.baseline_status_label.setStyleSheet("color: #1b5e20; font-weight: bold;")
-        self.event_log.append(
-            f"[{time.strftime('%H:%M:%S')}] Baseline capture finished | "
-            + ", ".join(suggestions)
-        )
-        self._trim_event_log()
 
     def _drag_request(self, path: str, method: str = "GET") -> tuple[dict | None, str | None]:
         request = Request(f"{self._drag_endpoint}{path}", method=method)
@@ -702,6 +658,87 @@ class CollisionMonitorWindow(QMainWindow):
         self._save_json(COLLISION_CONFIG_PATH, config)
         self.status_label.setText("Runtime config update sent")
         self.status_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #1565c0;")
+
+    def _refit_torque_model(self) -> None:
+        timestamp = time.strftime("%H:%M:%S")
+        if not TORQUE_SENSOR_LOG_PATH.exists():
+            self.event_log.append(f"[{timestamp}] Refit failed | missing log file: {TORQUE_SENSOR_LOG_PATH}")
+            self._trim_event_log()
+            return
+
+        self.refit_button.setEnabled(False)
+        self.status_label.setText("Refitting torque model...")
+        self.status_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #1565c0;")
+        self.event_log.append(f"[{timestamp}] Refit started")
+        self._trim_event_log()
+        QApplication.processEvents()
+
+        try:
+            fit_cmd = [
+                sys.executable,
+                str(TORQUE_MODEL_FIT_SCRIPT),
+                "--input",
+                str(TORQUE_SENSOR_LOG_PATH),
+                "--output",
+                str(TORQUE_SENSOR_MODEL_PATH),
+                "--update-existing",
+            ]
+            fit_result = subprocess.run(
+                fit_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            threshold_cmd = [
+                sys.executable,
+                str(TORQUE_THRESHOLD_FIT_SCRIPT),
+                "--input",
+                str(TORQUE_SENSOR_LOG_PATH),
+                "--model",
+                str(TORQUE_SENSOR_MODEL_PATH),
+                "--config",
+                str(COLLISION_CONFIG_PATH),
+                "--apply",
+            ]
+            threshold_result = subprocess.run(
+                threshold_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            output = (exc.stdout or "").strip()
+            error = (exc.stderr or "").strip()
+            detail = error or output or str(exc)
+            self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Refit failed | {detail}")
+            self.status_label.setText("Refit failed")
+            self.status_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #b71c1c;")
+            self.refit_button.setEnabled(True)
+            self._trim_event_log()
+            return
+
+        self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Model fit complete")
+        for line in fit_result.stdout.strip().splitlines():
+            if line.strip():
+                self.event_log.append(f"[{time.strftime('%H:%M:%S')}] {line.strip()}")
+        for line in threshold_result.stdout.strip().splitlines():
+            if line.strip():
+                self.event_log.append(f"[{time.strftime('%H:%M:%S')}] {line.strip()}")
+
+        try:
+            config = json.loads(COLLISION_CONFIG_PATH.read_text(encoding="utf-8"))
+            self.ros_node.publish_config(config)
+            self.ros_node.config = config
+            self._config_loaded = False
+            self._load_collision_persisted_inputs()
+        except Exception as exc:
+            self.event_log.append(f"[{time.strftime('%H:%M:%S')}] Refit warning | failed to reload config: {exc}")
+
+        self.status_label.setText("Refit applied")
+        self.status_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #1b5e20;")
+        self.refit_button.setEnabled(True)
+        self._trim_event_log()
 
     def _row_color(self, joint: Dict[str, float]) -> QColor | None:
         if self._is_true(joint.get("contact_latched")) or self._is_true(joint.get("dynamics_latched")):

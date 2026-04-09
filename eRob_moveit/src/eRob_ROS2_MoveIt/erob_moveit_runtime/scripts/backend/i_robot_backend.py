@@ -12,7 +12,18 @@ class IRobotBackend(ABC):
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None): ...
 
     @abstractmethod
-    def execute_path(self, path, rx=None, ry=None, rz=None, vel=0.6, acc=0.4, blocking=True, trajectory_optimizer=None): ...
+    def execute_path(
+        self,
+        path,
+        rx=None,
+        ry=None,
+        rz=None,
+        vel=0.6,
+        acc=0.4,
+        blocking=True,
+        trajectory_optimizer=None,
+        orientation_mode="constant",
+    ): ...
 
     @abstractmethod
     def get_safety_walls_status(self): ...

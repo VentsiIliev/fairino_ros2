@@ -10,12 +10,12 @@
     NaN
   ],
   "external_torque_thresholds": [
-    1.54,
-    31.41,
-    33.44,
-    7.64,
-    1.08,
-    1.13
+    8.605640771417582,
+    7.423571074188523,
+    5.16508166503587,
+    2.507873611647277,
+    2.70288985535221,
+    2.846235526271179
   ],
   "following_error_thresholds": [
     NaN,
@@ -33,7 +33,7 @@
     0.0,
     0.0
   ],
-  "friction_velocity_deadband_rad_s": 0.01,
+  "friction_velocity_deadband_rad_s": 1.0,
   "friction_viscous_nm_per_rad_s": [
     0.0,
     0.0,

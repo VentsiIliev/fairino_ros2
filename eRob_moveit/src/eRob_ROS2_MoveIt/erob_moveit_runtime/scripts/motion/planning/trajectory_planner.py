@@ -28,6 +28,7 @@ Data flow for sub-5mm Jacobian fallback:
                       → _send_trajectory_to_controller()
 """
 from copy import deepcopy
+import math
 
 from .planner_utils import _set_result, _is_stale, _begin_execution
 from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collision
@@ -39,6 +40,104 @@ import config
 
 
 # ─── Main path-planning response handler ─────────────────────────────────────
+
+def _nearest_equivalent_angle(reference: float, value: float) -> float:
+    """Shift `value` by ±2π so it stays closest to `reference`."""
+    adjusted = float(value)
+    ref = float(reference)
+    two_pi = 2.0 * math.pi
+    while adjusted - ref > math.pi:
+        adjusted -= two_pi
+    while adjusted - ref < -math.pi:
+        adjusted += two_pi
+    return adjusted
+
+
+def _wrap_angle_into_limits(reference: float, value: float, lower: float, upper: float) -> float:
+    """Shift `value` by ±2π to stay inside [lower, upper] while staying near `reference`."""
+    two_pi = 2.0 * math.pi
+    candidates = []
+    for shift in range(-3, 4):
+        candidate = float(value) + shift * two_pi
+        if lower - 1e-9 <= candidate <= upper + 1e-9:
+            candidates.append(candidate)
+    if not candidates:
+        return float(value)
+    return min(candidates, key=lambda candidate: abs(candidate - reference))
+
+
+def _unwrap_joint_trajectory_positions(trajectory, reference_positions=None) -> tuple[object, float]:
+    """Keep revolute joint positions on a continuous branch across the path.
+
+    MoveIt can return equivalent joint states that differ by ±2π for the same
+    Cartesian pose. That is valid kinematically but disastrous for downstream
+    time parameterization and controller start alignment. Normalize each point
+    to stay closest to the previous point, optionally seeding from the live
+    joint state.
+    """
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or not joint_trajectory.points:
+        return trajectory, 0.0
+
+    previous = list(reference_positions) if reference_positions is not None else None
+    max_adjustment = 0.0
+
+    for point in joint_trajectory.points:
+        positions = list(point.positions)
+        if previous is None:
+            previous = list(positions)
+            continue
+
+        unwrapped = []
+        for ref, value in zip(previous, positions):
+            adjusted = _nearest_equivalent_angle(ref, value)
+            max_adjustment = max(max_adjustment, abs(adjusted - value))
+            unwrapped.append(adjusted)
+        point.positions = unwrapped
+        previous = list(unwrapped)
+
+    return trajectory, max_adjustment
+
+
+def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[object, float]:
+    """Prefer equivalent joint branches that stay within controller-safe limits.
+
+    Joint_6 is multi-turn, and MoveIt may return an equivalent branch that drifts
+    toward +4π. Keep that trajectory on the nearest branch that remains inside
+    the configured hardware limit window to avoid controller clamping late in
+    execution.
+    """
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or not joint_trajectory.points:
+        return trajectory, 0.0
+
+    previous = list(reference_positions) if reference_positions is not None else None
+    if previous is None and joint_trajectory.points:
+        previous = list(joint_trajectory.points[0].positions)
+
+    max_adjustment = 0.0
+    lower_limit = -12.5664
+    upper_limit = 12.5664
+
+    for point_index, point in enumerate(joint_trajectory.points):
+        positions = list(point.positions)
+        if previous is None:
+            previous = list(positions)
+            continue
+
+        adjusted_positions = list(positions)
+        for joint_index, joint_name in enumerate(joint_trajectory.joint_names):
+            name = str(joint_name or "").strip().lower()
+            if name not in {"joint_6", "j6", "axis_6"} and not name.endswith("_6"):
+                continue
+            reference = previous[joint_index]
+            adjusted = _wrap_angle_into_limits(reference, positions[joint_index], lower_limit, upper_limit)
+            max_adjustment = max(max_adjustment, abs(adjusted - positions[joint_index]))
+            adjusted_positions[joint_index] = adjusted
+        point.positions = adjusted_positions
+        previous = list(adjusted_positions)
+
+    return trajectory, max_adjustment
 
 def _sanitize_optimizer_start(rc, trajectory, log_prefix):
     """Align the optimizer input trajectory to the latest live joint state."""
@@ -70,6 +169,24 @@ def _sanitize_optimizer_start(rc, trajectory, log_prefix):
     merge_tol = float(getattr(config, 'OPTIMIZER_START_MERGE_TOL_RAD', align_tol))
 
     sanitized = deepcopy(trajectory)
+    sanitized, max_wrap_adjustment = _unwrap_joint_trajectory_positions(
+        sanitized,
+        reference_positions=ordered_positions,
+    )
+    if max_wrap_adjustment > 1e-6:
+        rc.get_logger().info(
+            f'{log_prefix} Unwrapped joint trajectory continuity '
+            f'(max wrap adjustment {max_wrap_adjustment:.4f} rad)'
+        )
+    sanitized, max_limit_wrap_adjustment = _limit_safe_joint_wrapping(
+        sanitized,
+        reference_positions=ordered_positions,
+    )
+    if max_limit_wrap_adjustment > 1e-6:
+        rc.get_logger().info(
+            f'{log_prefix} Rebased wrapped joints to limit-safe branches '
+            f'(max wrap adjustment {max_limit_wrap_adjustment:.4f} rad)'
+        )
     points = sanitized.joint_trajectory.points
     first_point = points[0]
 

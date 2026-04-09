@@ -300,6 +300,18 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
     """
     robot_controller.get_logger().info('[Ruckig] Checking if Ruckig service is available...')
 
+    def _fallback_to_totg(reason: str):
+        robot_controller.get_logger().warning(
+            f'[Ruckig] Falling back to TOTG: {reason}'
+        )
+        apply_ipp_totg(
+            robot_controller,
+            trajectory,
+            vel_scaling=vel_scaling,
+            acc_scaling=acc_scaling,
+            callback=callback,
+        )
+
     # Create client if not exists
     if not hasattr(robot_controller, 'ruckig_client'):
         robot_controller.ruckig_client = robot_controller.create_client(ApplyIPP, '/apply_ruckig')
@@ -307,8 +319,7 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
     if not robot_controller.ruckig_client.wait_for_service(timeout_sec=cfg.OPT_SERVICE_TIMEOUT_S):
         robot_controller.get_logger().error('[Ruckig] ✗ Ruckig service /apply_ruckig NOT available after 5s!')
         robot_controller.get_logger().error('[Ruckig]    Is ruckig_helper node running? Check: ros2 node list | grep ruckig')
-        if callback:
-            callback(None)
+        _fallback_to_totg('/apply_ruckig service unavailable')
         return
 
     robot_controller.get_logger().info('[Ruckig] ✓ Ruckig service is available')
@@ -320,9 +331,19 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
         f'[Ruckig] Requesting jerk-limited smoothing (vel={vel_scaling}, acc={acc_scaling})')
 
     # Call ASYNC to avoid blocking the executor
+    def _on_done(f):
+        def _callback_with_fallback(result):
+            if result is None:
+                _fallback_to_totg('Ruckig returned no valid trajectory')
+                return
+            if callback:
+                callback(result)
+
+        _handle_apply_ipp_response(
+            robot_controller, f, trajectory, _callback_with_fallback, '[Ruckig]')
+
     future = robot_controller.ruckig_client.call_async(request)
-    future.add_done_callback(
-        lambda f: _handle_apply_ipp_response(robot_controller, f, trajectory, callback, '[Ruckig]'))
+    future.add_done_callback(_on_done)
 
 
 def apply_ipp_totg(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):

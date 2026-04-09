@@ -8,6 +8,8 @@
 #include <hardware_interface/types/hardware_interface_return_values.hpp>
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "visibility_control.h"
+#include <array>
+#include <deque>
 #include <vector>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include "libfairino/include/robot.h"
@@ -63,6 +65,8 @@ private:
   double _jnt_acceleration_state[6];
   double _prev_velocity_state[6];
   rclcpp::Time _prev_time;
+  std::deque<std::array<double, 6>> _position_history;
+  std::deque<double> _sample_period_history;
   int _control_mode;
   std::string _controller_ip = CONTROLLER_IP_ADDRESS;
   std::unique_ptr<FRRobot> _ptr_robot;
