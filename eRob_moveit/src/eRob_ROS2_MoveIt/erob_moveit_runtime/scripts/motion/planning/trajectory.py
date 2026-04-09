@@ -5,7 +5,11 @@ Multi-Waypoint Cartesian Path
 
 from moveit_msgs.msg import RobotState
 from .trajectory_planner import _cartesian_path_response, _build_cartesian_request, _apply_time_param
-from .trajectory_planner import _nearest_equivalent_angle, _unwrap_joint_trajectory_positions, _limit_safe_joint_wrapping
+from .trajectory_planner import (
+    _nearest_equivalent_angle,
+    _project_joint6_to_reference_branch,
+    _unwrap_joint_trajectory_positions,
+)
 from .planner_diagnostics import _diagnose_start_collision
 from .planner_utils import _set_result, _is_stale, _begin_execution, _require_cart_path_service, _to_pose_list
 from .single_target import _execute_single_point
@@ -270,14 +274,14 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                 '[EXECUTE_PATH] Phase 2 path branch-normalized to Phase 1 IK '
                 f'(max wrap adjustment {max_wrap_adjustment:.4f} rad)'
             )
-        resp.solution, max_limit_wrap_adjustment = _limit_safe_joint_wrapping(
+        resp.solution, max_branch_projection = _project_joint6_to_reference_branch(
             resp.solution,
             reference_positions=phase1_reference_positions,
         )
-        if max_limit_wrap_adjustment > 1e-6:
+        if max_branch_projection > 1e-6:
             robot_controller.get_logger().info(
-                '[EXECUTE_PATH] Phase 2 path rebased to limit-safe branches '
-                f'(max wrap adjustment {max_limit_wrap_adjustment:.4f} rad)'
+                '[EXECUTE_PATH] Phase 2 Joint_6 projected to Phase 1 branch '
+                f'(max wrap adjustment {max_branch_projection:.4f} rad)'
             )
         robot_controller.get_logger().info(
             f'[EXECUTE_PATH] ✓ Plan succeeded ({num_pts} pts). '

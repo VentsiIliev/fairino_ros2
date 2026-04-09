@@ -2,7 +2,9 @@ from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
 from builtin_interfaces.msg import Duration
 from copy import deepcopy
+import math
 import config
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class TrajectoryExecutor:
@@ -163,7 +165,202 @@ class TrajectoryExecutor:
             'to soften motion onset'
         )
 
-    def send_trajectory_to_controller(self, joint_trajectory):
+    @staticmethod
+    def _canonical_angle(value):
+        adjusted = float(value)
+        two_pi = 2.0 * math.pi
+        while adjusted > math.pi:
+            adjusted -= two_pi
+        while adjusted <= -math.pi:
+            adjusted += two_pi
+        return adjusted
+
+    def _build_post_success_unwind_trajectory(self):
+        if not bool(getattr(config, 'EXECUTOR_POST_UNWIND_ENABLED', False)):
+            return None
+
+        joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
+        unwind_joint_name = str(
+            getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_NAME', 'Joint_6')
+        ).strip()
+        if unwind_joint_name not in joint_names:
+            return None
+
+        current_positions = self._get_latest_joint_state_in_trajectory_order(joint_names)
+        if current_positions is None:
+            return None
+
+        joint_index = joint_names.index(unwind_joint_name)
+        current_value = float(current_positions[joint_index])
+        target_value = self._canonical_angle(current_value)
+        delta = target_value - current_value
+        min_delta = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DELTA_RAD', 0.5))
+        if abs(delta) < min_delta:
+            return None
+
+        target_range = float(getattr(config, 'EXECUTOR_POST_UNWIND_TARGET_RANGE_RAD', math.pi))
+        if abs(target_value) > target_range + 1e-9:
+            return None
+
+        speed = max(float(getattr(config, 'EXECUTOR_POST_UNWIND_SPEED_RAD_S', 0.8)), 1e-3)
+        min_duration = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DURATION_S', 2.0))
+        duration_sec = max(min_duration, abs(delta) / speed)
+
+        traj = JointTrajectory()
+        traj.joint_names = joint_names
+        traj.header.stamp = self._node.get_clock().now().to_msg()
+
+        start_pt = JointTrajectoryPoint()
+        start_pt.positions = list(current_positions)
+        start_pt.velocities = [0.0] * len(current_positions)
+        start_pt.accelerations = [0.0] * len(current_positions)
+        start_pt.time_from_start = Duration(sec=0, nanosec=0)
+
+        end_positions = list(current_positions)
+        end_positions[joint_index] = target_value
+        end_pt = JointTrajectoryPoint()
+        end_pt.positions = end_positions
+        end_pt.velocities = [0.0] * len(end_positions)
+        end_pt.accelerations = [0.0] * len(end_positions)
+        end_pt.time_from_start = self._sec_to_duration(duration_sec)
+
+        traj.points = [start_pt, end_pt]
+        return {
+            'joint_name': unwind_joint_name,
+            'current_value': current_value,
+            'target_value': target_value,
+            'delta': delta,
+            'duration_sec': duration_sec,
+            'trajectory': traj,
+        }
+
+    def _should_skip_post_success_unwind(self):
+        last_sent = self._last_sent_trajectory
+        if last_sent is None or len(getattr(last_sent, 'points', []) or []) < 2:
+            return False
+
+        points = list(last_sent.points)
+        duration_sec = self._duration_to_sec(points[-1].time_from_start)
+        max_duration = float(
+            getattr(config, 'EXECUTOR_POST_UNWIND_SKIP_NOOP_DURATION_S', 1.0)
+        )
+        if duration_sec > max_duration:
+            return False
+
+        first_positions = list(points[0].positions)
+        last_positions = list(points[-1].positions)
+        if len(first_positions) != len(last_positions):
+            return False
+
+        max_joint_delta = max(
+            abs(float(end) - float(start))
+            for start, end in zip(first_positions, last_positions)
+        ) if first_positions else 0.0
+        max_allowed_delta = float(
+            getattr(config, 'EXECUTOR_POST_UNWIND_SKIP_NOOP_MAX_JOINT_DELTA_RAD', 0.02)
+        )
+        if max_joint_delta > max_allowed_delta:
+            return False
+
+        self._node.get_logger().info(
+            '[Controller] Skipping post-motion unwind after effectively no-op move '
+            f'(duration={duration_sec:.3f}s, max_joint_delta={max_joint_delta:.4f} rad)'
+        )
+        return True
+
+    @staticmethod
+    def _nearest_equivalent_angle(reference, value):
+        adjusted = float(value)
+        ref = float(reference)
+        two_pi = 2.0 * math.pi
+        while adjusted - ref > math.pi:
+            adjusted -= two_pi
+        while adjusted - ref < -math.pi:
+            adjusted += two_pi
+        return adjusted
+
+    def _unwrap_joint6_continuity(self, joint_trajectory):
+        if not joint_trajectory.points:
+            return
+
+        joint_index = None
+        for index, joint_name in enumerate(joint_trajectory.joint_names):
+            name = str(joint_name or '').strip().lower()
+            if name in {'joint_6', 'j6', 'axis_6'} or name.endswith('_6'):
+                joint_index = index
+                break
+        if joint_index is None:
+            return
+
+        previous = float(joint_trajectory.points[0].positions[joint_index])
+        max_adjustment = 0.0
+        for point in joint_trajectory.points[1:]:
+            positions = list(point.positions)
+            original = float(positions[joint_index])
+            adjusted = self._nearest_equivalent_angle(previous, original)
+            positions[joint_index] = adjusted
+            point.positions = positions
+            max_adjustment = max(max_adjustment, abs(adjusted - original))
+            previous = adjusted
+
+        if max_adjustment > 1e-6:
+            self._node.get_logger().info(
+                '[Controller] Unwrapped Joint_6 continuity for execution '
+                f'(max wrap adjustment {max_adjustment:.4f} rad)'
+            )
+
+    def _anchor_joint6_to_live_branch(self, joint_trajectory):
+        if not joint_trajectory.points:
+            return
+
+        joint_index = None
+        for index, joint_name in enumerate(joint_trajectory.joint_names):
+            name = str(joint_name or '').strip().lower()
+            if name in {'joint_6', 'j6', 'axis_6'} or name.endswith('_6'):
+                joint_index = index
+                break
+        if joint_index is None:
+            return
+
+        live_reference = float(joint_trajectory.points[0].positions[joint_index])
+        if len(joint_trajectory.points) < 2:
+            return
+
+        original_values = [
+            float(point.positions[joint_index]) for point in joint_trajectory.points
+        ]
+        original_end = original_values[-1]
+        original_span = max(original_values) - min(original_values)
+
+        max_adjustment = 0.0
+        for point in joint_trajectory.points[1:]:
+            positions = list(point.positions)
+            original = float(positions[joint_index])
+            adjusted = self._nearest_equivalent_angle(live_reference, original)
+            positions[joint_index] = adjusted
+            point.positions = positions
+            max_adjustment = max(max_adjustment, abs(adjusted - original))
+
+        anchored_end = float(joint_trajectory.points[-1].positions[joint_index])
+        anchored_span = max(
+            float(point.positions[joint_index]) for point in joint_trajectory.points
+        ) - min(
+            float(point.positions[joint_index]) for point in joint_trajectory.points
+        )
+
+        if max_adjustment > 1e-6:
+            self._node.get_logger().info(
+                '[Controller] Re-anchored Joint_6 to live branch for execution '
+                f'(end {original_end:.4f} -> {anchored_end:.4f} rad, '
+                f'span {original_span:.4f} -> {anchored_span:.4f} rad, '
+                f'max adjustment {max_adjustment:.4f} rad)'
+            )
+
+    def _execute_post_success_unwind(self, trajectory):
+        self.send_trajectory_to_controller(trajectory, preserve_explicit_wrap=True)
+        return 0
+
+    def send_trajectory_to_controller(self, joint_trajectory, preserve_explicit_wrap=False):
         """Send trajectory directly to the low-level controller for smooth execution."""
         if not self._motion.execution_lock.acquire(blocking=False):
             self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
@@ -197,6 +394,9 @@ class TrajectoryExecutor:
             return
 
         self._overwrite_first_point_with_live_state(joint_trajectory)
+        if not preserve_explicit_wrap:
+            self._unwrap_joint6_continuity(joint_trajectory)
+            self._anchor_joint6_to_live_branch(joint_trajectory)
         self._soften_trajectory_start(joint_trajectory)
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):
@@ -305,9 +505,32 @@ class TrajectoryExecutor:
 
         try:
             result = future.result().result
+            queued_unwind = None
             if result.error_code == 0:
                 self._node.get_logger().info('[Controller] ✓ Trajectory execution succeeded!')
                 self._motion.last_move_result = 0
+                queue_size = self._queue.get_status().get('queue_size', 0)
+                if queue_size == 0 and not self._should_skip_post_success_unwind():
+                    queued_unwind = self._build_post_success_unwind_trajectory()
+                    if queued_unwind is not None:
+                        queue_result = self._queue.submit(
+                            task_function=self._execute_post_success_unwind,
+                            task_args=[queued_unwind['trajectory']],
+                        )
+                        if isinstance(queue_result, tuple):
+                            task_id, _position = queue_result
+                            self._node.get_logger().info(
+                                '[Controller] Queued explicit post-motion unwind for '
+                                f"{queued_unwind['joint_name']} (task #{task_id}): "
+                                f"{queued_unwind['current_value']:.3f} -> "
+                                f"{queued_unwind['target_value']:.3f} rad "
+                                f'over {queued_unwind["duration_sec"]:.2f}s'
+                            )
+                        else:
+                            self._node.get_logger().warning(
+                                '[Controller] Failed to queue post-motion unwind '
+                                f'for {queued_unwind["joint_name"]}: {queue_result}'
+                            )
             else:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution failed with error: {result.error_code}')

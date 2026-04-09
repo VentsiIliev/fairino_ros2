@@ -99,13 +99,52 @@ def _unwrap_joint_trajectory_positions(trajectory, reference_positions=None) -> 
     return trajectory, max_adjustment
 
 
-def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[object, float]:
-    """Prefer equivalent joint branches that stay within controller-safe limits.
+def _project_joint6_to_reference_branch(trajectory, reference_positions=None) -> tuple[object, float]:
+    """Project Joint_6 onto the nearest equivalent branch of the reference state.
 
-    Joint_6 is multi-turn, and MoveIt may return an equivalent branch that drifts
-    toward +4π. Keep that trajectory on the nearest branch that remains inside
-    the configured hardware limit window to avoid controller clamping late in
-    execution.
+    This intentionally does not preserve accumulated multi-turn wrapping for the
+    wrist. For execution we want the equivalent branch nearest the live start
+    state, otherwise MoveIt can hand back a valid Cartesian path whose Joint_6
+    endpoint differs by one or more full turns and the controller will chase
+    that numeric target instead of the nearby equivalent.
+    """
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or not joint_trajectory.points:
+        return trajectory, 0.0
+    if reference_positions is None:
+        return trajectory, 0.0
+
+    reference = list(reference_positions)
+    if len(reference) != len(joint_trajectory.joint_names):
+        return trajectory, 0.0
+
+    max_adjustment = 0.0
+    for point in joint_trajectory.points:
+        positions = list(point.positions)
+        adjusted_any = False
+        for joint_index, joint_name in enumerate(joint_trajectory.joint_names):
+            name = str(joint_name or '').strip().lower()
+            if name not in {'joint_6', 'j6', 'axis_6'} and not name.endswith('_6'):
+                continue
+            original = float(positions[joint_index])
+            adjusted = _nearest_equivalent_angle(reference[joint_index], original)
+            if abs(adjusted - original) > 1e-9:
+                positions[joint_index] = adjusted
+                max_adjustment = max(max_adjustment, abs(adjusted - original))
+                adjusted_any = True
+        if adjusted_any:
+            point.positions = positions
+
+    return trajectory, max_adjustment
+
+
+def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[object, float]:
+    """Rebase wrapped joints only when the current branch violates hard limits.
+
+    Keep the planner's chosen branch whenever it is already within the hardware
+    window. Only shift by ±2π when a point falls outside the controller-safe
+    limit range. This avoids "helpful" untangling that reverses the intended
+    wrist rotation on otherwise valid paths.
     """
     joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
     if joint_trajectory is None or not joint_trajectory.points:
@@ -130,9 +169,12 @@ def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[ob
             name = str(joint_name or "").strip().lower()
             if name not in {"joint_6", "j6", "axis_6"} and not name.endswith("_6"):
                 continue
+            current_value = positions[joint_index]
+            if lower_limit - 1e-9 <= current_value <= upper_limit + 1e-9:
+                continue
             reference = previous[joint_index]
-            adjusted = _wrap_angle_into_limits(reference, positions[joint_index], lower_limit, upper_limit)
-            max_adjustment = max(max_adjustment, abs(adjusted - positions[joint_index]))
+            adjusted = _wrap_angle_into_limits(reference, current_value, lower_limit, upper_limit)
+            max_adjustment = max(max_adjustment, abs(adjusted - current_value))
             adjusted_positions[joint_index] = adjusted
         point.positions = adjusted_positions
         previous = list(adjusted_positions)
@@ -178,14 +220,14 @@ def _sanitize_optimizer_start(rc, trajectory, log_prefix):
             f'{log_prefix} Unwrapped joint trajectory continuity '
             f'(max wrap adjustment {max_wrap_adjustment:.4f} rad)'
         )
-    sanitized, max_limit_wrap_adjustment = _limit_safe_joint_wrapping(
+    sanitized, max_branch_projection = _project_joint6_to_reference_branch(
         sanitized,
         reference_positions=ordered_positions,
     )
-    if max_limit_wrap_adjustment > 1e-6:
+    if max_branch_projection > 1e-6:
         rc.get_logger().info(
-            f'{log_prefix} Rebased wrapped joints to limit-safe branches '
-            f'(max wrap adjustment {max_limit_wrap_adjustment:.4f} rad)'
+            f'{log_prefix} Projected Joint_6 to live branch before optimization '
+            f'(max wrap adjustment {max_branch_projection:.4f} rad)'
         )
     points = sanitized.joint_trajectory.points
     first_point = points[0]

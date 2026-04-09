@@ -29,7 +29,7 @@ from backend.runtime_adapter import create_runtime_adapter
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
-from safety.collision_detection import KDLInverseDynamicsModel, create_dynamics_collision_detector
+from safety.collision_detection import KDLInverseDynamicsModel
 from status.robot_monitor import RobotMonitor
 from status.robot_state_store import RobotStateStore
 from status.robot_status_publisher import RobotStatusPublisher
@@ -210,28 +210,6 @@ class RobotController(Node):
         self.planner_context.T_tool = self.T_tool
 
         self.urdf_path = URDF_PATH
-
-        # Dynamics-based collision detector - uses inverse dynamics to isolate external torques
-        # τ_external = τ_measured - τ_expected(q, dq, ddq)
-        self.collision_detector = create_dynamics_collision_detector(
-            urdf_path=self.urdf_path,
-            base_link=BASE_LINK,
-            tip_link=COLLISION_TIP_LINK,
-            num_joints=NUM_JOINTS,
-            external_torque_rate_thresholds=np.array(COLLISION_RATE_THRESHOLDS),
-            external_torque_sustained_thresholds=np.array(COLLISION_SUSTAINED_THRESHOLDS),
-            enable_sustained_check=False,  # Disable to avoid false positives during high acceleration
-            confirmation_samples=COLLISION_CONFIRMATION_SAMPLES,
-            recovery_time=COLLISION_RECOVERY_TIME_S,
-            logger=self.get_logger(),
-            include_gravity=False,
-        )
-        self.collision_detector.set_on_collision(self._on_collision_detected)
-        self.collision_detector.disable()  # TEMPORARILY DISABLED — re-enable with self.collision_detector.enable()
-        self.collision_detector.disarm()  # Not computing — gravity model is 6.6x off, causes false positives
-        self.collision_stop_enabled = False  # Set to True to auto-stop on collision
-        self.collision_always_armed = False
-        self.get_logger().info('[Init] Dynamics collision detector initialized (DISABLED — gravity model not calibrated)')
 
         self._ethercat_fault_lock = Lock()
         self._ethercat_motion_fault = False
@@ -573,13 +551,6 @@ class RobotController(Node):
             tool_transform=tool_transform,
             avoid_collisions=avoid_collisions), queue_if_busy=queue_if_busy)
 
-    def _on_collision_detected(self):
-        """Callback when collision detector triggers."""
-        self.get_logger().error('[COLLISION] Collision detected!')
-        if self.collision_stop_enabled:
-            self.get_logger().error('[COLLISION] Stopping motion immediately!')
-            self.stop_motion()
-
     def _collision_monitor_config_callback(self, msg: String):
         try:
             payload = json.loads(msg.data)
@@ -661,43 +632,10 @@ class RobotController(Node):
         Clearing active goal state here races with the async result future and makes
         successful completions look like stale/cancelled goals.
         """
-
-        for status in msg.status_list:
-            if status.status in [GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING]:
-                # Arm collision detector when motion starts
-                if not self.collision_detector.armed:
-                    self.collision_detector.arm()
-            elif status.status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
-                                   GoalStatus.STATUS_CANCELED]:
-                # Result callback owns active goal + execution cleanup. Only handle
-                # detector state here to avoid racing normal completion.
-                if not self.collision_always_armed:
-                    self.collision_detector.disarm()
+        return
 
     def joint_state_callback(self, msg):
         """Process joint states and store for trajectory planning."""
-        import time
-
-        # Feed data to dynamics collision detector (outside lock for speed)
-        if len(msg.effort) >= 6 and len(msg.position) >= 6:
-            # Get velocities and accelerations from monitor if available
-            if self.monitor is not None:
-                data = self.monitor.get_latest_data()
-                velocities = data.get('velocities', np.zeros(6))
-                accelerations = data.get('accelerations', np.zeros(6))
-            else:
-                # Fallback: use velocity from joint_states if available
-                velocities = np.array(msg.velocity[:6]) if len(msg.velocity) >= 6 else np.zeros(6)
-                accelerations = np.zeros(6)
-
-            self.collision_detector.update(
-                measured_efforts=np.array(msg.effort[:6]),
-                positions=np.array(msg.position[:6]),
-                velocities=velocities,
-                accelerations=accelerations,
-                timestamp=time.time()
-            )
-
         if len(msg.effort) >= NUM_JOINTS:
             with self._drag_lock:
                 self._drive_effort_actual = np.array(msg.effort[:NUM_JOINTS], dtype=float)
@@ -1617,60 +1555,3 @@ class RobotController(Node):
     @latest_data.setter
     def latest_data(self, value):
         self.state_store.set_latest_data(value)
-
-    # ============ Collision Detection API ============
-
-    def enable_collision_detection(self):
-        """Enable effort-based collision detection."""
-        self.collision_detector.enable()
-        self.get_logger().info('[CollisionDetector] Enabled')
-
-    def disable_collision_detection(self):
-        """Disable effort-based collision detection."""
-        self.collision_detector.disable()
-        self.get_logger().info('[CollisionDetector] Disabled')
-
-    def enable_collision_stop(self):
-        """Enable automatic motion stop when collision detected."""
-        self.collision_stop_enabled = True
-        self.get_logger().info('[CollisionDetector] Auto-stop ENABLED')
-
-    def disable_collision_stop(self):
-        """Disable automatic motion stop (detection still active for monitoring)."""
-        self.collision_stop_enabled = False
-        self.get_logger().info('[CollisionDetector] Auto-stop DISABLED (monitoring only)')
-
-    def set_collision_always_armed(self, always_armed: bool):
-        """
-        Set whether collision detector should always be armed.
-
-        Args:
-            always_armed: True to keep armed even when not moving (for testing)
-        """
-        self.collision_always_armed = always_armed
-        if always_armed:
-            self.collision_detector.arm()
-            self.get_logger().info('[CollisionDetector] ALWAYS ARMED mode enabled')
-        else:
-            self.get_logger().info('[CollisionDetector] Normal mode - armed only during motion')
-
-    def set_collision_thresholds(self, rate_thresholds):
-        """
-        Set collision detection rate thresholds.
-
-        Args:
-            rate_thresholds: Per-joint rate thresholds (N·m/sample), array of 6 values
-        """
-        self.collision_detector.set_thresholds(np.array(rate_thresholds))
-
-    def reset_collision_state(self):
-        """Reset collision detector state."""
-        self.collision_detector.arm()
-        with self._collision_fault_lock:
-            self._collision_motion_fault = False
-            self._collision_fault_reason = ""
-        self.get_logger().info('[CollisionDetector] State reset and re-armed')
-
-    def get_collision_status(self):
-        """Get collision detector status for debugging."""
-        return self.collision_detector.get_status()
