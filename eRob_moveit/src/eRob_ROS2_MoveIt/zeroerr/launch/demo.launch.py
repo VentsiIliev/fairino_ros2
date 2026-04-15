@@ -245,21 +245,21 @@ def generate_launch_description():
             )
         )
 
-    plotjuggler_node = ExecuteProcess(
-        cmd=[
-            "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
-            "--disable_opengl",
-        ],
-        output="screen",
-    )
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=16.0, actions=[plotjuggler_node])],
-            )
-        )
-    )
+    # plotjuggler_node = ExecuteProcess(
+    #     cmd=[
+    #         "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
+    #         "--disable_opengl",
+    #     ],
+    #     output="screen",
+    # )
+    # demo_ld.add_action(
+    #     RegisterEventHandler(
+    #         OnProcessExit(
+    #             target_action=wait_for_op_process,
+    #             on_exit=[TimerAction(period=16.0, actions=[plotjuggler_node])],
+    #         )
+    #     )
+    # )
 
     velocity_monitor_gui = Node(
         package="zeroerr",

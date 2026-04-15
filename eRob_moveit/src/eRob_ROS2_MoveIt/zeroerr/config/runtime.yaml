@@ -1,13 +1,22 @@
+# Runtime backend identifier used by the shared runtime factory.
 ROBOT_BACKEND: zeroerr
+
+# Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: true
+
+# Default workobject/user frame [x, y, z, rx, ry, rz] in mm/degrees.
 DEFAULT_WORKOBJECT:
 - 0
 - 0
 - 0
 - 0
-- -3.188
+- 1.14
 - 15.83
+
+# Number of controlled robot joints.
 NUM_JOINTS: 6
+
+# Joint names in controller and MoveIt trajectory order.
 JOINT_NAMES:
 - Joint_1
 - Joint_2
@@ -15,14 +24,83 @@ JOINT_NAMES:
 - Joint_4
 - Joint_5
 - Joint_6
+
+# MoveIt planning group name.
 PLANNING_GROUP: manipulator
+
+# Root frame for planning and FK/IK requests.
 BASE_LINK: base_link
+
+# End-effector link used for IK, FK, and planning requests.
 EE_LINK: ee_link
+
+# Wrist link used by diagnostics and wrist-specific logic.
 WRIST_LINK: Link_6
+
+# Link treated as the collision/tool tip for safety monitoring.
 COLLISION_TIP_LINK: disk_link
+
+# Robot URDF used by runtime helpers and dynamics/collision tools.
 URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf
+
+# FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
+
+# Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
+
+# Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
+# moves probe failed poses with IK/collision/branch variants. Keep false during
+# normal operation because it adds extra MoveIt service calls and noisy logs.
+CARTESIAN_FAILURE_DIAGNOSTICS_ENABLED: false
+
+# PTP: current-vs-target TCP orientation angular tolerance. If the orientations
+# differ by at most this many degrees, PTP treats the move as same-orientation
+# and applies stricter wrist/path discipline while still reaching the requested
+# final pose.
+PTP_LOCK_ORIENTATION_TOL_DEG: 2.0
+
+# PTP: max allowed TCP orientation drift along a same-orientation move.
+# Lower values keep the tool attitude tighter but may reject more IK paths.
+PTP_LOCKED_PATH_MAX_DRIFT_DEG: 2.0
+
+# PTP: max allowed TCP orientation deviation from the expected start-to-target
+# orientation progression when the target intentionally requests reorientation.
+PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 5.0
+
+# PTP: wrist motion below this threshold is treated as normal joint motion.
+# Wrist motion above it receives extra cost during equivalent-branch selection.
+PTP_WRIST_PENALTY_START_DEG: 45.0
+
+# PTP: hard max wrist-joint motion for moves that intentionally reorient TCP.
+# If any wrist joint exceeds this, the PTP target is rejected.
+PTP_MAX_WRIST_DELTA_DEG: 160.0
+
+# PTP: stricter hard max wrist-joint motion for same-orientation moves.
+# This prevents solving an equivalent final attitude by flipping the wrist.
+PTP_LOCKED_MAX_WRIST_DELTA_DEG: 120.0
+
+# PTP: if the selected target joint state is within this max joint delta from
+# the live joint state, treat the command as already reached and skip execution.
+PTP_NOOP_JOINT_DELTA_RAD: 0.001
+
+# PTP: max joint interpolation step used for pre-execution validity/FK checks.
+# Smaller values sample more densely; larger values plan faster but check less.
+PTP_JOINT_INTERPOLATION_STEP_RAD: 0.08
+
+# PTP: minimum number of joint interpolation segments checked before execution.
+PTP_MIN_INTERPOLATION_SEGMENTS: 8
+
+# PTP: maximum number of joint interpolation segments checked before execution.
+PTP_MAX_INTERPOLATION_SEGMENTS: 80
+
+# Speed used for optional explicit/post-success Joint_6 unwind moves.
+EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.2
+
+# Acceleration used for optional explicit/post-success Joint_6 unwind moves.
+EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 1.5
+
+# Tool transforms keyed by tool name, [x, y, z, rx, ry, rz] in mm/degrees.
 TOOL_REGISTRY:
   TOOL_0:
   - 0
@@ -31,42 +109,100 @@ TOOL_REGISTRY:
   - 0
   - 0
   - 0
+
+# Numeric tool IDs accepted by the API mapped to TOOL_REGISTRY keys.
 TOOL_ID_MAP:
   0: TOOL_0
+
+# REST server log file path.
 REST_LOG: /tmp/zeroerr_rest_server.log
+
+# Publish interval for RViz/planning-scene marker updates.
 MARKER_PUBLISH_INTERVAL_S: 30.0
 
+# Enables runtime safety wall collision objects around the extracted workspace.
 SAFETY_WALLS_ENABLED: false
 
+# Starts the robot in drag mode when supported by this backend.
 DRAG_MODE_ENABLED_DEFAULT: false
+
+# Drag-mode command/update loop frequency.
 DRAG_MODE_UPDATE_RATE_HZ: 50.0
+
+# Controller topic for drag-mode mode commands.
 DRAG_MODE_MODE_COMMAND_TOPIC: /drag_mode_controller/commands
+
+# Controller topic for drag-mode effort commands.
 DRAG_MODE_EFFORT_COMMAND_TOPIC: /drag_effort_controller/commands
+
+# Controller topic for drag-mode torque-offset commands.
 DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC: /drag_torque_offset_controller/commands
+
+# Controller topic used to enable drag mode.
 DRAG_MODE_ENABLE_SET_COMMAND_TOPIC: /drag_enable_set_controller/commands
+
+# Controller topic used to disable drag mode.
 DRAG_MODE_DISABLE_SET_COMMAND_TOPIC: /drag_disable_set_controller/commands
+
+# Drive mode value used for cyclic synchronous position.
 DRAG_MODE_CSP_VALUE: 8.0
+
+# Drive mode value used for cyclic synchronous torque.
 DRAG_MODE_CST_VALUE: 10.0
+
+# Global multiplier for drag-mode gravity/friction compensation.
 DRAG_MODE_COMPENSATION_SCALE: 1.0
+
+# Per-joint multiplier for drag-mode compensation.
 DRAG_MODE_JOINT_COMPENSATION_SCALE: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+# Per-joint viscous damping used by drag mode.
 DRAG_MODE_DAMPING_NM_PER_RAD_S: [1.5, 1.5, 1.2, 0.8, 0.5, 0.3]
+
+# Per-joint effort command clamp for drag mode.
 DRAG_MODE_MAX_EFFORT_NM: [10.0, 10.0, 8.0, 5.0, 3.0, 2.0]
+
+# Per-joint torque-offset command clamp for drag mode.
 DRAG_MODE_MAX_TORQUE_OFFSET_NM: [60.0, 60.0, 45.0, 25.0, 12.0, 8.0]
+
+# Timeout allowed for drives to settle after drag-mode switching.
 DRAG_MODE_MODE_SETTLE_TIMEOUT_S: 2.0
+
+# Pulse duration for the drag-mode disable command.
 DRAG_MODE_DISABLE_PULSE_S: 0.10
+
+# Pulse duration for the drag-mode enable command.
 DRAG_MODE_ENABLE_PULSE_S: 0.10
+
+# JSON file storing calibrated drag-mode parameters.
 DRAG_MODE_CONFIG_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/drag_mode_config.json
+
+# Motor model assigned to each joint for drag-mode torque conversion.
 DRAG_MODE_JOINT_MODELS: [eRob80H100T, eRob80H100T, eRob80H100T, eRob70H100T, eRob70H100T, eRob70H100T]
+
+# Motor model names used by the rated-current/torque-constant tables.
 DRAG_MODE_MODEL_NAMES: [eRob70H100T, eRob80H100T]
+
+# Rated motor current for each listed motor model, in mA.
 DRAG_MODE_MODEL_RATED_CURRENT_MA: [3500.0, 5500.0]
+
+# Output torque constant for each listed motor model, in Nm/A.
 DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A: [4.76, 8.475]
+
+# Minimum duration assigned to Jacobian fallback trajectories.
 JACOBIAN_MIN_DURATION_S: 0.25
+
+# Minimum duration assigned to very short Jacobian fallback moves.
 JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
 
 # Per-joint torque bias (Nm) subtracted from measured torque before the momentum
-# observer integrates it.  Use the drive_output_torque value seen at rest for
+# observer integrates it. Use the drive_output_torque value seen at rest for
 # each joint to cancel gravity-model mismatch between the URDF and firmware.
-# Example: J3 reads ~3.68 Nm at the home pose → set index 2 = 3.68.
+# Example: J3 reads about 3.68 Nm at the home pose, so set index 2 to 3.68.
 STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Enables CSV torque logging.
 TORQUE_LOG_ENABLED: True
+
+# CSV output path for torque logging.
 TORQUE_LOG_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/data/torque_sensor_log.csv

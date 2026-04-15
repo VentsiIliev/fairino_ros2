@@ -142,7 +142,7 @@ def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=No
     req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
     req.ik_request.pose_stamped.header.stamp = node.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
-    req.ik_request.avoid_collisions = False
+    req.ik_request.avoid_collisions = True
     req.ik_request.timeout.sec = int(timeout_s)
     req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1_000_000_000)
 

@@ -10,6 +10,20 @@ import config as cfg
 _joint_limits_cache = None
 
 
+def _compute_reduced_fallback_scaling(vel_scaling, acc_scaling):
+    if not bool(getattr(cfg, 'RUCKIG_FALLBACK_REDUCE_SCALING', True)):
+        return float(vel_scaling), float(acc_scaling), False
+
+    vel = float(vel_scaling)
+    acc = float(acc_scaling)
+    reduced_vel = max(float(getattr(cfg, 'RUCKIG_FALLBACK_MIN_VEL_SCALING', 0.1)),
+                      vel * float(getattr(cfg, 'RUCKIG_FALLBACK_VEL_MULTIPLIER', 0.5)))
+    reduced_acc = max(float(getattr(cfg, 'RUCKIG_FALLBACK_MIN_ACC_SCALING', 0.1)),
+                      acc * float(getattr(cfg, 'RUCKIG_FALLBACK_ACC_MULTIPLIER', 0.5)))
+    changed = (abs(reduced_vel - vel) > 1e-9) or (abs(reduced_acc - acc) > 1e-9)
+    return reduced_vel, reduced_acc, changed
+
+
 def _load_joint_limits_from_config():
     """Load joint limits from joint_limits.yaml config file."""
     global _joint_limits_cache
@@ -301,14 +315,25 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
     robot_controller.get_logger().info('[Ruckig] Checking if Ruckig service is available...')
 
     def _fallback_to_totg(reason: str):
-        robot_controller.get_logger().warning(
-            f'[Ruckig] Falling back to TOTG: {reason}'
+        fallback_vel, fallback_acc, reduced = _compute_reduced_fallback_scaling(
+            vel_scaling,
+            acc_scaling,
         )
+        if reduced:
+            robot_controller.get_logger().warning(
+                f'[Ruckig] Falling back to TOTG with reduced scaling: {reason} '
+                f'(vel={vel_scaling:.3f}->{fallback_vel:.3f}, '
+                f'acc={acc_scaling:.3f}->{fallback_acc:.3f})'
+            )
+        else:
+            robot_controller.get_logger().warning(
+                f'[Ruckig] Falling back to TOTG: {reason}'
+            )
         apply_ipp_totg(
             robot_controller,
             trajectory,
-            vel_scaling=vel_scaling,
-            acc_scaling=acc_scaling,
+            vel_scaling=fallback_vel,
+            acc_scaling=fallback_acc,
             callback=callback,
         )
 

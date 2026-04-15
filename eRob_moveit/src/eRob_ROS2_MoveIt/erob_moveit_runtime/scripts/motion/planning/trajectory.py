@@ -3,11 +3,16 @@ Multi-Waypoint Cartesian Path
 ...
 """
 
+from copy import deepcopy
+from builtin_interfaces.msg import Duration
 from moveit_msgs.msg import RobotState
 from .trajectory_planner import _cartesian_path_response, _build_cartesian_request, _apply_time_param
 from .trajectory_planner import (
+    _joint6_path_stats,
     _nearest_equivalent_angle,
     _project_joint6_to_reference_branch,
+    _regularize_joint6_branch_sequence,
+    _stabilize_joint6_path_shape,
     _unwrap_joint_trajectory_positions,
 )
 from .planner_diagnostics import _diagnose_start_collision
@@ -32,6 +37,27 @@ def _preferred_branch_reference(joint_name: str, live_reference: float) -> float
     if name in {"joint_6", "j6", "axis_6"} or name.endswith("_6"):
         return _canonical_principal_angle(live_reference)
     return float(live_reference)
+
+
+def _combine_joint_trajectories(approach_solution, path_solution):
+    combined = deepcopy(approach_solution)
+    approach_traj = combined.joint_trajectory
+    path_traj = path_solution.joint_trajectory
+
+    if approach_traj.joint_names != path_traj.joint_names:
+        raise ValueError('Approach/path joint names do not match')
+
+    combined_points = list(approach_traj.points)
+    path_points = list(path_traj.points)
+    if path_points:
+        path_points = path_points[1:]
+
+    combined_points.extend(deepcopy(path_points))
+    for point in combined_points:
+        point.time_from_start = Duration(sec=0, nanosec=0)
+
+    approach_traj.points = combined_points
+    return combined
 
 
 def send_path_cartesian(
@@ -222,8 +248,39 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                             '[EXECUTE_PATH] Phase 1 IK branch-normalized to live joint state '
                             f'(max wrap adjustment {max_branch_adjustment:.4f} rad)'
                         )
+        approach_solution = deepcopy(ik_resp.solution)
+
         robot_controller.get_logger().info(
             f'[EXECUTE_PATH] IK ok: {[round(p, 3) for p in normalized_positions[:6]]}')
+
+        live_joint_state = getattr(robot_controller, 'current_joint_state', None)
+        if live_joint_state is not None:
+            state_names = list(getattr(live_joint_state, 'name', []) or [])
+            state_positions = list(getattr(live_joint_state, 'position', []) or [])
+            if state_names and len(state_names) == len(state_positions):
+                live_by_name = {
+                    name: position
+                    for name, position in zip(state_names, state_positions)
+                }
+                ordered_live_positions = []
+                can_normalize_approach = True
+                for joint_name in approach_solution.joint_trajectory.joint_names:
+                    if joint_name not in live_by_name:
+                        can_normalize_approach = False
+                        break
+                    ordered_live_positions.append(live_by_name[joint_name])
+                if can_normalize_approach:
+                    approach_solution, _ = _unwrap_joint_trajectory_positions(
+                        approach_solution,
+                        reference_positions=ordered_live_positions,
+                    )
+                    approach_solution, _ = _project_joint6_to_reference_branch(
+                        approach_solution,
+                        reference_positions=ordered_live_positions,
+                    )
+
+        if approach_solution.joint_trajectory.points:
+            approach_solution.joint_trajectory.points[-1].positions = list(normalized_positions)
 
         # Build virtual start state at first waypoint
         virtual_start = RobotState()
@@ -241,10 +298,14 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             f'(max_step={max_step*1000:.1f}mm)...')
         plan_future = robot_controller.request_cartesian_path(plan_request)
         plan_future.add_done_callback(
-            lambda future: on_plan_done(future, list(normalized_positions))
+            lambda future: on_plan_done(
+                future,
+                list(normalized_positions),
+                deepcopy(approach_solution),
+            )
         )
 
-    def on_plan_done(f, phase1_reference_positions):
+    def on_plan_done(f, phase1_reference_positions, approach_solution):
         if _is_stale(robot_controller, gen):
             return
         try:
@@ -283,59 +344,64 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                 '[EXECUTE_PATH] Phase 2 Joint_6 projected to Phase 1 branch '
                 f'(max wrap adjustment {max_branch_projection:.4f} rad)'
             )
+        resp.solution, max_path_stabilization = _stabilize_joint6_path_shape(resp.solution)
+        if max_path_stabilization > 1e-6:
+            robot_controller.get_logger().info(
+                '[EXECUTE_PATH] Phase 2 Joint_6 path stabilized to start/end branch '
+                f'(max wrap adjustment {max_path_stabilization:.4f} rad)'
+            )
+        resp.solution, max_sequence_regularization = _regularize_joint6_branch_sequence(resp.solution)
+        if max_sequence_regularization > 1e-6:
+            robot_controller.get_logger().info(
+                '[EXECUTE_PATH] Phase 2 Joint_6 branch sequence regularized '
+                f'(max wrap adjustment {max_sequence_regularization:.4f} rad)'
+            )
+        joint6_stats = _joint6_path_stats(resp.solution)
+        if joint6_stats is not None:
+            robot_controller.get_logger().info(
+                '[EXECUTE_PATH] Phase 2 Joint_6 stats: '
+                f"start={joint6_stats['start']:.4f}, end={joint6_stats['end']:.4f}, "
+                f"min={joint6_stats['min']:.4f}, max={joint6_stats['max']:.4f}, "
+                f"span={joint6_stats['span']:.4f}, "
+                f"endpoint_delta={joint6_stats['endpoint_delta']:.4f}, "
+                f"max_step={joint6_stats['max_step']:.4f}, "
+                f"points={joint6_stats['num_points']}"
+            )
         robot_controller.get_logger().info(
             f'[EXECUTE_PATH] ✓ Plan succeeded ({num_pts} pts). '
-            f'Queuing execution, approaching wp[0]: '
+            f'Building single combined trajectory through wp[0]: '
             f'[{first_wp_mm[0]:.1f}, {first_wp_mm[1]:.1f}, {first_wp_mm[2]:.1f}]')
 
         if num_pts <= 1:
             robot_controller.get_logger().info(
                 '[EXECUTE_PATH] Planned path collapsed to a single point at wp[0] — '
-                'skipping deferred Phase 3 and executing only the approach move')
+                'skipping deferred Phase 3 and executing the Phase 1 approach branch')
 
-            current_cart = robot_controller.prev_cartesian
-            if current_cart is None or len(current_cart) < 6:
-                robot_controller.get_logger().error(
-                    '[EXECUTE_PATH] Lost current position before approach — aborting')
-                _set_result(robot_controller, -4)
-                return
-
-            _execute_single_point(
+            _apply_time_param(
                 robot_controller,
-                start_wp=list(current_cart[:6]),
-                target_wp=[first_wp_mm[0], first_wp_mm[1], first_wp_mm[2], rx, ry, rz],
-                vel_scaling=vel_scaling,
-                acc_scaling=acc_scaling,
+                deepcopy(approach_solution),
+                vel_scaling,
+                acc_scaling,
+                gen,
+                log_prefix='[EXECUTE_PATH]',
+                trajectory_optimizer_name=trajectory_optimizer_name,
             )
             return
 
-        # Store trajectory for deferred execution
-        robot_controller.stage_pending_path(
-            resp.solution,
+        combined_solution = _combine_joint_trajectories(approach_solution, resp.solution)
+        combined_points = len(combined_solution.joint_trajectory.points)
+        robot_controller.get_logger().info(
+            '[EXECUTE_PATH] Executing single combined trajectory '
+            f'({combined_points} raw points, approach + contour)'
+        )
+        _apply_time_param(
+            robot_controller,
+            combined_solution,
             vel_scaling,
             acc_scaling,
+            gen,
+            log_prefix='[EXECUTE_PATH]',
             trajectory_optimizer_name=trajectory_optimizer_name,
-        )
-
-        # Queue trajectory execution — fires after approach completes
-        robot_controller.submit_motion_task(_execute_pending_trajectory, [robot_controller])
-
-        # ── Phase 3: Approach first waypoint ───────────────────────────────
-        current_cart = robot_controller.prev_cartesian
-        if current_cart is None or len(current_cart) < 6:
-            robot_controller.get_logger().error('[EXECUTE_PATH] Lost current position before approach — aborting')
-            robot_controller.clear_motion_queue()
-            _set_result(robot_controller, -4)
-            return
-
-        # Bypass send_cartesian_goal's is_executing check — we own is_executing here
-        # _execute_single_point re-acquires the lock and increments plan_generation
-        _execute_single_point(
-            robot_controller,
-            start_wp=list(current_cart[:6]),
-            target_wp=[first_wp_mm[0], first_wp_mm[1], first_wp_mm[2], rx, ry, rz],
-            vel_scaling=vel_scaling,
-            acc_scaling=acc_scaling,
         )
 
     ik_future.add_done_callback(on_ik_done)

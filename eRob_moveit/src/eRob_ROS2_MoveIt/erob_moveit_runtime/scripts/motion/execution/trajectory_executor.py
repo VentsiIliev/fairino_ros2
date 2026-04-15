@@ -175,8 +175,25 @@ class TrajectoryExecutor:
             adjusted += two_pi
         return adjusted
 
-    def _build_post_success_unwind_trajectory(self):
-        if not bool(getattr(config, 'EXECUTOR_POST_UNWIND_ENABLED', False)):
+    @staticmethod
+    def _estimate_point_to_point_duration(distance_rad, vel_rad_s, acc_rad_s2):
+        distance = abs(float(distance_rad))
+        velocity = max(float(vel_rad_s), 1e-3)
+        acceleration = max(float(acc_rad_s2), 1e-3)
+        accel_distance = (velocity * velocity) / acceleration
+        if distance <= accel_distance:
+            return 2.0 * math.sqrt(distance / acceleration)
+        cruise_distance = distance - accel_distance
+        return 2.0 * (velocity / acceleration) + (cruise_distance / velocity)
+
+    @staticmethod
+    def _clamp_percentage(value, default_percent=100.0):
+        if value is None:
+            return float(default_percent)
+        return max(0.0, min(100.0, float(value)))
+
+    def _build_post_success_unwind_trajectory(self, require_enabled=True, vel=None, acc=None):
+        if require_enabled and not bool(getattr(config, 'EXECUTOR_POST_UNWIND_ENABLED', False)):
             return None
 
         joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
@@ -202,9 +219,17 @@ class TrajectoryExecutor:
         if abs(target_value) > target_range + 1e-9:
             return None
 
-        speed = max(float(getattr(config, 'EXECUTOR_POST_UNWIND_SPEED_RAD_S', 0.8)), 1e-3)
+        vel_percent = self._clamp_percentage(vel)
+        acc_percent = self._clamp_percentage(acc)
+        base_speed = float(getattr(config, 'EXECUTOR_POST_UNWIND_SPEED_RAD_S', 0.8))
+        base_acceleration = float(getattr(config, 'EXECUTOR_POST_UNWIND_ACCEL_RAD_S2', 1.0))
+        speed = max(base_speed * (vel_percent / 100.0), 1e-3)
+        acceleration = max(base_acceleration * (acc_percent / 100.0), 1e-3)
         min_duration = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DURATION_S', 2.0))
-        duration_sec = max(min_duration, abs(delta) / speed)
+        duration_sec = max(
+            min_duration,
+            self._estimate_point_to_point_duration(abs(delta), speed, acceleration),
+        )
 
         traj = JointTrajectory()
         traj.joint_names = joint_names
@@ -231,6 +256,10 @@ class TrajectoryExecutor:
             'target_value': target_value,
             'delta': delta,
             'duration_sec': duration_sec,
+            'vel_percent': vel_percent,
+            'acc_percent': acc_percent,
+            'vel': speed,
+            'acc': acceleration,
             'trajectory': traj,
         }
 
@@ -360,6 +389,71 @@ class TrajectoryExecutor:
         self.send_trajectory_to_controller(trajectory, preserve_explicit_wrap=True)
         return 0
 
+    def request_explicit_unwind(self, queue_if_busy=True, vel=None, acc=None):
+        queued_unwind = self._build_post_success_unwind_trajectory(
+            require_enabled=False,
+            vel=vel,
+            acc=acc,
+        )
+        if queued_unwind is None:
+            self._node.get_logger().info(
+                '[Controller] Explicit Joint_6 unwind skipped — no unwind needed'
+            )
+            self._motion.last_move_result = 0
+            return 0
+
+        with self._motion.lock:
+            is_busy = bool(self._motion.is_executing)
+
+        if queue_if_busy and is_busy:
+            queue_result = self._queue.submit(
+                task_function=self._execute_post_success_unwind,
+                task_args=[queued_unwind['trajectory']],
+            )
+            if isinstance(queue_result, tuple):
+                task_id, position = queue_result
+                self._motion.last_submitted_task_id = task_id
+                self._node.get_logger().info(
+                    '[Controller] Queued explicit Joint_6 unwind '
+                    f'at position {position} (task #{task_id}): '
+                    f"{queued_unwind['current_value']:.3f} -> "
+                    f"{queued_unwind['target_value']:.3f} rad "
+                    f'over {queued_unwind["duration_sec"]:.2f}s '
+                    f'(vel={queued_unwind["vel_percent"]:.1f}%, '
+                    f'acc={queued_unwind["acc_percent"]:.1f}%, '
+                    f'{queued_unwind["vel"]:.3f} rad/s, '
+                    f'{queued_unwind["acc"]:.3f} rad/s^2)'
+                )
+                return position
+            self._node.get_logger().error(
+                f'[Controller] Failed to queue explicit Joint_6 unwind: {queue_result}'
+            )
+            return queue_result
+
+        if is_busy:
+            self._node.get_logger().warning(
+                '[Controller] Busy — rejecting explicit Joint_6 unwind'
+            )
+            return -1
+
+        task_id = self._queue.allocate_task_id()
+        self._motion.last_submitted_task_id = task_id
+        self._queue.start_immediate_task(task_id)
+        self._node.get_logger().info(
+            '[Controller] Executing explicit Joint_6 unwind immediately '
+            f'(task #{task_id}): {queued_unwind["current_value"]:.3f} -> '
+            f'{queued_unwind["target_value"]:.3f} rad '
+            f'over {queued_unwind["duration_sec"]:.2f}s '
+            f'(vel={queued_unwind["vel_percent"]:.1f}%, '
+            f'acc={queued_unwind["acc_percent"]:.1f}%, '
+            f'{queued_unwind["vel"]:.3f} rad/s, '
+            f'{queued_unwind["acc"]:.3f} rad/s^2)'
+        )
+        result = self._execute_post_success_unwind(queued_unwind['trajectory'])
+        if result != 0:
+            self._queue.mark_current_complete(result)
+        return result
+
     def send_trajectory_to_controller(self, joint_trajectory, preserve_explicit_wrap=False):
         """Send trajectory directly to the low-level controller for smooth execution."""
         if not self._motion.execution_lock.acquire(blocking=False):
@@ -396,7 +490,6 @@ class TrajectoryExecutor:
         self._overwrite_first_point_with_live_state(joint_trajectory)
         if not preserve_explicit_wrap:
             self._unwrap_joint6_continuity(joint_trajectory)
-            self._anchor_joint6_to_live_branch(joint_trajectory)
         self._soften_trajectory_start(joint_trajectory)
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):

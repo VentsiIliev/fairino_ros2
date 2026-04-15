@@ -5,6 +5,6 @@ cartesian_limits:
   max_rot_vel: 3.0
   max_rot_acc: 1.5
   max_rot_dec: -1.5
-  check_collisions: false
-  check_path_constraints: false
+  check_collisions: true
+  check_path_constraints: true
   max_deviation: 0.1

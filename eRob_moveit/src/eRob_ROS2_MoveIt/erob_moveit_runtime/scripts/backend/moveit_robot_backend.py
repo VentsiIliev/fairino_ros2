@@ -123,6 +123,56 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"move_liner error: {e}")
             return -1
 
+    def move_ptp(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
+        if len(position) != 6:
+            return -1
+        if self.node is not None and not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[MOVE_PTP] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+        try:
+            position_base = self.apply_workobject(position, user_id=user)
+            tool_transform = self.node.get_tool_transform(tool)
+            vel_scale = max(0.0, min(1.0, vel / 100.0))
+            acc_scale = max(0.0, min(1.0, acc / 100.0))
+            x, y, z, rx, ry, rz = position_base
+            from motion.strategies import PtpTargetStrategy
+            result = self.node.execute(PtpTargetStrategy(
+                x, y, z, rx, ry, rz, vel_scale, acc_scale,
+                tool_transform=tool_transform,
+                trajectory_optimizer=trajectory_optimizer,
+            ))
+            if result != 0:
+                if blocking and result > 0:
+                    task_id = getattr(self.node, 'last_submitted_task_id', None)
+                    if task_id is not None:
+                        waited = self.node.motion_queue.wait_for_task(task_id, config.BLOCKING_MOVE_TIMEOUT_S)
+                        if waited is None:
+                            self.node.get_logger().error(
+                                f"[MOVE_PTP] Timed out waiting for queued move task #{task_id} to complete")
+                            return -1
+                        return waited
+                self.node.get_logger().info(f"[MOVE_PTP] execute() returned {result}")
+                return result
+
+            if blocking:
+                import time
+                deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
+                while self.node.is_executing and time.time() < deadline:
+                    time.sleep(0.05)
+                if self.node.is_executing:
+                    self.node.get_logger().error(
+                        f"[MOVE_PTP] Timed out waiting for move to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s")
+                    return -1
+                return self.node.last_move_result
+
+            return 0
+        except Exception as e:
+            print(f"move_ptp error: {e}")
+            return -1
+
     def execute_path(
         self,
         path,
@@ -244,11 +294,17 @@ class MoveItRobotBackend(IRobotBackend):
                 SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel, acc)
             )
         else:
+            selected_optimizer = trajectory_optimizer
+            if not selected_optimizer:
+                selected_optimizer = str(
+                    getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
+                ).strip().upper() or None
+
             # ✅ ALWAYS use compute_cartesian_path for consistency
             # Controller's spline interpolation + TOTG provides smooth continuous motion
             self.node.get_logger().info(
                 "[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)"
-                + (f" with {trajectory_optimizer}" if trajectory_optimizer else "")
+                + (f" with {selected_optimizer}" if selected_optimizer else "")
             )
             from motion.strategies import PathStrategy
             result = self.node.execute(
@@ -259,7 +315,7 @@ class MoveItRobotBackend(IRobotBackend):
                     rz,
                     vel,
                     acc,
-                    trajectory_optimizer,
+                    selected_optimizer,
                     orientation_mode=orientation_mode,
                 )
             )
@@ -292,6 +348,55 @@ class MoveItRobotBackend(IRobotBackend):
             if self.node.is_executing:
                 self.node.get_logger().error(
                     f"[EXECUTE_PATH] Timed out waiting for move to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s")
+                return -1
+            return self.node.last_move_result
+
+        return 0
+
+    def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
+        if self.node is None:
+            return -1
+        if not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[UNWIND_J6] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+
+        result = self.node.trajectory_executor.request_explicit_unwind(
+            queue_if_busy=queue_if_busy,
+            vel=vel,
+            acc=acc,
+        )
+
+        if result < 0:
+            return result
+
+        if result > 0:
+            if blocking:
+                task_id = getattr(self.node, 'last_submitted_task_id', None)
+                if task_id is not None:
+                    waited = self.node.motion_queue.wait_for_task(
+                        task_id,
+                        config.BLOCKING_MOVE_TIMEOUT_S,
+                    )
+                    if waited is None:
+                        self.node.get_logger().error(
+                            f"[UNWIND_J6] Timed out waiting for queued unwind task #{task_id} to complete"
+                        )
+                        return -1
+                    return waited
+            return result
+
+        if blocking:
+            import time
+            deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
+            while self.node.is_executing and time.time() < deadline:
+                time.sleep(0.05)
+            if self.node.is_executing:
+                self.node.get_logger().error(
+                    f"[UNWIND_J6] Timed out waiting for unwind to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s"
+                )
                 return -1
             return self.node.last_move_result
 

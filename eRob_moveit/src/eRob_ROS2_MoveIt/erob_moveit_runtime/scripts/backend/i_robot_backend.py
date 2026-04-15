@@ -12,6 +12,9 @@ class IRobotBackend(ABC):
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None): ...
 
     @abstractmethod
+    def move_ptp(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None): ...
+
+    @abstractmethod
     def execute_path(
         self,
         path,
@@ -24,6 +27,9 @@ class IRobotBackend(ABC):
         trajectory_optimizer=None,
         orientation_mode="constant",
     ): ...
+
+    @abstractmethod
+    def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None): ...
 
     @abstractmethod
     def get_safety_walls_status(self): ...

@@ -1,6 +1,13 @@
+# Runtime backend identifier used by the shared runtime factory.
 ROBOT_BACKEND: fairino
+
+# Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: false
+
+# Number of controlled robot joints.
 NUM_JOINTS: 6
+
+# Joint names in controller and MoveIt trajectory order.
 JOINT_NAMES:
 - j1
 - j2
@@ -8,30 +15,80 @@ JOINT_NAMES:
 - j4
 - j5
 - j6
+
+# MoveIt planning group name.
 PLANNING_GROUP: fairino5_v6_group
+
+# Root frame for planning and FK/IK requests.
 BASE_LINK: base_link
+
+# End-effector link used for IK, FK, and planning requests.
 EE_LINK: ee_link
+
+# Wrist link used by diagnostics and wrist-specific logic.
 WRIST_LINK: wrist3_link
+
+# Link treated as the collision/tool tip for safety monitoring.
 COLLISION_TIP_LINK: wrist3_link
+
+# Robot URDF used by runtime helpers and dynamics/collision tools.
 URDF_PATH: /home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf
+
+# Topic publishing aggregated robot status.
 TOPIC_ROBOT_STATUS: /robot_status
+
+# Topic publishing current Cartesian TCP pose.
 TOPIC_CARTESIAN_POSITION: /cartesian_position
+
+# Topic publishing Cartesian TCP velocity.
 TOPIC_CARTESIAN_VELOCITY: /cartesian_velocity
+
+# Topic publishing Cartesian TCP acceleration.
 TOPIC_CARTESIAN_ACCELERATION: /cartesian_acceleration
+
+# Topic publishing joint velocity.
 TOPIC_JOINT_VELOCITY: /joint_velocity
+
+# Topic publishing joint acceleration.
 TOPIC_JOINT_ACCELERATION: /joint_acceleration
+
+# Topic used to publish planning-scene updates.
 TOPIC_PLANNING_SCENE: /planning_scene
+
+# Topic used to publish safety wall markers.
 TOPIC_SAFETY_WALLS: /safety_walls
+
+# MoveIt Cartesian path service.
 SERVICE_CARTESIAN_PATH: /compute_cartesian_path
+
+# MoveIt inverse kinematics service.
 SERVICE_IK: /compute_ik
+
+# MoveIt forward kinematics service.
 SERVICE_FK: /compute_fk
+
+# Time-parameterization helper service.
 SERVICE_APPLY_IPP: /apply_ipp
+
+# MoveIt state validity and collision-check service.
 SERVICE_STATE_VALIDITY: /check_state_validity
+
+# FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /fairino5_controller/follow_joint_trajectory
+
+# Safety wall margin added around the extracted workspace, in metres.
 SAFETY_MARGIN_M: 0.01
+
+# Extra XY workspace expansion used when generating safety walls, in metres.
 WALL_XY_OFFSET_M: 0.13
+
+# Safety wall collision object thickness, in metres.
 WALL_THICKNESS_M: 0.01
+
+# Links allowed to bypass safety wall collision checks.
 WALL_BYPASS_LINKS: []
+
+# Planning-scene object names used for safety walls.
 SAFETY_WALL_NAMES:
 - wall_x_min
 - wall_x_max
@@ -39,6 +96,8 @@ SAFETY_WALL_NAMES:
 - wall_y_max
 - wall_z_min
 - wall_z_max
+
+# Tool transforms keyed by tool name, [x, y, z, rx, ry, rz] in mm/degrees.
 TOOL_REGISTRY:
   TOOL_0:
   - 0
@@ -54,45 +113,160 @@ TOOL_REGISTRY:
   - 0
   - 0
   - 0
+
+# Numeric tool IDs accepted by the API mapped to TOOL_REGISTRY keys.
 TOOL_ID_MAP:
   0: TOOL_0
   1: TOOL_1
+
+# Default velocity percentage for single-target moves.
 DEFAULT_VEL_PERCENT: 30
+
+# Default acceleration percentage for single-target moves.
 DEFAULT_ACC_PERCENT: 30
+
+# Default normalized velocity scaling for path moves.
 DEFAULT_VEL_SCALING: 0.6
+
+# Default normalized acceleration scaling for path moves.
 DEFAULT_ACC_SCALING: 0.4
+
+# Default normalized jerk scaling for Ruckig.
 DEFAULT_JERK_SCALING: 0.5
+
+# Whether jog moves should be collision checked.
 JOG_AVOID_COLLISIONS: false
+
+# Fallback TCP orientation [rx, ry, rz] in degrees.
 DEFAULT_ORIENTATION:
 - 180.0
 - 0.0
 - 0.0
+
+# Minimum accepted Cartesian path fraction from MoveIt.
 CARTESIAN_MIN_FRACTION: 1
+
+# Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
+# moves probe failed poses with IK/collision/branch variants. Keep false during
+# normal operation because it adds extra MoveIt service calls and noisy logs.
+CARTESIAN_FAILURE_DIAGNOSTICS_ENABLED: false
+
+# Translation threshold for Jacobian fallback use, in mm.
 JACOBIAN_FALLBACK_MM: 0.1
+
+# Minimum accepted path fraction for Jacobian fallback.
 JACOBIAN_FALLBACK_MIN_FRACTION: 1
+
+# Minimum Cartesian delta before Jacobian fallback is considered meaningful, in mm.
 JACOBIAN_FALLBACK_MIN_DELTA_MM: 0.1
+
+# Minimum duration assigned to very short Jacobian fallback moves.
 JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.5
+
+# Max Cartesian delta for short-move Jacobian fallback, in mm.
 SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM: 2.0
+
+# Max joint step per Jacobian fallback sample, in radians.
 JACOBIAN_MAX_JOINT_STEP: 0.05
+
+# Minimum duration assigned to Jacobian fallback trajectories.
 JACOBIAN_MIN_DURATION_S: 0.25
+
+# Damping term for Jacobian pseudo-inverse calculations.
 JACOBIAN_DAMPING: 1.0e-05
+
+# Numerical differentiation epsilon for Jacobian estimation.
 JACOBIAN_NUM_DIFF_EPS: 1.0e-07
+
+# Maximum queued motion commands.
 MOTION_QUEUE_MAX_SIZE: 10
+
+# Controller goal position tolerance, in radians.
 EXECUTOR_GOAL_POS_TOL_RAD: 0.01
+
+# Multiplier applied to trajectory duration for controller timeout.
 EXECUTOR_TIME_MULTIPLIER: 2.0
+
+# Minimum controller goal timeout, in seconds.
 EXECUTOR_TIME_MIN_S: 5.0
+
+# Distance threshold for adding path approach behavior, in mm.
 PATH_APPROACH_THRESHOLD_MM: 100.0
+
+# Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: TOTG
+
+# PTP: current-vs-target TCP orientation angular tolerance. If the orientations
+# differ by at most this many degrees, PTP treats the move as same-orientation
+# and applies stricter wrist/path discipline while still reaching the requested
+# final pose.
+PTP_LOCK_ORIENTATION_TOL_DEG: 2.0
+
+# PTP: max allowed TCP orientation drift along a same-orientation move.
+# Lower values keep the tool attitude tighter but may reject more IK paths.
+PTP_LOCKED_PATH_MAX_DRIFT_DEG: 2.0
+
+# PTP: max allowed TCP orientation deviation from the expected start-to-target
+# orientation progression when the target intentionally requests reorientation.
+PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 5.0
+
+# PTP: wrist motion below this threshold is treated as normal joint motion.
+# Wrist motion above it receives extra cost during equivalent-branch selection.
+PTP_WRIST_PENALTY_START_DEG: 45.0
+
+# PTP: hard max wrist-joint motion for moves that intentionally reorient TCP.
+# If any wrist joint exceeds this, the PTP target is rejected.
+PTP_MAX_WRIST_DELTA_DEG: 160.0
+
+# PTP: stricter hard max wrist-joint motion for same-orientation moves.
+# This prevents solving an equivalent final attitude by flipping the wrist.
+PTP_LOCKED_MAX_WRIST_DELTA_DEG: 120.0
+
+# PTP: if the selected target joint state is within this max joint delta from
+# the live joint state, treat the command as already reached and skip execution.
+PTP_NOOP_JOINT_DELTA_RAD: 0.001
+
+# PTP: max joint interpolation step used for pre-execution validity/FK checks.
+# Smaller values sample more densely; larger values plan faster but check less.
+PTP_JOINT_INTERPOLATION_STEP_RAD: 0.08
+
+# PTP: minimum number of joint interpolation segments checked before execution.
+PTP_MIN_INTERPOLATION_SEGMENTS: 8
+
+# PTP: maximum number of joint interpolation segments checked before execution.
+PTP_MAX_INTERPOLATION_SEGMENTS: 80
+
+# Ruckig fixed sample period, in seconds.
 RUCKIG_SAMPLE_DT_S: 0.008
+
+# Timeout for optimizer service calls, in seconds.
 OPT_SERVICE_TIMEOUT_S: 5.0
+
+# Position threshold for blocking wait completion, in mm.
 BLOCKING_POS_THRESHOLD_MM: 0.2
+
+# Maximum time to wait for blocking motion completion, in seconds.
 BLOCKING_MOVE_TIMEOUT_S: 60.0
+
+# Poll interval while waiting for blocking motion completion, in seconds.
 BLOCKING_CHECK_INTERVAL_S: 0.01
+
+# Robot status publish rate, in Hz.
 STATUS_PUBLISH_RATE_HZ: 10.0
+
+# Robot monitor update rate, in Hz.
 MONITOR_UPDATE_RATE_HZ: 50.0
+
+# Moving window size for velocity smoothing.
 MONITOR_VELOCITY_WINDOW: 5
+
+# Moving window size for acceleration smoothing.
 MONITOR_ACCELERATION_WINDOW: 5
+
+# Publish interval for RViz/planning-scene marker updates.
 MARKER_PUBLISH_INTERVAL_S: 2.0
+
+# Per-joint instantaneous collision/following-error rate thresholds.
 COLLISION_RATE_THRESHOLDS:
 - 15.0
 - 15.0
@@ -100,6 +274,8 @@ COLLISION_RATE_THRESHOLDS:
 - 8.0
 - 6.0
 - 4.0
+
+# Per-joint sustained collision/following-error thresholds.
 COLLISION_SUSTAINED_THRESHOLDS:
 - 12.0
 - 12.0
@@ -107,15 +283,35 @@ COLLISION_SUSTAINED_THRESHOLDS:
 - 8.0
 - 6.0
 - 5.0
+
+# Number of consecutive samples required to confirm collision.
 COLLISION_CONFIRMATION_SAMPLES: 1
+
+# Collision monitor cooldown/recovery time, in seconds.
 COLLISION_RECOVERY_TIME_S: 1.0
+
+# Low-pass filter alpha used by collision signal filtering.
 COLLISION_FILTER_ALPHA: 0.7
+
+# Number of collision samples retained for diagnostics.
 COLLISION_HISTORY_BUFFER: 100
+
+# Fairino DH d1 parameter, in metres.
 DH_D1: 0.152
+
+# Fairino DH a2 parameter, in metres.
 DH_A2: -0.425
+
+# Fairino DH a3 parameter, in metres.
 DH_A3: -0.39501
+
+# Fairino DH d4 parameter, in metres.
 DH_D4: 0.1021
+
+# Fairino DH d5 parameter, in metres.
 DH_D5: 0.102
+
+# Default workobject/user frame [x, y, z, rx, ry, rz] in mm/degrees.
 DEFAULT_WORKOBJECT:
 - 0
 - 0
@@ -123,9 +319,21 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - -10
+
+# REST server bind host.
 REST_HOST: 0.0.0.0
+
+# REST server bind port.
 REST_PORT: 5000
+
+# REST server log file path.
 REST_LOG: /tmp/fairino_rest_server.log
+
+# Number of retries while waiting for workspace extraction to succeed.
 WS_EXTRACT_MAX_RETRIES: 60
+
+# Delay between workspace extraction retries, in seconds.
 WS_EXTRACT_RETRY_DELAY: 2.0
+
+# Startup wait timeout for the robot monitor, in seconds.
 MONITOR_WAIT_TIMEOUT_S: 10.0

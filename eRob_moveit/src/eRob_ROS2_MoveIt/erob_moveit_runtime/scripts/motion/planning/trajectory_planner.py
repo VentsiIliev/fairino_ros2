@@ -35,7 +35,9 @@ from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collisio
 from .jacobian_move import _jacobian_fallback_move
 from ..execution.trajectory_executor import _send_trajectory_to_controller
 from ..execution.trajectory_optimizer import resolve_trajectory_optimizer
+from geometry_msgs.msg import Pose
 from moveit_msgs.srv import GetCartesianPath
+from scipy.spatial.transform import Rotation, Slerp
 import config
 
 
@@ -138,6 +140,136 @@ def _project_joint6_to_reference_branch(trajectory, reference_positions=None) ->
     return trajectory, max_adjustment
 
 
+def _stabilize_joint6_path_shape(trajectory) -> tuple[object, float]:
+    """Bias Joint_6 to the branch implied by its start/end path shape.
+
+    Even after continuity unwrapping, MoveIt can leave intermediate Joint_6
+    points on equivalent branches that preserve the same endpoint but create a
+    large internal excursion. That later shows up as unexpected wrist unwind.
+    Re-project each intermediate point to the equivalent angle nearest the
+    linear interpolation between the already-normalized start and end values.
+    """
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or len(joint_trajectory.points) < 3:
+        return trajectory, 0.0
+
+    joint_index = None
+    for index, joint_name in enumerate(joint_trajectory.joint_names):
+        name = str(joint_name or '').strip().lower()
+        if name in {'joint_6', 'j6', 'axis_6'} or name.endswith('_6'):
+            joint_index = index
+            break
+    if joint_index is None:
+        return trajectory, 0.0
+
+    start_value = float(joint_trajectory.points[0].positions[joint_index])
+    end_value = float(joint_trajectory.points[-1].positions[joint_index])
+    max_adjustment = 0.0
+    num_points = len(joint_trajectory.points)
+
+    for point_index, point in enumerate(joint_trajectory.points[1:-1], start=1):
+        positions = list(point.positions)
+        original = float(positions[joint_index])
+        alpha = point_index / float(num_points - 1)
+        interpolated = start_value + alpha * (end_value - start_value)
+        adjusted = _nearest_equivalent_angle(interpolated, original)
+        if abs(adjusted - original) > 1e-9:
+            positions[joint_index] = adjusted
+            point.positions = positions
+            max_adjustment = max(max_adjustment, abs(adjusted - original))
+
+    return trajectory, max_adjustment
+
+
+def _joint6_path_stats(trajectory):
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or not joint_trajectory.points:
+        return None
+
+    joint_index = None
+    for index, joint_name in enumerate(joint_trajectory.joint_names):
+        name = str(joint_name or '').strip().lower()
+        if name in {'joint_6', 'j6', 'axis_6'} or name.endswith('_6'):
+            joint_index = index
+            break
+    if joint_index is None:
+        return None
+
+    values = [float(point.positions[joint_index]) for point in joint_trajectory.points]
+    if not values:
+        return None
+
+    max_step = 0.0
+    for previous, current in zip(values, values[1:]):
+        max_step = max(max_step, abs(current - previous))
+
+    return {
+        'start': values[0],
+        'end': values[-1],
+        'min': min(values),
+        'max': max(values),
+        'span': max(values) - min(values),
+        'endpoint_delta': values[-1] - values[0],
+        'max_step': max_step,
+        'num_points': len(values),
+    }
+
+
+def _regularize_joint6_branch_sequence(trajectory) -> tuple[object, float]:
+    """Choose a single smooth Joint_6 branch sequence across the whole path.
+
+    For each point, search equivalent ±2π branches and pick the one that best
+    matches both the previous adjusted point and the global start→end trend.
+    This is stronger than local unwrapping when MoveIt leaves a wrist path on a
+    mixed set of equivalent branches.
+    """
+    joint_trajectory = getattr(trajectory, 'joint_trajectory', None)
+    if joint_trajectory is None or len(joint_trajectory.points) < 2:
+        return trajectory, 0.0
+
+    joint_index = None
+    for index, joint_name in enumerate(joint_trajectory.joint_names):
+        name = str(joint_name or '').strip().lower()
+        if name in {'joint_6', 'j6', 'axis_6'} or name.endswith('_6'):
+            joint_index = index
+            break
+    if joint_index is None:
+        return trajectory, 0.0
+
+    start_value = float(joint_trajectory.points[0].positions[joint_index])
+    end_value = float(joint_trajectory.points[-1].positions[joint_index])
+    previous_adjusted = start_value
+    max_adjustment = 0.0
+    two_pi = 2.0 * math.pi
+    num_points = len(joint_trajectory.points)
+
+    for point_index, point in enumerate(joint_trajectory.points[1:], start=1):
+        positions = list(point.positions)
+        original = float(positions[joint_index])
+        alpha = point_index / float(num_points - 1)
+        trend_target = start_value + alpha * (end_value - start_value)
+
+        best_value = original
+        best_cost = None
+        for shift in range(-3, 4):
+            candidate = original + shift * two_pi
+            # Favor staying close to both the previous point and the global
+            # start/end trend, with slightly higher weight on continuity.
+            continuity_cost = abs(candidate - previous_adjusted)
+            trend_cost = abs(candidate - trend_target)
+            cost = continuity_cost * 1.5 + trend_cost
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_value = candidate
+
+        positions[joint_index] = best_value
+        point.positions = positions
+        max_adjustment = max(max_adjustment, abs(best_value - original))
+        previous_adjusted = best_value
+
+    return trajectory, max_adjustment
+
+
 def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[object, float]:
     """Rebase wrapped joints only when the current branch violates hard limits.
 
@@ -180,6 +312,477 @@ def _limit_safe_joint_wrapping(trajectory, reference_positions=None) -> tuple[ob
         previous = list(adjusted_positions)
 
     return trajectory, max_adjustment
+
+
+def _format_pose_for_log(pose):
+    return (
+        f"pos=({pose.position.x:.5f}, {pose.position.y:.5f}, {pose.position.z:.5f})m "
+        f"quat=({pose.orientation.x:.5f}, {pose.orientation.y:.5f}, "
+        f"{pose.orientation.z:.5f}, {pose.orientation.w:.5f})"
+    )
+
+
+def _interpolate_pose(start_pose, target_pose, t: float):
+    alpha = max(0.0, min(1.0, float(t)))
+    pose = Pose()
+    pose.position.x = start_pose.position.x + (target_pose.position.x - start_pose.position.x) * alpha
+    pose.position.y = start_pose.position.y + (target_pose.position.y - start_pose.position.y) * alpha
+    pose.position.z = start_pose.position.z + (target_pose.position.z - start_pose.position.z) * alpha
+
+    start_quat = [
+        start_pose.orientation.x,
+        start_pose.orientation.y,
+        start_pose.orientation.z,
+        start_pose.orientation.w,
+    ]
+    target_quat = [
+        target_pose.orientation.x,
+        target_pose.orientation.y,
+        target_pose.orientation.z,
+        target_pose.orientation.w,
+    ]
+    rotations = Rotation.from_quat([start_quat, target_quat])
+    quat = Slerp([0.0, 1.0], rotations)([alpha]).as_quat()[0]
+    pose.orientation.x = float(quat[0])
+    pose.orientation.y = float(quat[1])
+    pose.orientation.z = float(quat[2])
+    pose.orientation.w = float(quat[3])
+    return pose
+
+
+def _request_cartesian_diag_ik_async(robot_controller, pose, seed_joint_state, avoid_collisions: bool):
+    from moveit_msgs.srv import GetPositionIK
+
+    ik_client = robot_controller.get_ik_client()
+    if ik_client is None or not ik_client.wait_for_service(timeout_sec=1.0):
+        raise TimeoutError("MoveIt IK service unavailable")
+
+    req = GetPositionIK.Request()
+    req.ik_request.group_name = config.PLANNING_GROUP
+    req.ik_request.ik_link_name = config.EE_LINK
+    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
+    req.ik_request.pose_stamped.pose = pose
+    req.ik_request.avoid_collisions = bool(avoid_collisions)
+    req.ik_request.timeout.sec = 2
+    req.ik_request.timeout.nanosec = 0
+    req.ik_request.robot_state.joint_state = deepcopy(seed_joint_state)
+    req.ik_request.robot_state.is_diff = False
+
+    return ik_client.call_async(req)
+
+
+def _request_cartesian_diag_validity_async(robot_controller, joint_state):
+    from moveit_msgs.srv import GetStateValidity
+
+    client = robot_controller.get_state_validity_client()
+    if client is None or not client.wait_for_service(timeout_sec=1.0):
+        raise TimeoutError("MoveIt state validity service unavailable")
+
+    req = GetStateValidity.Request()
+    req.robot_state.joint_state = deepcopy(joint_state)
+    req.robot_state.is_diff = False
+    req.group_name = config.PLANNING_GROUP
+    return client.call_async(req)
+
+
+def _extract_ik_solution_joint_state(response):
+    solution = getattr(response, "solution", None)
+    joint_state = getattr(solution, "joint_state", None)
+    names = list(getattr(joint_state, "name", []) or [])
+    positions = list(getattr(joint_state, "position", []) or [])
+    if not names or not positions:
+        return None, names, positions
+    return joint_state, names, positions
+
+
+def _joint_state_from_names_positions(robot_controller, joint_names, joint_positions):
+    from sensor_msgs.msg import JointState
+
+    joint_state = JointState()
+    joint_state.name = list(joint_names)
+    joint_state.position = [float(position) for position in joint_positions]
+    joint_state.header.stamp = robot_controller.get_clock().now().to_msg()
+    return joint_state
+
+
+def _trajectory_endpoint_seed(response):
+    trajectory = getattr(response, "solution", None)
+    joint_trajectory = getattr(trajectory, "joint_trajectory", None)
+    points = list(getattr(joint_trajectory, "points", []) or [])
+    joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+    if not points or not joint_names:
+        return None
+    last_positions = list(getattr(points[-1], "positions", []) or [])
+    if len(last_positions) != len(joint_names):
+        return None
+    return joint_names, last_positions
+
+
+def _build_branch_probe_seeds(robot_controller, base_seed_joint_state, cartesian_response=None):
+    seeds = [("current_seed", deepcopy(base_seed_joint_state))]
+
+    endpoint_seed = _trajectory_endpoint_seed(cartesian_response)
+    if endpoint_seed is not None:
+        names, positions = endpoint_seed
+        seeds.append((
+            "last_successful_cartesian_point",
+            _joint_state_from_names_positions(robot_controller, names, positions),
+        ))
+
+    names = list(getattr(base_seed_joint_state, "name", []) or [])
+    positions = list(getattr(base_seed_joint_state, "position", []) or [])
+    if names and len(names) == len(positions):
+        zero_seed = _joint_state_from_names_positions(
+            robot_controller,
+            names,
+            [0.0] * len(positions),
+        )
+        seeds.append(("zero_seed", zero_seed))
+
+        canonical_positions = []
+        two_pi = 2.0 * math.pi
+        for position in positions:
+            adjusted = float(position)
+            while adjusted > math.pi:
+                adjusted -= two_pi
+            while adjusted <= -math.pi:
+                adjusted += two_pi
+            canonical_positions.append(adjusted)
+        seeds.append((
+            "canonical_current_seed",
+            _joint_state_from_names_positions(robot_controller, names, canonical_positions),
+        ))
+
+        for joint_index, joint_name in enumerate(names):
+            name = str(joint_name or "").strip().lower()
+            if name not in {"joint_6", "j6", "axis_6"} and not name.endswith("_6"):
+                continue
+            for shift in (-two_pi, two_pi):
+                shifted = list(positions)
+                shifted[joint_index] = float(shifted[joint_index]) + shift
+                seeds.append((
+                    f"{joint_name}_{'minus' if shift < 0.0 else 'plus'}_2pi_seed",
+                    _joint_state_from_names_positions(robot_controller, names, shifted),
+                ))
+            break
+
+    unique = []
+    seen = set()
+    for label, seed in seeds:
+        key = (
+            tuple(getattr(seed, "name", []) or []),
+            tuple(round(float(value), 6) for value in (getattr(seed, "position", []) or [])),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((label, seed))
+    return unique
+
+
+def _start_branch_probe(robot_controller, label: str, pose, seed_label: str, seed_joint_state):
+    logger = robot_controller.get_logger()
+    try:
+        future = _request_cartesian_diag_ik_async(
+            robot_controller,
+            pose,
+            seed_joint_state,
+            avoid_collisions=False,
+        )
+    except Exception as exc:
+        logger.error(f"[CartesianDiag] {label} branch_probe {seed_label} request failed: {exc}")
+        return
+
+    def _on_done(future):
+        try:
+            response = future.result()
+            error_code = int(getattr(getattr(response, "error_code", None), "val", 0))
+            joint_state, names, positions = _extract_ik_solution_joint_state(response)
+            logger.error(
+                "[CartesianDiag] "
+                f"{label} branch_probe {seed_label} "
+                f"avoid_collisions=False error_code={error_code} joints={len(positions)}"
+            )
+            if joint_state is not None:
+                logger.error(
+                    "[CartesianDiag] "
+                    f"{label} branch_probe {seed_label} solution="
+                    f"{[(name, round(float(pos), 6)) for name, pos in zip(names, positions)]}"
+                )
+        except Exception as exc:
+            logger.error(f"[CartesianDiag] {label} branch_probe {seed_label} failed: {exc}")
+
+    future.add_done_callback(_on_done)
+
+
+def _start_branch_probe_set(robot_controller, label: str, pose, base_seed_joint_state, cartesian_response=None):
+    seeds = _build_branch_probe_seeds(
+        robot_controller,
+        base_seed_joint_state,
+        cartesian_response=cartesian_response,
+    )
+    for seed_label, seed_joint_state in seeds:
+        if seed_label == "current_seed":
+            continue
+        _start_branch_probe(robot_controller, label, pose, seed_label, seed_joint_state)
+
+
+def _make_orientation_variant_pose(pose, euler_delta_deg):
+    base_quat = [
+        pose.orientation.x,
+        pose.orientation.y,
+        pose.orientation.z,
+        pose.orientation.w,
+    ]
+    base_rotation = Rotation.from_quat(base_quat)
+    delta_rotation = Rotation.from_euler("xyz", euler_delta_deg, degrees=True)
+    variant_quat = (delta_rotation * base_rotation).as_quat()
+
+    variant = Pose()
+    variant.position.x = pose.position.x
+    variant.position.y = pose.position.y
+    variant.position.z = pose.position.z
+    variant.orientation.x = float(variant_quat[0])
+    variant.orientation.y = float(variant_quat[1])
+    variant.orientation.z = float(variant_quat[2])
+    variant.orientation.w = float(variant_quat[3])
+    return variant
+
+
+def _make_position_variant_pose(pose, delta_xyz_m):
+    variant = Pose()
+    variant.position.x = pose.position.x + float(delta_xyz_m[0])
+    variant.position.y = pose.position.y + float(delta_xyz_m[1])
+    variant.position.z = pose.position.z + float(delta_xyz_m[2])
+    variant.orientation.x = pose.orientation.x
+    variant.orientation.y = pose.orientation.y
+    variant.orientation.z = pose.orientation.z
+    variant.orientation.w = pose.orientation.w
+    return variant
+
+
+def _start_single_reach_probe(robot_controller, label: str, pose, seed_joint_state):
+    logger = robot_controller.get_logger()
+    try:
+        future = _request_cartesian_diag_ik_async(
+            robot_controller,
+            pose,
+            seed_joint_state,
+            avoid_collisions=False,
+        )
+    except Exception as exc:
+        logger.error(f"[CartesianDiag] reach_probe {label} request failed: {exc}")
+        return
+
+    def _on_done(future):
+        try:
+            response = future.result()
+            error_code = int(getattr(getattr(response, "error_code", None), "val", 0))
+            _joint_state, _names, positions = _extract_ik_solution_joint_state(response)
+            logger.error(
+                "[CartesianDiag] "
+                f"reach_probe {label} avoid_collisions=False "
+                f"error_code={error_code} joints={len(positions)}"
+            )
+        except Exception as exc:
+            logger.error(f"[CartesianDiag] reach_probe {label} failed: {exc}")
+
+    future.add_done_callback(_on_done)
+
+
+def _start_endpoint_reachability_probes(robot_controller, pose, seed_joint_state):
+    # Diagnostic only. These probes answer whether the endpoint fails because of
+    # strict TCP orientation or because the XYZ is outside the IK workspace.
+    orientation_variants = [
+        ("orient_rx_plus_10deg", (10.0, 0.0, 0.0)),
+        ("orient_rx_minus_10deg", (-10.0, 0.0, 0.0)),
+        ("orient_ry_plus_10deg", (0.0, 10.0, 0.0)),
+        ("orient_ry_minus_10deg", (0.0, -10.0, 0.0)),
+        ("orient_rz_plus_10deg", (0.0, 0.0, 10.0)),
+        ("orient_rz_minus_10deg", (0.0, 0.0, -10.0)),
+    ]
+    for label, euler_delta_deg in orientation_variants:
+        _start_single_reach_probe(
+            robot_controller,
+            label,
+            _make_orientation_variant_pose(pose, euler_delta_deg),
+            seed_joint_state,
+        )
+
+    position_variants = [
+        ("pos_x_minus_50mm", (-0.050, 0.0, 0.0)),
+        ("pos_y_minus_50mm", (0.0, -0.050, 0.0)),
+        ("pos_z_plus_50mm", (0.0, 0.0, 0.050)),
+    ]
+    for label, delta_xyz_m in position_variants:
+        _start_single_reach_probe(
+            robot_controller,
+            label,
+            _make_position_variant_pose(pose, delta_xyz_m),
+            seed_joint_state,
+        )
+
+
+def _log_cartesian_pose_diagnostics(robot_controller, label: str, pose, seed_joint_state):
+    logger = robot_controller.get_logger()
+    logger.error(f"[CartesianDiag] {label}: {_format_pose_for_log(pose)}")
+    logger.error(
+        f"[CartesianDiag] {label}: avoid_collisions=False is diagnostic only; "
+        "it is never used for execution"
+    )
+
+    results = {False: None, True: None}
+
+    def _try_finish_classification():
+        no_collision_result = results.get(False)
+        collision_result = results.get(True)
+        if no_collision_result is None or collision_result is None:
+            return
+
+        no_collision_error, no_collision_state = no_collision_result
+        collision_error, collision_state = collision_result
+
+        if no_collision_state is None:
+            logger.error(
+                f"[CartesianDiag] {label} classification: IK/reachability/joint-limits "
+                f"(collision-disabled IK failed, error_code={no_collision_error})"
+            )
+            return
+
+        try:
+            validity_future = _request_cartesian_diag_validity_async(
+                robot_controller,
+                no_collision_state,
+            )
+        except Exception as exc:
+            logger.error(f"[CartesianDiag] {label} state validity request failed: {exc}")
+            return
+
+        def _on_validity_done(future):
+            try:
+                validity = future.result()
+                valid = bool(getattr(validity, "valid", False))
+                logger.error(f"[CartesianDiag] {label} collision-disabled IK state_valid={valid}")
+                contacts = list(getattr(validity, "contacts", []) or [])
+                if contacts:
+                    pairs = sorted({f"{c.contact_body_1}<->{c.contact_body_2}" for c in contacts})
+                    logger.error(f"[CartesianDiag] {label} collision-disabled IK contacts={pairs}")
+            except Exception as exc:
+                logger.error(f"[CartesianDiag] {label} state validity check failed: {exc}")
+
+            if collision_state is None:
+                logger.error(
+                    f"[CartesianDiag] {label} classification: collision/scene-constraint filtering "
+                    f"(collision-disabled IK succeeds, collision-enabled IK failed, error_code={collision_error})"
+                )
+            else:
+                logger.error(
+                    f"[CartesianDiag] {label} classification: IK exists with collision filtering; "
+                    "partial Cartesian failure is likely interpolation jump, joint-limit continuity, "
+                    "or Cartesian solver sampling before/after this probe point"
+                )
+
+        validity_future.add_done_callback(_on_validity_done)
+
+    def _make_ik_done_callback(avoid_collisions):
+        def _on_ik_done(future):
+            try:
+                response = future.result()
+                error_code = int(getattr(getattr(response, "error_code", None), "val", 0))
+                joint_state, names, positions = _extract_ik_solution_joint_state(response)
+                results[avoid_collisions] = (error_code, joint_state)
+                logger.error(
+                    "[CartesianDiag] "
+                    f"{label} IK avoid_collisions={avoid_collisions} "
+                    f"error_code={error_code} joints={len(positions)}"
+                )
+                if joint_state is not None:
+                    logger.error(
+                        "[CartesianDiag] "
+                        f"{label} IK solution="
+                        f"{[(name, round(float(pos), 6)) for name, pos in zip(names, positions)]}"
+                    )
+            except Exception as exc:
+                results[avoid_collisions] = (None, None)
+                logger.error(
+                    "[CartesianDiag] "
+                    f"{label} IK avoid_collisions={avoid_collisions} failed: {exc}"
+                )
+            _try_finish_classification()
+        return _on_ik_done
+
+    for avoid_collisions in (False, True):
+        try:
+            future = _request_cartesian_diag_ik_async(
+                robot_controller,
+                pose,
+                seed_joint_state,
+                avoid_collisions=avoid_collisions,
+            )
+            future.add_done_callback(_make_ik_done_callback(avoid_collisions))
+        except Exception as exc:
+            results[avoid_collisions] = (None, None)
+            logger.error(
+                "[CartesianDiag] "
+                f"{label} IK avoid_collisions={avoid_collisions} request failed: {exc}"
+            )
+            _try_finish_classification()
+
+
+def _diagnose_partial_cartesian_failure(robot_controller, fraction: float, cartesian_response=None):
+    logger = robot_controller.get_logger()
+    waypoints = robot_controller.get_last_full_waypoints() or []
+    if len(waypoints) < 2:
+        logger.warning("[CartesianDiag] No stored waypoints available for partial-path diagnostics")
+        return
+
+    seed_joint_state = getattr(robot_controller, "current_joint_state", None)
+    if seed_joint_state is None:
+        logger.warning("[CartesianDiag] No current joint state available for partial-path diagnostics")
+        return
+
+    requested_delta_mm = float(robot_controller.get_last_requested_delta_mm() or 0.0)
+    if requested_delta_mm <= 0.0:
+        logger.warning("[CartesianDiag] Requested delta unavailable for partial-path diagnostics")
+        return
+
+    max_step_m = float(getattr(config, "CARTESIAN_MAX_STEP", 0.025))
+    sample_step_fraction = max_step_m * 1000.0 / requested_delta_mm
+    first_failed_t = min(1.0, max(0.0, float(fraction)) + max(sample_step_fraction, 1e-6))
+
+    logger.error(
+        "[CartesianDiag] Partial path probe: "
+        f"fraction={float(fraction) * 100:.1f}% requested_delta={requested_delta_mm:.3f}mm "
+        f"max_step={max_step_m:.4f}m first_failed_t~{first_failed_t:.4f}"
+    )
+    logger.error(
+        "[CartesianDiag] seed_joint_state="
+        f"{[(name, round(float(pos), 6)) for name, pos in zip(seed_joint_state.name, seed_joint_state.position)]}"
+    )
+
+    start_pose = waypoints[0]
+    target_pose = waypoints[-1]
+    failed_probe = _interpolate_pose(start_pose, target_pose, first_failed_t)
+    _log_cartesian_pose_diagnostics(robot_controller, "first_failed_sample", failed_probe, seed_joint_state)
+    _start_branch_probe_set(
+        robot_controller,
+        "first_failed_sample",
+        failed_probe,
+        seed_joint_state,
+        cartesian_response=cartesian_response,
+    )
+
+    if first_failed_t < 0.999:
+        _log_cartesian_pose_diagnostics(robot_controller, "endpoint", target_pose, seed_joint_state)
+        _start_branch_probe_set(
+            robot_controller,
+            "endpoint",
+            target_pose,
+            seed_joint_state,
+            cartesian_response=cartesian_response,
+        )
+        _start_endpoint_reachability_probes(robot_controller, target_pose, seed_joint_state)
 
 def _sanitize_optimizer_start(rc, trajectory, log_prefix):
     """Align the optimizer input trajectory to the latest live joint state."""
@@ -228,6 +831,29 @@ def _sanitize_optimizer_start(rc, trajectory, log_prefix):
         rc.get_logger().info(
             f'{log_prefix} Projected Joint_6 to live branch before optimization '
             f'(max wrap adjustment {max_branch_projection:.4f} rad)'
+        )
+    sanitized, max_path_stabilization = _stabilize_joint6_path_shape(sanitized)
+    if max_path_stabilization > 1e-6:
+        rc.get_logger().info(
+            f'{log_prefix} Stabilized Joint_6 path shape before optimization '
+            f'(max wrap adjustment {max_path_stabilization:.4f} rad)'
+        )
+    sanitized, max_sequence_regularization = _regularize_joint6_branch_sequence(sanitized)
+    if max_sequence_regularization > 1e-6:
+        rc.get_logger().info(
+            f'{log_prefix} Regularized Joint_6 branch sequence before optimization '
+            f'(max wrap adjustment {max_sequence_regularization:.4f} rad)'
+        )
+    joint6_stats = _joint6_path_stats(sanitized)
+    if joint6_stats is not None:
+        rc.get_logger().info(
+            f"{log_prefix} Joint_6 stats before optimization: "
+            f"start={joint6_stats['start']:.4f}, end={joint6_stats['end']:.4f}, "
+            f"min={joint6_stats['min']:.4f}, max={joint6_stats['max']:.4f}, "
+            f"span={joint6_stats['span']:.4f}, "
+            f"endpoint_delta={joint6_stats['endpoint_delta']:.4f}, "
+            f"max_step={joint6_stats['max_step']:.4f}, "
+            f"points={joint6_stats['num_points']}"
         )
     points = sanitized.joint_trajectory.points
     first_point = points[0]
@@ -423,6 +1049,14 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
                 robot_controller.get_logger().error(
                     f'[Cartesian Path] Current: X={curr[0]:.1f} Y={curr[1]:.1f} Z={curr[2]:.1f} '
                     f'RX={curr[3]:.1f} RY={curr[4]:.1f} RZ={curr[5]:.1f}')
+
+            if bool(getattr(config, "CARTESIAN_FAILURE_DIAGNOSTICS_ENABLED", False)):
+                # Diagnostic only: probes failure cause, never relaxes execution collision checks.
+                _diagnose_partial_cartesian_failure(
+                    robot_controller,
+                    fraction,
+                    cartesian_response=response,
+                )
 
             # Fire async collision diagnostic — does not affect result code
             _diagnose_start_collision(robot_controller)

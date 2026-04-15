@@ -12,6 +12,10 @@ move_group:
     planning_scene_monitor.publish_robot_description: true
     planning_scene_monitor.publish_robot_description_semantic: true
     planning_scene_monitor.publish_planning_scene_hz: 10.0
+
+    robot_description_planning.default_robot_padding: 0.01
+    robot_description_planning.default_robot_scale: 1.0
+
     # Trajectory execution parameters
     trajectory_execution.allowed_execution_duration_scaling: 5.0
     trajectory_execution.allowed_goal_duration_margin: 5.0
@@ -24,9 +28,9 @@ move_group:
     trajectory_execution.monitor_overshoot: false
     collision_detection:
       plugin: "collision_detection/CollisionPluginFCL"
-      check_for_collisions: false
-      check_for_self_collisions: false
-      check_for_environment_collisions: false
+      check_for_collisions: true
+      check_for_self_collisions: true
+      check_for_environment_collisions: true
       collision_detector_plugin: "FCL"
       contacts_threshold: 1
     planning_pipelines: ["pilz_industrial_motion_planner"]

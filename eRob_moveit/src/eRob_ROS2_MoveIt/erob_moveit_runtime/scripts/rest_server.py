@@ -124,8 +124,6 @@ def start_rest_server(
             )
             return jsonify({"success": False, "error": str(exc)}), 500
 
-
-
     @app.route("/move/linear", methods=["POST"])
     def move_linear():
         try:
@@ -151,6 +149,33 @@ def start_rest_server(
             return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
         elif result == 0:
             logger.debug(f"move_linear queued with result {result}")
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
+        else:
+            return motion_error_response(result)
+
+    @app.route("/move/ptp", methods=["POST"])
+    def move_ptp():
+        try:
+            payload = parse_move_linear_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        logger.info(f"Received move/ptp request with data {request.json}")
+
+        result = robot.move_ptp(
+            payload["position"],
+            tool=payload["tool"],
+            user=payload["user"],
+            vel=payload["vel"],
+            acc=payload["acc"],
+            blocking=payload["blocking"],
+            trajectory_optimizer=payload["trajectory_optimizer"],
+        )
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
+
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
+        elif result == 0:
             return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
         else:
             return motion_error_response(result)
@@ -191,6 +216,54 @@ def start_rest_server(
             return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
         else:
             return motion_error_response(result)
+
+    @app.route("/unwind/joint6", methods=["POST"])
+    def unwind_joint6():
+        data = request.json or {}
+        blocking = bool(data.get("blocking", True))
+        queue_if_busy = bool(data.get("queue_if_busy", True))
+        vel = data.get("vel")
+        acc = data.get("acc")
+
+        try:
+            vel = None if vel is None else float(vel)
+            acc = None if acc is None else float(acc)
+        except (TypeError, ValueError):
+            return jsonify({
+                "result": -1,
+                "success": False,
+                "error": "vel and acc must be numeric when provided",
+            }), 400
+
+        try:
+            result = robot.unwind_joint6(
+                blocking=blocking,
+                queue_if_busy=queue_if_busy,
+                vel=vel,
+                acc=acc,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            robot.node.get_logger().error(f"Error executing explicit Joint_6 unwind: {exc}")
+            return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
+
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
+        if result > 0:
+            return jsonify({
+                "result": result,
+                "success": True,
+                "queued": True,
+                "queue_position": result,
+                "task_id": task_id,
+            }), 202
+        if result == 0:
+            return jsonify({
+                "result": result,
+                "success": True,
+                "queued": False,
+                "task_id": task_id,
+            }), 200
+        return motion_error_response(result)
 
 
     @app.route("/safety/walls/enabled", methods=["GET"])

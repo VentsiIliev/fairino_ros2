@@ -258,21 +258,21 @@
 
   <!-- TABLE: Fixed collision object representing the work surface -->
   <!-- This allows MoveIt to automatically avoid the table without manual Z limits -->
-  <!-- Table top at Z=0.08m (80mm above base) to provide larger safety margin -->
+  <!-- Table top flush with base_link (top surface at Z=0) -->
   <link name="table">
     <visual>
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
       <geometry>
-        <box size="2.0 2.0 0.05"/> <!-- 2m x 2m x 5cm table -->
+        <box size="2.0 2.0 0.03"/> <!-- 2m x 2m x 3cm table -->
       </geometry>
       <material name="table_material">
         <color rgba="0.6 0.4 0.2 0.8"/> <!-- Brown with some transparency -->
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
       <geometry>
-        <box size="2.0 2.0 0.05"/> <!-- 2m x 2m x 5cm table -->
+        <box size="2.0 2.0 0.03"/> <!-- 2m x 2m x 3cm table -->
       </geometry>
     </collision>
   </link>

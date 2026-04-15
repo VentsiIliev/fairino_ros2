@@ -36,7 +36,7 @@
     <parent link="Link_2"/>
     <child link="Link_3"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="2.0" lower="-3.14159" upper="3.14159" velocity="1000.0" />
+    <limit effort="2.0" lower="-2.6" upper="0.1" velocity="1000.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -243,7 +243,7 @@
   <joint name="ee_to_disk_mount" type="fixed">
     <parent link="ee_link"/>
     <child link="disk_mount"/>
-    <origin xyz="0 0 0" rpy="0 0 -1.1344640138"/>
+    <origin xyz="0 0 0" rpy="0 0 -1.439897"/>
   </joint>
 
   <link name="disk_link">
@@ -277,23 +277,24 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
+
   <!-- TABLE: Fixed collision object representing the work surface -->
   <!-- This allows MoveIt to automatically avoid the table without manual Z limits -->
-  <!-- Table top at Z=0.08m (80mm above base) to provide larger safety margin -->
+  <!-- Table top flush with base_link (top surface at Z=0) -->
   <link name="table">
     <visual>
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
       <geometry>
-        <box size="2.0 2.0 0.05"/> <!-- 2m x 2m x 5cm table -->
+        <box size="2.0 2.0 0.03"/> <!-- 2m x 2m x 3cm table -->
       </geometry>
       <material name="table_material">
         <color rgba="0.6 0.4 0.2 0.8"/> <!-- Brown with some transparency -->
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
       <geometry>
-        <box size="2.0 2.0 0.05"/> <!-- 2m x 2m x 5cm table -->
+        <box size="2.0 2.0 0.03"/> <!-- 2m x 2m x 3cm table -->
       </geometry>
     </collision>
   </link>
@@ -305,7 +306,7 @@
   </joint>
 
   <material name="table_material">
-    <color rgba="0.6 0.4 0.2 0.8"/>
+    <color rgba="1 1 1 1"/>
   </material>
 
   <!-- ===== CubeEye 2.0 ToF Camera Mount ===== TEMPORARILY COMMENTED OUT

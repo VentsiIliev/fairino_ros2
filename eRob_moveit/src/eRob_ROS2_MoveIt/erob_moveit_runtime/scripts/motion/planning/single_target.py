@@ -130,7 +130,7 @@ def _resolve_start_state(robot_controller, start_pose):
     req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
     req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = start_pose
-    req.ik_request.avoid_collisions = False
+    req.ik_request.avoid_collisions = True
     req.ik_request.timeout.sec = 1
     req.ik_request.timeout.nanosec = 0
 
