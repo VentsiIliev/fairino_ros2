@@ -399,6 +399,31 @@ def start_rest_server(
             robot.node.get_logger().error(f"Jog endpoint error: {exc}")
             return jsonify({"result": -1, "success": False, "error": str(exc)})
 
+    @app.route("/io/digital_output", methods=["POST"])
+    def set_digital_output():
+        try:
+            data = request.json or {}
+            port = int(data["port"])
+            value = int(data["value"])
+        except KeyError as exc:
+            return jsonify({"result": -1, "success": False, "error": f"Missing field: {exc.args[0]}"}), 400
+        except (TypeError, ValueError):
+            return jsonify({"result": -1, "success": False, "error": "port and value must be integers"}), 400
+
+        if port < 0:
+            return jsonify({"result": -1, "success": False, "error": "port must be >= 0"}), 400
+        if value not in (0, 1):
+            return jsonify({"result": -1, "success": False, "error": "value must be 0 or 1"}), 400
+
+        try:
+            result = robot.setDigitalOutput(port, value)
+            if result == 0:
+                return jsonify({"result": 0, "success": True, "port": port, "value": value}), 200
+            return jsonify({"result": result, "success": False, "port": port, "value": value}), 500
+        except Exception as exc:
+            robot.node.get_logger().error(f"Digital output endpoint error: {exc}")
+            return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
+
     @app.route("/drag/enable", methods=["POST"])
     def enable_drag():
         result = node.enable_drag_mode()

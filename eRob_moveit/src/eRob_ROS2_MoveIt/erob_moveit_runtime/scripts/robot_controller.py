@@ -571,7 +571,9 @@ class RobotController(Node):
     def _collision_monitor_state_callback(self, msg: DynamicJointState):
         if not self._collision_monitor_fault_enabled:
             return
+
         joint_index = {name: idx for idx, name in enumerate(JOINT_NAMES)}
+
         with self._collision_fault_lock:
             if self._collision_motion_fault:
                 return
@@ -584,6 +586,7 @@ class RobotController(Node):
             following_error = None
             contact_latched = False
             dynamics_latched = False
+
             for name, value in zip(interface_value.interface_names, interface_value.values):
                 if name == 'following_error_actual' and np.isfinite(value):
                     following_error = abs(float(value))
@@ -596,6 +599,12 @@ class RobotController(Node):
                 continue
 
             threshold = float(thresholds[index]) if index < thresholds.size else 0.0
+            threshold = float(thresholds[index]) if index < thresholds.size else np.nan
+
+            if not np.isfinite(threshold):
+                continue
+
+
             if following_error is None or following_error < threshold:
                 continue
 
@@ -605,6 +614,7 @@ class RobotController(Node):
                 f'following_error={following_error:.1f} >= threshold={threshold:.1f}'
             )
             self._trip_collision_motion_fault(reason)
+
             return
 
     def _trip_collision_motion_fault(self, reason: str):

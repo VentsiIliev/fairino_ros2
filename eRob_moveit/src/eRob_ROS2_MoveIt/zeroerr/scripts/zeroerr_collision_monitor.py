@@ -519,6 +519,10 @@ class ZeroErrCollisionMonitor(Node):
                         "[ZeroErrCollisionMonitor] dynamics collision suspect on "
                         f"{joint_name}: external_torque={external_torque:.2f} >= "
                         f"{self._external_torque_thresholds[joint_name]:.2f}"
+                        f"ADD MOTION STOP LOGIC HERE!"
+
+
+
                     )
                 continue
 

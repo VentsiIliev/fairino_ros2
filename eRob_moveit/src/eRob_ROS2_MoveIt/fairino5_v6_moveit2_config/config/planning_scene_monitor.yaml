@@ -12,6 +12,8 @@ move_group:
     # Reduce collision mesh complexity
     robot_description_planning:
       shape_transform_cache_lookup_wait_time: 0.0
+    robot_description_planning.default_robot_padding: 0.01
+    robot_description_planning.default_robot_scale: 1.0
     # Faster collision detection
     collision_detection:
       contacts_max_neighbors: 50  # Reduced from default (usually 100+)

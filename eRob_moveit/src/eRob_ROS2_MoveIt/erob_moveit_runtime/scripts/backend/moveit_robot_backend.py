@@ -626,10 +626,38 @@ class MoveItRobotBackend(IRobotBackend):
         Returns:
             int: 0 on success, -1 on error
 
-        Note: Not implemented in the ROS2 version - requires hardware interface
+        Note: In the ROS2 runtime this publishes to the Fairino hardware bridge
+        on the existing /set_do topic.
         """
-        print(f"setDigitalOutput: port {portId} -> {value} (not implemented in ROS2)")
-        return -1
+        if self.node is None:
+            return -1
+
+        try:
+            from std_msgs.msg import Int32MultiArray
+
+            port = int(portId)
+            status = int(value)
+            if status not in (0, 1):
+                raise ValueError(f"Digital output value must be 0 or 1, got {value!r}")
+
+            publisher = getattr(self.node, "_digital_output_pub", None)
+            if publisher is None:
+                publisher = self.node.create_publisher(Int32MultiArray, "/set_do", 10)
+                setattr(self.node, "_digital_output_pub", publisher)
+                self.node.get_logger().info("[DIGITAL_OUTPUT] Created /set_do publisher")
+
+            msg = Int32MultiArray()
+            msg.data = [port, status]
+            publisher.publish(msg)
+            self.node.get_logger().info(
+                f"[DIGITAL_OUTPUT] Published /set_do -> port={port} value={status}"
+            )
+            return 0
+        except Exception as exc:
+            self.node.get_logger().error(
+                f"[DIGITAL_OUTPUT] Failed to publish /set_do: {exc}"
+            )
+            return -1
 
     def stop_motion(self):
         """

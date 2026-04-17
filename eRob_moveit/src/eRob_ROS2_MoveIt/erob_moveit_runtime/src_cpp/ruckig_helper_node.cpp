@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <cstdio>
+
 #include <rclcpp/rclcpp.hpp>
 #include "erob_moveit_runtime/srv/apply_ipp.hpp"
 
@@ -89,7 +91,6 @@ void logTrajectory(
     RCLCPP_INFO(logger, "═══════════════════ TRAJECTORY DUMP ═══════════════════");
     RCLCPP_INFO(logger, "Joints: %zu, Points: %zu", jt.joint_names.size(), jt.points.size());
 
-    // Log joint names
     std::string joint_names_str = "Joints: ";
     for (const auto& name : jt.joint_names)
     {
@@ -97,46 +98,44 @@ void logTrajectory(
     }
     RCLCPP_INFO(logger, "%s", joint_names_str.c_str());
 
-    // Log each point
     for (size_t i = 0; i < jt.points.size(); ++i)
     {
         const auto& p = jt.points[i];
         double t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9;
 
-        // Always log time and position summary
         if (!verbose && jt.points.size() > 10 && i > 2 && i < jt.points.size() - 3)
         {
-            if (i == 3) RCLCPP_INFO(logger, "  ... (%zu points omitted, use verbose for full log) ...",
-                                     jt.points.size() - 6);
+            if (i == 3)
+            {
+                RCLCPP_INFO(logger, "  ... (%zu points omitted, use verbose for full log) ...",
+                            jt.points.size() - 6);
+            }
             continue;
         }
 
-        // Position string
-        std::string pos_str = "";
+        std::string pos_str;
         for (size_t j = 0; j < p.positions.size(); ++j)
         {
             char buf[32];
-            snprintf(buf, sizeof(buf), "%7.4f", p.positions[j]);
+            std::snprintf(buf, sizeof(buf), "%7.4f", p.positions[j]);
             pos_str += buf;
             if (j < p.positions.size() - 1) pos_str += ", ";
         }
 
-        // Velocity string
-        std::string vel_str = "";
+        std::string vel_str;
         for (size_t j = 0; j < p.velocities.size(); ++j)
         {
             char buf[32];
-            snprintf(buf, sizeof(buf), "%7.4f", p.velocities[j]);
+            std::snprintf(buf, sizeof(buf), "%7.4f", p.velocities[j]);
             vel_str += buf;
             if (j < p.velocities.size() - 1) vel_str += ", ";
         }
 
-        // Acceleration string
-        std::string acc_str = "";
+        std::string acc_str;
         for (size_t j = 0; j < p.accelerations.size(); ++j)
         {
             char buf[32];
-            snprintf(buf, sizeof(buf), "%7.4f", p.accelerations[j]);
+            std::snprintf(buf, sizeof(buf), "%7.4f", p.accelerations[j]);
             acc_str += buf;
             if (j < p.accelerations.size() - 1) acc_str += ", ";
         }
@@ -147,14 +146,13 @@ void logTrajectory(
         RCLCPP_INFO(logger, "  acc: [%s]", acc_str.c_str());
     }
 
-    // Summary stats
-    if (jt.points.size() > 0)
+    if (!jt.points.empty())
     {
         double total_time = jt.points.back().time_from_start.sec +
-                           jt.points.back().time_from_start.nanosec * 1e-9;
+                            jt.points.back().time_from_start.nanosec * 1e-9;
 
-        // Find max velocity and acceleration
-        double max_vel = 0.0, max_acc = 0.0;
+        double max_vel = 0.0;
+        double max_acc = 0.0;
         for (const auto& p : jt.points)
         {
             for (double v : p.velocities) max_vel = std::max(max_vel, std::abs(v));
@@ -165,6 +163,7 @@ void logTrajectory(
         RCLCPP_INFO(logger, "Summary: duration=%.3fs, max_vel=%.3f rad/s, max_acc=%.3f rad/s²",
                     total_time, max_vel, max_acc);
     }
+
     RCLCPP_INFO(logger, "═══════════════════════════════════════════════════════");
 }
 
@@ -175,10 +174,20 @@ struct TrajectoryTimingStats
     double max_dt {0.0};
 };
 
+struct SegmentTimingInfo
+{
+    std::size_t start_index {0};
+    std::size_t end_index {0};
+    double start_time {0.0};
+    double end_time {0.0};
+    double dt {0.0};
+};
+
 TrajectoryTimingStats computeTimingStats(const moveit_msgs::msg::RobotTrajectory& rt_msg)
 {
     const auto& jt = rt_msg.joint_trajectory;
     TrajectoryTimingStats stats;
+
     if (jt.points.empty())
     {
         return stats;
@@ -194,18 +203,22 @@ TrajectoryTimingStats computeTimingStats(const moveit_msgs::msg::RobotTrajectory
 
     std::vector<double> dts;
     dts.reserve(jt.points.size() - 1);
+
     double previous_time = jt.points.front().time_from_start.sec +
                            jt.points.front().time_from_start.nanosec * 1e-9;
+
     for (size_t i = 1; i < jt.points.size(); ++i)
     {
         const auto& p = jt.points[i];
         const double t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9;
         const double dt = t - previous_time;
+
         if (dt > 1e-6)
         {
             dts.push_back(dt);
             stats.max_dt = std::max(stats.max_dt, dt);
         }
+
         previous_time = t;
     }
 
@@ -221,6 +234,69 @@ TrajectoryTimingStats computeTimingStats(const moveit_msgs::msg::RobotTrajectory
     return stats;
 }
 
+SegmentTimingInfo findLargestGapSegment(const moveit_msgs::msg::RobotTrajectory& rt_msg)
+{
+    const auto& jt = rt_msg.joint_trajectory;
+    SegmentTimingInfo info;
+
+    if (jt.points.size() < 2)
+    {
+        return info;
+    }
+
+    double previous_time = jt.points.front().time_from_start.sec +
+                           jt.points.front().time_from_start.nanosec * 1e-9;
+
+    for (std::size_t i = 1; i < jt.points.size(); ++i)
+    {
+        const auto& p = jt.points[i];
+        const double t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9;
+        const double dt = t - previous_time;
+
+        if (dt > info.dt)
+        {
+            info.start_index = i - 1;
+            info.end_index = i;
+            info.start_time = previous_time;
+            info.end_time = t;
+            info.dt = dt;
+        }
+
+        previous_time = t;
+    }
+
+    return info;
+}
+
+std::string formatJointDeltaSummary(
+    const moveit_msgs::msg::RobotTrajectory& rt_msg,
+    std::size_t start_index,
+    std::size_t end_index)
+{
+    const auto& jt = rt_msg.joint_trajectory;
+    if (jt.points.empty() || start_index >= jt.points.size() || end_index >= jt.points.size())
+    {
+        return "n/a";
+    }
+
+    const auto& start = jt.points[start_index];
+    const auto& end = jt.points[end_index];
+    const std::size_t count = std::min(start.positions.size(), end.positions.size());
+
+    std::string summary;
+    for (std::size_t j = 0; j < count; ++j)
+    {
+        const std::string& joint_name =
+            (j < jt.joint_names.size()) ? jt.joint_names[j] : ("joint_" + std::to_string(j));
+        const double delta = end.positions[j] - start.positions[j];
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "%s=%+.4f ", joint_name.c_str(), delta);
+        summary += buf;
+    }
+
+    return summary.empty() ? "n/a" : summary;
+}
+
 bool validateRuckigAgainstSeed(
     const moveit_msgs::msg::RobotTrajectory& seeded_msg,
     const moveit_msgs::msg::RobotTrajectory& ruckig_msg,
@@ -234,15 +310,23 @@ bool validateRuckigAgainstSeed(
         return true;
     }
 
-    const double allowed_duration_ratio = 2.0;
-    const double allowed_gap = std::max(1.0, std::max(seeded.median_dt, output.median_dt) * 12.0);
+    const double allowed_duration_ratio = 1.75;
+    const double allowed_gap = std::max(0.5, std::max(seeded.median_dt, output.median_dt) * 6.0);
 
-    if (output.total_duration > seeded.total_duration * allowed_duration_ratio &&
-        output.max_dt > allowed_gap)
+    const bool excessive_total_stretch =
+        output.total_duration > seeded.total_duration * allowed_duration_ratio;
+
+    const bool excessive_local_gap =
+        output.max_dt > allowed_gap;
+
+    if (excessive_local_gap)
     {
+        const SegmentTimingInfo output_gap = findLargestGapSegment(ruckig_msg);
+        const SegmentTimingInfo seeded_gap = findLargestGapSegment(seeded_msg);
         RCLCPP_ERROR(
             logger,
-            "❌ Ruckig output is implausible vs seeded trajectory: seeded_duration=%.3fs, output_duration=%.3fs, max_output_dt=%.3fs, allowed_gap=%.3fs",
+            "❌ Ruckig output is implausible vs seeded trajectory: excessive local time gap detected "
+            "(seeded_duration=%.3fs, output_duration=%.3fs, max_output_dt=%.3fs, allowed_gap=%.3fs)",
             seeded.total_duration,
             output.total_duration,
             output.max_dt,
@@ -252,6 +336,56 @@ bool validateRuckigAgainstSeed(
             logger,
             "   Ruckig silently stretched one segment far beyond the seeded trajectory cadence"
         );
+        RCLCPP_ERROR(
+            logger,
+            "   Worst output gap: segment [%zu -> %zu], t=[%.3f -> %.3f], dt=%.3fs",
+            output_gap.start_index,
+            output_gap.end_index,
+            output_gap.start_time,
+            output_gap.end_time,
+            output_gap.dt
+        );
+        RCLCPP_ERROR(
+            logger,
+            "   Output joint deltas across worst gap: %s",
+            formatJointDeltaSummary(
+                ruckig_msg,
+                output_gap.start_index,
+                output_gap.end_index
+            ).c_str()
+        );
+        RCLCPP_ERROR(
+            logger,
+            "   Largest seeded gap: segment [%zu -> %zu], t=[%.3f -> %.3f], dt=%.3fs",
+            seeded_gap.start_index,
+            seeded_gap.end_index,
+            seeded_gap.start_time,
+            seeded_gap.end_time,
+            seeded_gap.dt
+        );
+        RCLCPP_ERROR(
+            logger,
+            "   Seeded joint deltas across largest gap: %s",
+            formatJointDeltaSummary(
+                seeded_msg,
+                seeded_gap.start_index,
+                seeded_gap.end_index
+            ).c_str()
+        );
+        return false;
+    }
+
+    if (excessive_total_stretch)
+    {
+        RCLCPP_ERROR(
+            logger,
+            "❌ Ruckig output is implausibly slow vs seeded trajectory: seeded_duration=%.3fs, "
+            "output_duration=%.3fs, ratio=%.3f (limit=%.3f)",
+            seeded.total_duration,
+            output.total_duration,
+            output.total_duration / seeded.total_duration,
+            allowed_duration_ratio
+        );
         return false;
     }
 
@@ -259,25 +393,23 @@ bool validateRuckigAgainstSeed(
 }
 
 /**
- * Validate a trajectory for execution safety.
- * Returns false if trajectory is invalid (and should NOT be executed).
+ * Validate a trajectory for execution safety and timing sanity.
+ * Returns false if trajectory is invalid and should NOT be executed.
  */
 bool validateTrajectory(
     const moveit_msgs::msg::RobotTrajectory& rt_msg,
     const moveit::core::RobotModelPtr& model,
     rclcpp::Logger logger,
-    double max_duration = 30.0)  // Configurable max duration
+    double max_duration = 30.0)
 {
     const auto& jt = rt_msg.joint_trajectory;
 
-    // 1️⃣ Minimum points
     if (jt.points.size() < 2)
     {
         RCLCPP_ERROR(logger, "❌ Trajectory has <2 points");
         return false;
     }
 
-    // 2️⃣ Joint count consistency
     const size_t num_joints = jt.joint_names.size();
     if (num_joints == 0)
     {
@@ -287,8 +419,10 @@ bool validateTrajectory(
 
     std::vector<double> segment_dts;
     segment_dts.reserve(jt.points.size() - 1);
+
     double previous_time = jt.points.front().time_from_start.sec +
                            jt.points.front().time_from_start.nanosec * 1e-9;
+
     for (size_t i = 1; i < jt.points.size(); ++i)
     {
         const auto& p = jt.points[i];
@@ -314,82 +448,83 @@ bool validateTrajectory(
     const double total_duration =
         jt.points.back().time_from_start.sec +
         jt.points.back().time_from_start.nanosec * 1e-9;
-    const double dynamic_gap_limit = std::max(1.0, std::min(3.0, median_dt * 12.0));
+
+    // Stricter than before: contour/path trajectories should not contain giant time holes.
+    const double dynamic_gap_limit = std::max(0.35, std::min(1.0, median_dt * 6.0));
 
     double last_time = -1.0;
 
-    // Joint limits from model
     std::unordered_map<std::string, moveit::core::VariableBounds> limits;
     for (const auto* jm : model->getJointModels())
     {
         if (jm->getVariableCount() == 1)
+        {
             limits[jm->getName()] = jm->getVariableBounds()[0];
+        }
     }
 
     for (size_t i = 0; i < jt.points.size(); ++i)
     {
         const auto& p = jt.points[i];
 
-        // 3️⃣ Size checks
         if (p.positions.size() != num_joints)
         {
             RCLCPP_ERROR(logger, "❌ Point %zu has wrong position size", i);
             return false;
         }
 
-        // 4️⃣ Time monotonicity
-        double t = p.time_from_start.sec +
-                   p.time_from_start.nanosec * 1e-9;
+        const double t = p.time_from_start.sec +
+                         p.time_from_start.nanosec * 1e-9;
 
         if (i > 0 && t <= last_time)
         {
             RCLCPP_ERROR(logger,
-                "❌ Non-monotonic timing at point %zu (%.6f <= %.6f)",
-                i, t, last_time);
+                         "❌ Non-monotonic timing at point %zu (%.6f <= %.6f)",
+                         i, t, last_time);
             return false;
         }
 
-        // 5️⃣ Zero-time segment protection (check BEFORE updating last_time)
         if (i > 0 && (t - last_time) < 1e-6)
         {
             RCLCPP_ERROR(logger,
-                "❌ Zero-duration segment at point %zu (dt=%.9f)", i, t - last_time);
+                         "❌ Zero-duration segment at point %zu (dt=%.9f)",
+                         i, t - last_time);
             return false;
         }
 
-        // 5️⃣b️ Heuristic warning for implausible segment expansion from Ruckig.
-        // Keep this as a warning only: some valid trajectories can legitimately
-        // have long segments after jerk-limited smoothing.
         if (i > 0 && (t - last_time) > dynamic_gap_limit)
         {
-            RCLCPP_WARN(logger,
-                "⚠️ Excessive adjacent time gap at point %zu: %.3fs (median dt: %.3fs, warning threshold: %.3fs, total duration: %.3fs)",
-                i, t - last_time, median_dt, dynamic_gap_limit, total_duration);
-            RCLCPP_WARN(logger,
-                "   Large gap detected after Ruckig smoothing; keeping trajectory because timing/vel/acc are otherwise valid");
+            RCLCPP_ERROR(
+                logger,
+                "❌ Excessive adjacent time gap at point %zu: %.3fs "
+                "(median dt: %.3fs, limit: %.3fs, total duration: %.3fs)",
+                i, t - last_time, median_dt, dynamic_gap_limit, total_duration
+            );
+            RCLCPP_ERROR(
+                logger,
+                "   Large timing hole detected after Ruckig smoothing; rejecting trajectory"
+            );
+            return false;
         }
 
-        last_time = t;  // Update AFTER the checks
+        last_time = t;
 
-        // 6️⃣ Velocities required
         if (p.velocities.size() != num_joints)
         {
             RCLCPP_ERROR(logger,
-                "❌ Missing velocities at point %zu (got %zu, expected %zu)",
-                i, p.velocities.size(), num_joints);
+                         "❌ Missing velocities at point %zu (got %zu, expected %zu)",
+                         i, p.velocities.size(), num_joints);
             return false;
         }
 
-        // 7️⃣ Accelerations required (jerk-limited safety)
         if (p.accelerations.size() != num_joints)
         {
             RCLCPP_ERROR(logger,
-                "❌ Missing accelerations at point %zu (got %zu, expected %zu)",
-                i, p.accelerations.size(), num_joints);
+                         "❌ Missing accelerations at point %zu (got %zu, expected %zu)",
+                         i, p.accelerations.size(), num_joints);
             return false;
         }
 
-        // 8️⃣ NaN / inf check
         for (size_t j = 0; j < num_joints; ++j)
         {
             if (!std::isfinite(p.positions[j]) ||
@@ -397,11 +532,11 @@ bool validateTrajectory(
                 !std::isfinite(p.accelerations[j]))
             {
                 RCLCPP_ERROR(logger,
-                    "❌ NaN/Inf detected at point %zu joint %zu", i, j);
+                             "❌ NaN/Inf detected at point %zu joint %zu",
+                             i, j);
                 return false;
             }
 
-            // 9️⃣ Joint position limits
             const auto& name = jt.joint_names[j];
             if (limits.count(name))
             {
@@ -409,15 +544,16 @@ bool validateTrajectory(
                 if (p.positions[j] < b.min_position_ - 1e-3 ||
                     p.positions[j] > b.max_position_ + 1e-3)
                 {
-                    RCLCPP_ERROR(logger,
+                    RCLCPP_ERROR(
+                        logger,
                         "❌ Joint %s position %.4f out of limits [%.4f, %.4f] at point %zu",
-                        name.c_str(), p.positions[j], b.min_position_, b.max_position_, i);
+                        name.c_str(), p.positions[j], b.min_position_, b.max_position_, i
+                    );
                     return false;
                 }
             }
         }
 
-        // 🔟 Teleport detection (position jump > 0.5 rad between consecutive points)
         if (i > 0)
         {
             const auto& prev = jt.points[i - 1];
@@ -426,21 +562,24 @@ bool validateTrajectory(
                 double jump = std::abs(p.positions[j] - prev.positions[j]);
                 if (jump > 0.5)
                 {
-                    RCLCPP_ERROR(logger,
+                    RCLCPP_ERROR(
+                        logger,
                         "❌ Teleport detected: joint %zu jumped %.3f rad at point %zu",
-                        j, jump, i);
+                        j, jump, i
+                    );
                     return false;
                 }
             }
         }
     }
 
-    // 1️⃣1️⃣ Duration sanity check
     if (last_time > max_duration)
     {
-        RCLCPP_ERROR(logger,
+        RCLCPP_ERROR(
+            logger,
             "❌ Trajectory duration %.2fs exceeds limit %.2fs (Ruckig likely failed)",
-            last_time, max_duration);
+            last_time, max_duration
+        );
         return false;
     }
 
@@ -463,7 +602,6 @@ public:
 
     void initialize()
     {
-        // Load robot model ONCE at startup (must be called after shared_ptr is created)
         auto node_ptr = shared_from_this();
 
         RCLCPP_INFO(this->get_logger(), "⏳ Loading robot model...");
@@ -476,16 +614,15 @@ public:
             throw std::runtime_error("Robot model load failed");
         }
 
-        // Create and cache robot state to avoid re-initialization
         robot_state_ = std::make_shared<moveit::core::RobotState>(kinematic_model_);
         robot_state_->setToDefaultValues();
 
-        // Determine planning group from robot model
         auto group_names = kinematic_model_->getJointModelGroupNames();
         if (group_names.empty())
         {
             throw std::runtime_error("Robot model has no planning groups!");
         }
+
         planning_group_ = group_names[0];
         RCLCPP_INFO(this->get_logger(), "📌 Using planning group: '%s'", planning_group_.c_str());
 
@@ -496,9 +633,9 @@ public:
 
 private:
     rclcpp::Service<ApplyRuckig>::SharedPtr service_;
-    std::shared_ptr<robot_model_loader::RobotModelLoader> loader_;  // Keep alive!
+    std::shared_ptr<robot_model_loader::RobotModelLoader> loader_;
     moveit::core::RobotModelPtr kinematic_model_;
-    moveit::core::RobotStatePtr robot_state_;  // Cached state
+    moveit::core::RobotStatePtr robot_state_;
     std::string planning_group_;
 
     void applyRuckig(const std::shared_ptr<ApplyRuckig::Request> request,
@@ -507,11 +644,6 @@ private:
         RCLCPP_INFO(this->get_logger(), "📥 Received Ruckig request with %zu points",
                     request->trajectory.points.size());
 
-//        RCLCPP_ERROR(this->get_logger(), "❌ RETURNING EARLY BECAUSE RUCKIG IS NOT CURRENTLY SUPPORTED");
-//        response->trajectory = moveit_msgs::msg::RobotTrajectory();
-//        return;
-
-        // Debug: Check for near-duplicate points at start (can cause oscillation)
         if (request->trajectory.points.size() >= 2)
         {
             const auto& p0 = request->trajectory.points[0];
@@ -521,14 +653,14 @@ private:
             for (size_t j = 0; j < std::min(p0.positions.size(), p1.positions.size()); ++j)
             {
                 double diff = std::abs(p0.positions[j] - p1.positions[j]);
-                if (diff > max_diff) max_diff = diff;
+                max_diff = std::max(max_diff, diff);
             }
 
-            if (max_diff < 0.0001)  // Less than 0.006 degrees - essentially same position
+            if (max_diff < 0.0001)
             {
                 RCLCPP_WARN(this->get_logger(),
-                    "⚠️  First two waypoints nearly identical (max_diff=%.6f rad) - may cause oscillation",
-                    max_diff);
+                            "⚠️  First two waypoints nearly identical (max_diff=%.6f rad) - may cause oscillation",
+                            max_diff);
             }
         }
 
@@ -540,23 +672,17 @@ private:
             return;
         }
 
-        // Use cached robot state (no re-initialization!)
         robot_trajectory::RobotTrajectory rt(kinematic_model_, planning_group_);
-
-        // Set trajectory from request - this populates joint positions
         rt.setRobotTrajectoryMsg(*robot_state_, sanitized_request);
 
-        // Clamp scaling factors to valid range [0.0, 1.0]
-        double max_vel_scaling = std::max(0.0, std::min(1.0, request->max_velocity_scaling));
-        double max_acc_scaling = std::max(0.0, std::min(1.0, request->max_acceleration_scaling));
+        const double max_vel_scaling = std::max(0.0, std::min(1.0, request->max_velocity_scaling));
+        const double max_acc_scaling = std::max(0.0, std::min(1.0, request->max_acceleration_scaling));
 
         RCLCPP_INFO(this->get_logger(), "⚙️  Applying Ruckig smoothing with vel_scale=%.2f, acc_scale=%.2f",
                     max_vel_scaling, max_acc_scaling);
 
-        // Seed a valid timed trajectory first. MoveIt's Ruckig smoothing is a post-processor,
-        // not a from-scratch parameterizer for untimed joint waypoint lists.
         trajectory_processing::TimeOptimalTrajectoryGeneration totg_seed;
-        bool seed_ok = totg_seed.computeTimeStamps(rt, max_vel_scaling, max_acc_scaling);
+        const bool seed_ok = totg_seed.computeTimeStamps(rt, max_vel_scaling, max_acc_scaling);
         if (!seed_ok)
         {
             RCLCPP_ERROR(this->get_logger(), "❌ Ruckig seed timing (TOTG) failed");
@@ -566,34 +692,27 @@ private:
 
         moveit_msgs::msg::RobotTrajectory seeded_msg;
         rt.getRobotTrajectoryMsg(seeded_msg);
+
         RCLCPP_INFO(this->get_logger(), "📊 SEEDED trajectory BEFORE Ruckig:");
         logTrajectory(seeded_msg, this->get_logger(), true);
 
-        // Log trajectory BEFORE Ruckig
         RCLCPP_INFO(this->get_logger(), "📊 BEFORE Ruckig:");
         moveit_msgs::msg::RobotTrajectory before_msg;
         rt.getRobotTrajectoryMsg(before_msg);
-        logTrajectory(before_msg, this->get_logger(), true);  // verbose
+        logTrajectory(before_msg, this->get_logger(), true);
 
-        // Ruckig jerk-limited trajectory smoothing
-        // Uses joint limits from URDF/SRDF automatically
-        // mitigate_overshoot=true helps prevent position overshoot
-        //
-        // IMPORTANT: overshoot_threshold must be very tight (0.001 rad = ~0.06 deg)
-        // to prevent back-and-forth motion at low velocities (e.g., vel=0.1)
-        bool success = trajectory_processing::RuckigSmoothing::applySmoothing(
+        const bool success = trajectory_processing::RuckigSmoothing::applySmoothing(
             rt,
             max_vel_scaling,
             max_acc_scaling,
-            true,   // mitigate_overshoot
-            0.001   // overshoot_threshold (radians)
+            true,
+            0.001
         );
 
-        // Log trajectory AFTER Ruckig
         RCLCPP_INFO(this->get_logger(), "📊 AFTER Ruckig (success=%s):", success ? "true" : "false");
         moveit_msgs::msg::RobotTrajectory after_msg;
         rt.getRobotTrajectoryMsg(after_msg);
-        logTrajectory(after_msg, this->get_logger(), true);  // verbose
+        logTrajectory(after_msg, this->get_logger(), true);
 
         if (!success)
         {
@@ -604,7 +723,6 @@ private:
 
         RCLCPP_INFO(this->get_logger(), "✅ Ruckig Smoothing returned success");
 
-        // Convert back to RobotTrajectory message
         rt.getRobotTrajectoryMsg(response->trajectory);
 
         if (!validateRuckigAgainstSeed(seeded_msg, response->trajectory, this->get_logger()))
@@ -614,41 +732,33 @@ private:
             return;
         }
 
-        // Log trajectory info before validation
-        size_t num_points = response->trajectory.joint_trajectory.points.size();
+        const size_t num_points = response->trajectory.joint_trajectory.points.size();
         if (num_points > 0)
         {
-            auto last_point = response->trajectory.joint_trajectory.points.back();
-            double total_time = last_point.time_from_start.sec +
-                               last_point.time_from_start.nanosec * 1e-9;
+            const auto& last_point = response->trajectory.joint_trajectory.points.back();
+            const double total_time = last_point.time_from_start.sec +
+                                      last_point.time_from_start.nanosec * 1e-9;
             RCLCPP_INFO(this->get_logger(), "🔍 Trajectory: %zu points, duration: %.2fs",
                         num_points, total_time);
         }
 
-        // CRITICAL: Validate trajectory to catch silent Ruckig failures
-        // (e.g., "extended to maximum and still did not find a solution")
-        // Use a reasonable max duration based on scaling (slower = longer allowed)
-        double max_duration = 10.0 / std::max(0.1, max_vel_scaling);  // e.g., 100s at 10% vel
-        max_duration = std::min(max_duration, 60.0);  // Cap at 60s
+        double max_duration = 10.0 / std::max(0.1, max_vel_scaling);
+        max_duration = std::min(max_duration, 60.0);
 
         if (!validateTrajectory(response->trajectory, kinematic_model_, this->get_logger(), max_duration))
         {
             RCLCPP_ERROR(this->get_logger(), "❌ Trajectory validation FAILED after Ruckig");
             RCLCPP_ERROR(this->get_logger(), "   Falling back to seeded TOTG trajectory instead.");
 
-            // Log the invalid trajectory for debugging (verbose mode)
             RCLCPP_WARN(this->get_logger(), "Dumping INVALID trajectory for debugging:");
-            logTrajectory(response->trajectory, this->get_logger(), true);  // verbose=true
+            logTrajectory(response->trajectory, this->get_logger(), true);
 
             response->trajectory = seeded_msg;
             return;
         }
 
         RCLCPP_INFO(this->get_logger(), "✅ Trajectory validated successfully");
-
-        // Log successful trajectory (non-verbose - just summary and first/last points)
         logTrajectory(response->trajectory, this->get_logger(), false);
-
         RCLCPP_INFO(this->get_logger(), "📤 Returning %zu jerk-limited points", num_points);
     }
 };
@@ -658,10 +768,13 @@ int main(int argc, char** argv)
     rclcpp::init(argc, argv);
     auto node = std::make_shared<RuckigHelperNode>();
 
-    try {
-        node->initialize();  // Initialize after shared_ptr is created
+    try
+    {
+        node->initialize();
         RCLCPP_INFO(node->get_logger(), "✅ Ruckig Helper fully initialized and ready");
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         RCLCPP_ERROR(node->get_logger(), "❌ Failed to initialize Ruckig Helper: %s", e.what());
         rclcpp::shutdown();
         return 1;

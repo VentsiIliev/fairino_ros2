@@ -1,84 +1,63 @@
-# joint_limits.yaml - OPTIMIZED for ultra-smooth motion
-
-default_velocity_scaling_factor: 0.6
-default_acceleration_scaling_factor: 0.4
+default_velocity_scaling_factor: 0.25
+default_acceleration_scaling_factor: 0.5
 
 joint_limits:
   Joint_1:
     has_position_limits: true
     has_velocity_limits: true
-    max_velocity: 40.0
+    max_velocity: 8.0
     has_acceleration_limits: true
-    max_acceleration: 10.0
-    max_deceleration: -10.0
+    max_acceleration: 6.0
+    max_deceleration: -6.0
     has_jerk_limits: true
-    max_jerk: 20.0
-    has_effort_limits: true
-    max_effort: 2.0
-    min_position: -6.28318
-    max_position: 6.28318
+    max_jerk: 60.0
+
   Joint_2:
     has_position_limits: true
     has_velocity_limits: true
-    max_velocity: 40.0
+    max_velocity: 8.0
     has_acceleration_limits: true
-    max_acceleration: 10.0
-    max_deceleration: -10.0
+    max_acceleration: 6.0
+    max_deceleration: -6.0
     has_jerk_limits: true
-    max_jerk: 20.0
-    has_effort_limits: true
-    max_effort: 2.0
-    min_position: -3.22886
-    max_position: 3.22886
+    max_jerk: 60.0
+
   Joint_3:
     has_position_limits: true
     has_velocity_limits: true
-    max_velocity: 40.0
+    max_velocity: 8.0
+    has_acceleration_limits: true
+    max_acceleration: 6.0
+    max_deceleration: -6.0
+    has_jerk_limits: true
+    max_jerk: 60.0
+
+  Joint_4:
+    has_position_limits: true
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: true
+    max_acceleration: 8.0
+    max_deceleration: -8.0
+    has_jerk_limits: true
+    max_jerk: 80.0
+
+  Joint_5:
+    has_position_limits: true
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: true
+    max_acceleration: 8.0
+    max_deceleration: -8.0
+    has_jerk_limits: true
+    max_jerk: 80.0
+
+  Joint_6:
+    has_position_limits: true
+    has_velocity_limits: true
+    max_velocity: 15.0
     has_acceleration_limits: true
     max_acceleration: 10.0
     max_deceleration: -10.0
     has_jerk_limits: true
-    max_jerk: 20.0
-    has_effort_limits: true
-    max_effort: 2.0
-    min_position: -3.22886
-    max_position: 3.22886
-  Joint_4:
-    has_position_limits: true
-    has_velocity_limits: true
-    max_velocity: 45.0
-    has_acceleration_limits: true
-    max_acceleration: 12.0
-    max_deceleration: -12.0
-    has_jerk_limits: true
-    max_jerk: 25.0
-    has_effort_limits: true
-    max_effort: 1.5
-    min_position: -6.10865
-    max_position: 3.14159
-  Joint_5:
-    has_position_limits: true
-    has_velocity_limits: true
-    max_velocity: 45.0
-    has_acceleration_limits: true
-    max_acceleration: 12.0
-    max_deceleration: -12.0
-    has_jerk_limits: true
-    max_jerk: 25.0
-    has_effort_limits: true
-    max_effort: 1.5
-    min_position: -3.22886
-    max_position: 3.22886
-  Joint_6:
-    has_position_limits: true
-    has_velocity_limits: true
-    max_velocity: 100.0
-    has_acceleration_limits: true
-    max_acceleration: 25.0
-    max_deceleration: -25.0
-    has_jerk_limits: true
-    max_jerk: 30.0
-    has_effort_limits: true
-    max_effort: 4.0
-    min_position: -12.5664
-    max_position: 12.5664
+    max_jerk: 100.0
