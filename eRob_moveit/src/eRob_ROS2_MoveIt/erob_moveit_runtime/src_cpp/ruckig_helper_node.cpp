@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 #include <cstdio>
+#include <string>
 
 #include <rclcpp/rclcpp.hpp>
 #include "erob_moveit_runtime/srv/apply_ipp.hpp"
@@ -182,6 +183,11 @@ struct SegmentTimingInfo
     double end_time {0.0};
     double dt {0.0};
 };
+
+std::string formatJointDeltaSummary(
+    const moveit_msgs::msg::RobotTrajectory& rt_msg,
+    std::size_t start_index,
+    std::size_t end_index);
 
 TrajectoryTimingStats computeTimingStats(const moveit_msgs::msg::RobotTrajectory& rt_msg)
 {
@@ -692,6 +698,7 @@ private:
 
         moveit_msgs::msg::RobotTrajectory seeded_msg;
         rt.getRobotTrajectoryMsg(seeded_msg);
+        rt.setRobotTrajectoryMsg(*robot_state_, seeded_msg);
 
         RCLCPP_INFO(this->get_logger(), "📊 SEEDED trajectory BEFORE Ruckig:");
         logTrajectory(seeded_msg, this->get_logger(), true);
@@ -722,7 +729,6 @@ private:
         }
 
         RCLCPP_INFO(this->get_logger(), "✅ Ruckig Smoothing returned success");
-
         rt.getRobotTrajectoryMsg(response->trajectory);
 
         if (!validateRuckigAgainstSeed(seeded_msg, response->trajectory, this->get_logger()))

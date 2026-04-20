@@ -33,8 +33,8 @@ move_group:
       check_for_environment_collisions: true
       collision_detector_plugin: "FCL"
       contacts_threshold: 1
-    planning_pipelines: ["pilz_industrial_motion_planner"]
-    default_planning_pipeline: "pilz_industrial_motion_planner"
+    planning_pipelines: ["pilz_industrial_motion_planner","ompl","stomp"]
+    default_planning_pipeline: "stomp"
     pilz_industrial_motion_planner:
       planning_plugin: "pilz_industrial_motion_planner/CommandPlanner"
       request_adapters: >-
@@ -51,3 +51,30 @@ move_group:
         default_planning_response_adapters/ValidateSolution
         default_planning_response_adapters/DisplayMotionPath
       default_planner_config: "LIN"
+
+    ompl:
+      planning_plugin: "ompl_interface/OMPLPlanner"
+      # Тук добавяте Ruckig или TOTG за OMPL
+      request_adapters: >-
+        default_planner_request_adapters/AddRuckigTrajectorySmoothing
+        default_planner_request_adapters/ResolveConstraintFrames
+        default_planner_request_adapters/FixWorkspaceBounds
+        default_planner_request_adapters/FixStartBounds
+        default_planner_request_adapters/FixInvalidBounds
+        default_planner_request_adapters/FixStartStateBounds
+        default_planner_request_adapters/FixStartStateCollision
+        default_planner_request_adapters/FixStartStatePathConstraints
+    
+
+    stomp:
+      planning_plugin: "stomp_moveit/StompPlanner"
+      request_adapters: >-
+        default_planner_request_adapters/AddRuckigTrajectorySmoothing
+        default_planner_request_adapters/ResolveConstraintFrames
+        default_planner_request_adapters/FixWorkspaceBounds
+        default_planner_request_adapters/FixStartBounds
+        default_planner_request_adapters/FixInvalidBounds
+        default_planner_request_adapters/FixStartStateBounds
+        default_planner_request_adapters/FixStartStateCollision
+        default_planner_request_adapters/FixStartStatePathConstraints
+

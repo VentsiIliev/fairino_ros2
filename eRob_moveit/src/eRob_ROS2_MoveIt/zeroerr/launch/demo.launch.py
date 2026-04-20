@@ -65,7 +65,7 @@ def generate_launch_description():
             file_path="config/eRobo3.urdf.xacro",
             mappings={"robot_urdf": urdf_path},
         )
-        .planning_pipelines(pipelines=["pilz_industrial_motion_planner"])
+        .planning_pipelines(pipelines=["pilz_industrial_motion_planner","ompl","stomp"])
         .to_moveit_configs()
     )
 
@@ -273,7 +273,7 @@ def generate_launch_description():
         RegisterEventHandler(
             OnProcessStart(
                 target_action=zeroerr_state_publisher,
-                on_start=[TimerAction(period=45.0, actions=[velocity_monitor_gui])],
+                on_start=[TimerAction(period=20.0, actions=[velocity_monitor_gui])],
             )
         )
     )

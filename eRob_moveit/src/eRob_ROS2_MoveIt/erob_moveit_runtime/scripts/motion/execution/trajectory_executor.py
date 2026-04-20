@@ -490,7 +490,6 @@ class TrajectoryExecutor:
         self._overwrite_first_point_with_live_state(joint_trajectory)
         if not preserve_explicit_wrap:
             self._unwrap_joint6_continuity(joint_trajectory)
-        self._soften_trajectory_start(joint_trajectory)
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):
             log_drive_state()

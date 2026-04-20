@@ -39,27 +39,6 @@ def _preferred_branch_reference(joint_name: str, live_reference: float) -> float
     return float(live_reference)
 
 
-def _combine_joint_trajectories(approach_solution, path_solution):
-    combined = deepcopy(approach_solution)
-    approach_traj = combined.joint_trajectory
-    path_traj = path_solution.joint_trajectory
-
-    if approach_traj.joint_names != path_traj.joint_names:
-        raise ValueError('Approach/path joint names do not match')
-
-    combined_points = list(approach_traj.points)
-    path_points = list(path_traj.points)
-    if path_points:
-        path_points = path_points[1:]
-
-    combined_points.extend(deepcopy(path_points))
-    for point in combined_points:
-        point.time_from_start = Duration(sec=0, nanosec=0)
-
-    approach_traj.points = combined_points
-    return combined
-
-
 def send_path_cartesian(
     robot_controller,
     waypoints_mm,
@@ -70,6 +49,7 @@ def send_path_cartesian(
     acc_scaling,
     trajectory_optimizer_name=None,
     orientation_mode="constant",
+    skip_approach_check=False,
 ):
     robot_controller.force_safety_update()
     result = _execute_path(
@@ -82,6 +62,7 @@ def send_path_cartesian(
         acc_scaling,
         trajectory_optimizer_name=trajectory_optimizer_name,
         orientation_mode=orientation_mode,
+        skip_approach_check=skip_approach_check,
     )
     if result != 0:
         robot_controller.mark_current_motion_complete(result)
@@ -98,6 +79,7 @@ def _execute_path(
     acc_scaling,
     trajectory_optimizer_name=None,
     orientation_mode="constant",
+    skip_approach_check=False,
 ):
     robot_controller.set_last_requested_delta_mm(0.0)
     num_waypoints = len(waypoints_mm)
@@ -150,7 +132,7 @@ def _execute_path(
 
     # Check if robot is far from first waypoint
     current_cart = robot_controller.prev_cartesian
-    if current_cart is not None and len(current_cart) >= 3:
+    if not skip_approach_check and current_cart is not None and len(current_cart) >= 3:
         approach_dist = np.linalg.norm(np.array(waypoints_mm[0][:3]) - np.array(current_cart[:3]))
         robot_controller.get_logger().info(f'[EXECUTE_PATH] Distance to first waypoint: {approach_dist:.1f}mm')
         if approach_dist > config.PATH_APPROACH_THRESHOLD_MM:
@@ -187,13 +169,10 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
     Phase 1 — IK query: compute_cartesian_path([wp[0]], max_step=0.1, no collision)
               → get joint state at wp[0] without moving
     Phase 2 — Plan:     compute_cartesian_path(all waypoints, start=IK@wp[0])
-              → if fails: abort, robot stays put
-              → if succeeds: store trajectory, queue _execute_pending_trajectory
-    Phase 3 — Approach: _execute_single_point(current → wp[0])
-              → on completion, motion queue fires _execute_pending_trajectory
+              → if succeeds: build one combined approach+contour trajectory
+    Phase 3 — Execute:  time-parameterize and execute the combined trajectory
     """
 
-    # ── Phase 1: Quick IK for first waypoint ──────────────────────────────────
     ik_request = _build_cartesian_request(robot_controller, [waypoints[0]], 0.1, 1.0, 1.0,
                                           avoid_collisions=False)
 
@@ -248,6 +227,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                             '[EXECUTE_PATH] Phase 1 IK branch-normalized to live joint state '
                             f'(max wrap adjustment {max_branch_adjustment:.4f} rad)'
                         )
+
         approach_solution = deepcopy(ik_resp.solution)
 
         robot_controller.get_logger().info(
@@ -282,13 +262,11 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
         if approach_solution.joint_trajectory.points:
             approach_solution.joint_trajectory.points[-1].positions = list(normalized_positions)
 
-        # Build virtual start state at first waypoint
         virtual_start = RobotState()
         virtual_start.joint_state.name = list(traj.joint_names)
         virtual_start.joint_state.position = list(normalized_positions)
         virtual_start.is_diff = False
 
-        # ── Phase 2: Plan full path from virtual start ─────────────────────
         plan_request = _build_cartesian_request(robot_controller, waypoints, max_step,
                                                 vel_scaling, acc_scaling,
                                                 start_state=virtual_start)
@@ -323,7 +301,7 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                 f'[EXECUTE_PATH] Planning failed ({fraction*100:.1f}%) — NOT moving to first waypoint')
             _diagnose_start_collision(robot_controller)
             _set_result(robot_controller, -11)
-            return  # ← robot has not moved at all
+            return
 
         num_pts = len(resp.solution.joint_trajectory.points)
         resp.solution, max_wrap_adjustment = _unwrap_joint_trajectory_positions(
@@ -367,16 +345,12 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
                 f"max_step={joint6_stats['max_step']:.4f}, "
                 f"points={joint6_stats['num_points']}"
             )
-        robot_controller.get_logger().info(
-            f'[EXECUTE_PATH] ✓ Plan succeeded ({num_pts} pts). '
-            f'Building single combined trajectory through wp[0]: '
-            f'[{first_wp_mm[0]:.1f}, {first_wp_mm[1]:.1f}, {first_wp_mm[2]:.1f}]')
 
         if num_pts <= 1:
             robot_controller.get_logger().info(
                 '[EXECUTE_PATH] Planned path collapsed to a single point at wp[0] — '
-                'skipping deferred Phase 3 and executing the Phase 1 approach branch')
-
+                'executing only the Phase 1 approach move'
+            )
             _apply_time_param(
                 robot_controller,
                 deepcopy(approach_solution),
@@ -388,15 +362,19 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
             )
             return
 
-        combined_solution = _combine_joint_trajectories(approach_solution, resp.solution)
-        combined_points = len(combined_solution.joint_trajectory.points)
+        contour_points = len(resp.solution.joint_trajectory.points)
         robot_controller.get_logger().info(
-            '[EXECUTE_PATH] Executing single combined trajectory '
-            f'({combined_points} raw points, approach + contour)'
+            '[EXECUTE_PATH] ✓ Plan succeeded. Building single combined trajectory '
+            f'via wp[0] ({contour_points} raw contour points)'
+        )
+
+        combined_trajectory = _combine_joint_trajectories(
+            deepcopy(approach_solution),
+            deepcopy(resp.solution),
         )
         _apply_time_param(
             robot_controller,
-            combined_solution,
+            combined_trajectory,
             vel_scaling,
             acc_scaling,
             gen,
@@ -407,47 +385,23 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
     ik_future.add_done_callback(on_ik_done)
 
 
-def _execute_pending_trajectory(robot_controller):
+def _combine_joint_trajectories(approach_trajectory, contour_trajectory):
     """
-    Execute the trajectory stored by _plan_then_approach.
-    Called from the motion queue after the approach move completes.
-    Aborts silently if the approach move failed.
+    Concatenate the untimed approach and contour trajectories into one path.
+    The contour's first point is the same wp[0] state already reached by the
+    approach, so drop that duplicated point before time parameterization.
     """
-    if robot_controller.last_move_result != 0:
-        robot_controller.get_logger().error(
-            f'[EXECUTE_PATH] Approach failed (code={robot_controller.last_move_result}) — '
-            f'discarding queued path execution')
-        robot_controller.clear_pending_path()
-        return -1
+    approach_joint_trajectory = approach_trajectory.joint_trajectory
+    contour_joint_trajectory = contour_trajectory.joint_trajectory
 
-    trajectory, vel_scaling, acc_scaling, trajectory_optimizer_name = robot_controller.consume_pending_path()
-    if vel_scaling is None:
-        vel_scaling = config.DEFAULT_VEL_SCALING
-    if acc_scaling is None:
-        acc_scaling = config.DEFAULT_ACC_SCALING
+    if not contour_joint_trajectory.points:
+        return approach_trajectory
+    if not approach_joint_trajectory.points:
+        return contour_trajectory
 
-    if trajectory is None:
-        robot_controller.get_logger().error('[EXECUTE_PATH] No pending trajectory!')
-        return -1
+    if list(approach_joint_trajectory.joint_names) != list(contour_joint_trajectory.joint_names):
+        raise ValueError('Approach and contour trajectories use different joint orders')
 
-    num_pts = len(trajectory.joint_trajectory.points)
-    robot_controller.get_logger().info(
-        f'[EXECUTE_PATH] Phase 3: Executing pre-planned trajectory ({num_pts} pts)')
-
-    if num_pts <= 1:
-        robot_controller.get_logger().info(
-            '[EXECUTE_PATH] Pending trajectory has <=1 point — nothing left to execute after approach')
-        _set_result(robot_controller, 0)
-        return 0
-
-    gen = _begin_execution(robot_controller)
-    _apply_time_param(
-        robot_controller,
-        trajectory,
-        vel_scaling,
-        acc_scaling,
-        gen,
-        log_prefix='[EXECUTE_PATH]',
-        trajectory_optimizer_name=trajectory_optimizer_name,
-    )
-    return 0
+    combined = deepcopy(approach_trajectory)
+    combined.joint_trajectory.points.extend(deepcopy(contour_joint_trajectory.points[1:]))
+    return combined
