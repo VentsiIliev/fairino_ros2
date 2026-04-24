@@ -34,7 +34,7 @@ move_group:
       collision_detector_plugin: "FCL"
       contacts_threshold: 1
     planning_pipelines: ["pilz_industrial_motion_planner","ompl","stomp"]
-    default_planning_pipeline: "stomp"
+    default_planning_pipeline: "pilz_industrial_motion_planner"
     pilz_industrial_motion_planner:
       planning_plugin: "pilz_industrial_motion_planner/CommandPlanner"
       request_adapters: >-

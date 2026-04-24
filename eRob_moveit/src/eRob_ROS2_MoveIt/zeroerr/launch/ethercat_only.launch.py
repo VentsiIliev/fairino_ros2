@@ -10,24 +10,68 @@ import shutil
 import yaml
 
 
-def _urdf_path_from_runtime(package_path: str) -> str:
-    rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
+def _runtime_yaml_path(package_path: str) -> str:
+    source_candidate = os.path.expanduser(
+        "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/runtime.yaml"
+    )
+    if os.path.isfile(source_candidate):
+        return source_candidate
+    return os.path.join(package_path, "config", "runtime.yaml")
+
+
+def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
+    source_candidate = os.path.expanduser(
+        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/{profile}/runtime.yaml"
+    )
+    if os.path.isfile(source_candidate):
+        return source_candidate
+    return os.path.join(package_path, "config", profile, "runtime.yaml")
+
+
+def _load_runtime_config(package_path: str) -> dict:
+    rt_yaml = _runtime_yaml_path(package_path)
     try:
         with open(rt_yaml) as f:
             rt = yaml.safe_load(f) or {}
-        path = rt.get("URDF_PATH", "")
-        if path and os.path.isfile(path):
-            return path
     except Exception:
-        pass
-    return os.path.join(package_path, "config", "erob_arm_family_motor_masses.urdf")
+        raise RuntimeError(f"Failed to read runtime config: {rt_yaml}")
+
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+    if profile:
+        profile_yaml = _profile_runtime_yaml_path(package_path, profile)
+        if not os.path.isfile(profile_yaml):
+            raise RuntimeError(
+                f"runtime.yaml requested ACTIVE_PROFILE '{profile}', but profile config was not found: {profile_yaml}"
+            )
+        with open(profile_yaml) as f:
+            profile_rt = yaml.safe_load(f) or {}
+        merged = dict(rt)
+        merged.update(profile_rt)
+        return merged
+    return rt
+
+
+def _urdf_path_from_runtime(package_path: str) -> str:
+    rt = _load_runtime_config(package_path)
+    path = rt.get("URDF_PATH", "")
+    if path and os.path.isfile(path):
+        return path
+    raise RuntimeError(
+        f"runtime config must define a valid URDF_PATH. Resolved value: {path}"
+    )
+
+
+def _srdf_path_from_runtime(package_path: str) -> str | None:
+    rt = _load_runtime_config(package_path)
+    path = rt.get("SRDF_PATH", "")
+    if path and os.path.isfile(path):
+        return path
+    return None
 
 
 def _runtime_value(package_path: str, key: str, default):
-    rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
     try:
-        with open(rt_yaml) as f:
-            rt = yaml.safe_load(f) or {}
+        rt = _load_runtime_config(package_path)
         return rt.get(key, default)
     except Exception:
         return default
@@ -40,6 +84,9 @@ def generate_launch_description():
         if terminal:
             terminal_prefix = f"{terminal} -e"
     launch_collision_gui = os.environ.get("ZEROERR_COLLISION_MONITOR_GUI", "0") == "1"
+    os.environ["ZEROERR_ROBOT_URDF"] = _urdf_path_from_runtime(
+        get_package_share_directory("zeroerr")
+    )
 
     moveit_config = (
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
@@ -47,6 +94,7 @@ def generate_launch_description():
             file_path="config/eRobo3.urdf.xacro",
             mappings={"robot_urdf": _urdf_path_from_runtime(get_package_share_directory("zeroerr"))},
         )
+        .robot_description_semantic(file_path=_srdf_path_from_runtime(get_package_share_directory("zeroerr")))
         .to_moveit_configs()
     )
 
@@ -182,7 +230,7 @@ def generate_launch_description():
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "urdf_path": _urdf_path_from_runtime(package_path),
             "base_link": "base_link",
-            "tip_link": "disk_link",
+            "tip_link": "tool0",
             "num_joints": 6,
             "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
             "filter_alpha": 0.7,

@@ -73,7 +73,7 @@ class ZeroErrCollisionMonitor(Node):
         self.declare_parameter("friction_velocity_deadband_rad_s", 0.01)
         self.declare_parameter("urdf_path", "")
         self.declare_parameter("base_link", "base_link")
-        self.declare_parameter("tip_link", "disk_link")
+        self.declare_parameter("tip_link", "tool0")
         self.declare_parameter("num_joints", 6)
         self.declare_parameter("external_torque_thresholds", [12.0, 12.0, 10.0, 8.0, 6.0, 5.0])
         self.declare_parameter("filter_alpha", 0.7)

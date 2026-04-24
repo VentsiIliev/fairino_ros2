@@ -1,0 +1,10 @@
+URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/welding/erob_arm_family_motor_masses.urdf
+SRDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/welding/eRobo3.srdf
+COLLISION_TIP_LINK: disk_link
+DEFAULT_WORKOBJECT:
+- 0
+- 0
+- 0
+- 0
+- 1.14
+- 15.83

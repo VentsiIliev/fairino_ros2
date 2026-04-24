@@ -1,17 +1,11 @@
 # Runtime backend identifier used by the shared runtime factory.
 ROBOT_BACKEND: zeroerr
 
+# Active robot profile. Profile-specific overrides live under config/<profile>/.
+ACTIVE_PROFILE: paint
+
 # Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: true
-
-# Default workobject/user frame [x, y, z, rx, ry, rz] in mm/degrees.
-DEFAULT_WORKOBJECT:
-- 0
-- 0
-- 0
-- 0
-- 1.14
-- 15.83
 
 # Number of controlled robot joints.
 NUM_JOINTS: 6
@@ -38,10 +32,11 @@ EE_LINK: ee_link
 WRIST_LINK: Link_6
 
 # Link treated as the collision/tool tip for safety monitoring.
-COLLISION_TIP_LINK: disk_link
+COLLISION_TIP_LINK: tool0
 
 # Robot URDF used by runtime helpers and dynamics/collision tools.
-URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf
+#URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf
+URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_small.urdf
 
 # FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
@@ -202,7 +197,7 @@ JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
 STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # Enables CSV torque logging.
-TORQUE_LOG_ENABLED: True
+TORQUE_LOG_ENABLED: False
 
 # CSV output path for torque logging.
 TORQUE_LOG_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/data/torque_sensor_log.csv

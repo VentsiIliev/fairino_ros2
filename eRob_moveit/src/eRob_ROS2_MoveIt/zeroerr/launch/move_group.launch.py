@@ -6,7 +6,7 @@ def generate_launch_description():
     moveit_config = (
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
         .planning_pipelines(
-            default_planning_pipeline="stomp",  # ТОВА ТРЯБВА ДА Е STOMP ТУК
+            default_planning_pipeline="pilz_industrial_motion_planner",  # ТОВА ТРЯБВА ДА Е STOMP ТУК
             pipelines=["ompl", "stomp", "pilz_industrial_motion_planner"]
         )
         .to_moveit_configs()

@@ -60,7 +60,7 @@
     <collision name="Link_1_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_1.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_1.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -72,7 +72,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_1.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_1.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -80,7 +80,7 @@
     <collision name="Link_2_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_2_extended.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_2_extended.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -92,7 +92,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_2_extended.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_2_extended.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -100,7 +100,7 @@
     <collision name="Link_3_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_3_extended.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_3_extended.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -112,7 +112,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_3_extended.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_3_extended.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -120,7 +120,7 @@
     <collision name="Link_4_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_4.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_4.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -132,7 +132,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_4.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_4.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -140,7 +140,7 @@
     <collision name="Link_5_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_5.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_5.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -152,7 +152,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_5.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_5.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -160,7 +160,7 @@
     <collision name="Link_6_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_6.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_6.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -172,7 +172,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="#ffffffff"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/Link_6.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/Link_6.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -185,7 +185,7 @@
     <collision name="base_link_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/base_link.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/base_link.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </collision>
     <inertial>
@@ -197,7 +197,7 @@
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
       <material name="base"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/base_link.stl" scale="1.00000 1.00000 1.00000"/>
+        <mesh filename="package://zeroerr/meshes/paint/base_link.stl" scale="1.00000 1.00000 1.00000"/>
       </geometry>
     </visual>
   </link>
@@ -221,7 +221,7 @@
     <visual name="ToolPointer_visual">
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/paint/ToolPointer.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="tool_material">
         <color rgba="0.7 0.7 0.7 1"/>
@@ -230,7 +230,7 @@
     <collision name="ToolPointer_collision">
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/paint/ToolPointer.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
     -->
@@ -257,7 +257,7 @@
     <collision name="TCP_collision">
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/paint/ToolPointer.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
     -->

@@ -169,6 +169,11 @@ def _config_package() -> str:
 
 def _runtime_yaml_path() -> Path | None:
     package_name = _config_package()
+    source_candidate = Path(
+        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/{package_name}/config/runtime.yaml"
+    )
+    if source_candidate.exists():
+        return source_candidate
 
     try:
         from ament_index_python.packages import get_package_share_directory
@@ -176,6 +181,24 @@ def _runtime_yaml_path() -> Path | None:
     except Exception:
         source_root = Path(__file__).resolve().parents[2]
         candidate = source_root / package_name / 'config' / 'runtime.yaml'
+        return candidate if candidate.exists() else None
+
+
+def _profile_runtime_yaml_path(profile: str) -> Path | None:
+    package_name = _config_package()
+    source_candidate = Path(
+        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/{package_name}/config/{profile}/runtime.yaml"
+    )
+    if source_candidate.exists():
+        return source_candidate
+
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidate = Path(get_package_share_directory(package_name)) / 'config' / profile / 'runtime.yaml'
+        return candidate if candidate.exists() else None
+    except Exception:
+        source_root = Path(__file__).resolve().parents[2]
+        candidate = source_root / package_name / 'config' / profile / 'runtime.yaml'
         return candidate if candidate.exists() else None
 
 
@@ -198,6 +221,19 @@ def _load_runtime_config() -> dict[str, Any]:
     with path.open('r', encoding='utf-8') as handle:
         loaded = yaml.safe_load(handle) or {}
     config = _merge(DEFAULTS, loaded)
+
+    profile = str(config.get('ACTIVE_PROFILE', '')).strip()
+    if profile:
+        profile_path = _profile_runtime_yaml_path(profile)
+        if not profile_path or not profile_path.exists():
+            raise RuntimeError(
+                f"Runtime config {path} requested ACTIVE_PROFILE '{profile}', "
+                "but no profile runtime.yaml was found"
+            )
+        with profile_path.open('r', encoding='utf-8') as handle:
+            profile_loaded = yaml.safe_load(handle) or {}
+        config = _merge(config, profile_loaded)
+
     missing = sorted(key for key in REQUIRED_KEYS if key not in config or config[key] in (None, ''))
     if missing:
         raise RuntimeError(

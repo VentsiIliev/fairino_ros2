@@ -431,7 +431,12 @@ class MoveItRobotBackend(IRobotBackend):
         if self.node is None:
             return None
 
-        data = self.node.get_latest_data()
+        # For live current-position queries, prefer the monitor's latest snapshot
+        # over the controller's 50 Hz stable store to avoid reporting lag.
+        if getattr(self.node, "monitor", None) is not None:
+            data = self.node.monitor.get_latest_data()
+        else:
+            data = self.node.get_latest_data()
         if data is None or 'cartesian' not in data:
             return None
 
