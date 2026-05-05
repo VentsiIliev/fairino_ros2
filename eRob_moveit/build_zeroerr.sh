@@ -19,6 +19,7 @@ source_setup() {
 }
 
 source_setup /opt/ros/rolling/setup.bash
+source_setup "${ROOT_WS_DIR}/install/local_setup.bash"
 
 cd "${ROOT_WS_DIR}"
 colcon build --packages-select erob_moveit_runtime zeroerr

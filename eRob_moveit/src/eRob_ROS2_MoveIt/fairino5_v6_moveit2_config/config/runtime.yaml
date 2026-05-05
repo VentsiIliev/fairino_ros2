@@ -4,6 +4,11 @@ ROBOT_BACKEND: fairino
 # Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: false
 
+# Global collision checking toggle. Set to false to disable all collision
+# avoidance (useful for painting/welding where tool may be in contact).
+# When false, all avoid_collisions parameters default to False.
+ENABLE_COLLISION_CHECKING: true
+
 # Number of controlled robot joints.
 NUM_JOINTS: 6
 
@@ -192,6 +197,18 @@ EXECUTOR_TIME_MIN_S: 5.0
 
 # Distance threshold for adding path approach behavior, in mm.
 PATH_APPROACH_THRESHOLD_MM: 100.0
+
+# Multi-waypoint Cartesian path interpolation density.
+# Larger values reduce MoveIt oversampling and speed up planning, but they also
+# make the planner follow the user anchors more coarsely between waypoints.
+PATH_EEF_STEP_SCALE: 1.8
+PATH_EEF_STEP_MIN_M: 0.008
+PATH_EEF_STEP_MAX_M: 0.025
+
+# Whether single-target Cartesian planning should first solve an IK-synchronized
+# start state from the requested start pose. This improves continuity in some
+# edge cases but adds noticeable latency to every blocking linear move.
+SINGLE_TARGET_USE_IK_SYNC_START_STATE: false
 
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: TOTG

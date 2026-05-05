@@ -27,6 +27,9 @@ Two separate colcon workspaces, stacked as underlay/overlay:
 # Build everything (3-step: fairino_msgs → base packages → overlay)
 ./quick_build.sh
 
+# Build only overlay packages (erob_moveit_runtime, zeroerr)
+./build_zeroerr.sh
+
 # Build a specific package (script routes to correct workspace automatically)
 ./quick_build.sh erob_moveit_runtime
 ./quick_build.sh fairino_hardware
@@ -36,6 +39,11 @@ source eRob_moveit/install/setup.bash
 ```
 
 Build order is enforced by `quick_build.sh`: `fairino_msgs` → base workspace → overlay packages. The overlay workspace sources the base `local_setup.bash` before building.
+
+**Important:** If you encounter `rosidl_default_generators` CMake errors, install the missing package:
+```bash
+sudo apt install -y ros-rolling-rosidl-default-generators
+```
 
 ### Launch
 

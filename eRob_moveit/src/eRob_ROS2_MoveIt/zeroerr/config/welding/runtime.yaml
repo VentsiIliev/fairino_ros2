@@ -8,3 +8,6 @@ DEFAULT_WORKOBJECT:
 - 0
 - 1.14
 - 15.83
+
+# Welding: disable collision checking (tool contacts workpiece)
+ENABLE_COLLISION_CHECKING: false

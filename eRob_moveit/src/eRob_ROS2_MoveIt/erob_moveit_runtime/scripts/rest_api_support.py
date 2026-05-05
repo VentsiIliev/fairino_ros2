@@ -66,11 +66,6 @@ def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction
     return axis, direction, step, vel, acc
 
 
-def _normalize_scaling(value, default_value: float) -> float:
-    numeric = float(default_value if value is None else value)
-    return numeric / 100.0 if numeric > 1.0 else numeric
-
-
 def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
     position = payload.get("position")
@@ -112,8 +107,10 @@ def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
         "rx": payload.get("rx", payload.get("rx_degrees")),
         "ry": payload.get("ry", payload.get("ry_degrees")),
         "rz": payload.get("rz", payload.get("rz_degrees")),
-        "vel": _normalize_scaling(payload.get("vel"), config.DEFAULT_VEL_SCALING),
-        "acc": _normalize_scaling(payload.get("acc"), config.DEFAULT_ACC_SCALING),
+        # Keep platform-provided 0-100 percentages intact here.
+        # The backend normalizes once before passing values into MoveIt.
+        "vel": payload.get("vel", config.DEFAULT_VEL_PERCENT),
+        "acc": payload.get("acc", config.DEFAULT_ACC_PERCENT),
         "blocking": payload.get("blocking", False),
         "trajectory_optimizer": trajectory_optimizer,
         "orientation_mode": orientation_mode,

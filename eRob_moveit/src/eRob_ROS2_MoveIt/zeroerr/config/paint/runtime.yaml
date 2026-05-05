@@ -8,3 +8,6 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0.27
 - -91.26
+
+# Painting: disable collision checking (tool contacts workpiece)
+ENABLE_COLLISION_CHECKING: false

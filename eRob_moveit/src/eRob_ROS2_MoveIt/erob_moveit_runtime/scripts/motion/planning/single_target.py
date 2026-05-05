@@ -20,6 +20,7 @@ from .trajectory_planner import (
 from moveit_msgs.msg import RobotState
 from .planner_utils import _set_result, _require_cart_path_service, _to_pose_list
 import numpy as np
+from time import perf_counter
 import config
 
 
@@ -92,11 +93,26 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
     return waypoints
 
 
-def _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_scaling):
+def _execute_jacobian_move(
+    robot_controller,
+    poses,
+    delta_m,
+    vel_scaling,
+    acc_scaling,
+    *,
+    avoid_collisions=True,
+):
     robot_controller.get_logger().info(
         f'[Single Point] Sub-5mm ({delta_m * 1000:.3f}mm): Jacobian direct (skip MoveIt)')
     gen = _begin_execution(robot_controller)
-    ok = _jacobian_fallback_move(robot_controller, poses, vel_scaling, acc_scaling, gen)
+    ok = _jacobian_fallback_move(
+        robot_controller,
+        poses,
+        vel_scaling,
+        acc_scaling,
+        gen,
+        avoid_collisions=avoid_collisions,
+    )
     if not ok:
         _set_result(robot_controller, -8)
         return -8
@@ -104,6 +120,9 @@ def _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_sc
 
 
 def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
+    robot_controller._last_cartesian_request_started_at = perf_counter()
+    robot_controller._last_cartesian_request_kind = 'single_target'
+    robot_controller._last_cartesian_request_waypoints = len(getattr(request, 'waypoints', []) or [])
     gen = _begin_execution(robot_controller)
     future = robot_controller.request_cartesian_path(request)
     future.add_done_callback(
@@ -195,7 +214,9 @@ def _resolve_start_state(robot_controller, start_pose):
 
 
 def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling,
-                          tool_transform=None, avoid_collisions=True, trajectory_optimizer_name=None):
+                          tool_transform=None, avoid_collisions=None, trajectory_optimizer_name=None):
+    from config import resolve_avoid_collisions
+    avoid_collisions = resolve_avoid_collisions(avoid_collisions)
     dx = target_wp[0] - start_wp[0]
     dy = target_wp[1] - start_wp[1]
     dz = target_wp[2] - start_wp[2]
@@ -230,7 +251,14 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
     robot_controller.set_last_full_waypoints(poses)
 
     if delta_m < 0.005 and orientation_delta_deg <= _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG:
-        return _execute_jacobian_move(robot_controller, poses, delta_m, vel_scaling, acc_scaling)
+        return _execute_jacobian_move(
+            robot_controller,
+            poses,
+            delta_m,
+            vel_scaling,
+            acc_scaling,
+            avoid_collisions=avoid_collisions,
+        )
 
     if delta_m < 0.005:
         robot_controller.get_logger().info(
@@ -248,7 +276,13 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
             f'[Single Point] Motion stack not ready: {robot_controller.get_motion_stack_fault_reason()}')
         return config.MOTION_ERROR_HARDWARE_NOT_READY
 
-    start_state = _resolve_start_state(robot_controller, poses[0])
+    if bool(getattr(config, "SINGLE_TARGET_USE_IK_SYNC_START_STATE", False)):
+        start_state = _resolve_start_state(robot_controller, poses[0])
+    else:
+        start_state = None
+        robot_controller.get_logger().info(
+            '[Single Point] Skipping IK-synchronized start state for Cartesian planning'
+        )
     _dispatch_moveit(
         robot_controller,
         _build_cartesian_request(
@@ -268,8 +302,10 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
 
 
 def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                        tool_transform=None, avoid_collisions=True, trajectory_optimizer=None):
+                        tool_transform=None, avoid_collisions=None, trajectory_optimizer=None):
+    from config import resolve_avoid_collisions
     robot_controller.force_safety_update()
+    avoid_collisions = resolve_avoid_collisions(avoid_collisions)
 
     current_cart = robot_controller.prev_cartesian
     if current_cart is None or len(current_cart) < 6:

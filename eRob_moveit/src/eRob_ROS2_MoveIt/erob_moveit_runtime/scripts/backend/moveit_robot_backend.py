@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 from enums import RobotAxis, Direction
+from time import perf_counter
+from threading import Event
+import time
 import config
 from backend.i_robot_backend import IRobotBackend
 
@@ -68,6 +71,7 @@ class MoveItRobotBackend(IRobotBackend):
     # ---------------- Movement Methods ----------------
 
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
+        started_at = perf_counter()
         if len(position) != 6:
             return -1
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
@@ -94,6 +98,10 @@ class MoveItRobotBackend(IRobotBackend):
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
                 ))
+            self.node.get_logger().info(
+                f"[TIMING] backend_move_linear submitted blocking={bool(blocking)} "
+                f"result={result} elapsed_s={perf_counter() - started_at:.3f}"
+            )
             if result != 0:
                 if blocking and result > 0:
                     task_id = getattr(self.node, 'last_submitted_task_id', None)
@@ -109,6 +117,7 @@ class MoveItRobotBackend(IRobotBackend):
 
             if blocking:
                 import time
+                wait_started_at = perf_counter()
                 deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
                 while self.node.is_executing and time.time() < deadline:
                     time.sleep(0.05)
@@ -116,6 +125,10 @@ class MoveItRobotBackend(IRobotBackend):
                     self.node.get_logger().error(
                         f"[MOVE_LINER] Timed out waiting for move to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s")
                     return -1
+                self.node.get_logger().info(
+                    f"[TIMING] backend_move_linear blocking_wait elapsed_s={perf_counter() - wait_started_at:.3f} "
+                    f"total_elapsed_s={perf_counter() - started_at:.3f}"
+                )
                 return self.node.last_move_result
 
             return 0  # non-blocking: fire-and-forget
@@ -124,6 +137,7 @@ class MoveItRobotBackend(IRobotBackend):
             return -1
 
     def move_ptp(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
+        started_at = perf_counter()
         if len(position) != 6:
             return -1
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
@@ -144,6 +158,10 @@ class MoveItRobotBackend(IRobotBackend):
                 tool_transform=tool_transform,
                 trajectory_optimizer=trajectory_optimizer,
             ))
+            self.node.get_logger().info(
+                f"[TIMING] backend_move_ptp submitted blocking={bool(blocking)} "
+                f"result={result} elapsed_s={perf_counter() - started_at:.3f}"
+            )
             if result != 0:
                 if blocking and result > 0:
                     task_id = getattr(self.node, 'last_submitted_task_id', None)
@@ -159,6 +177,7 @@ class MoveItRobotBackend(IRobotBackend):
 
             if blocking:
                 import time
+                wait_started_at = perf_counter()
                 deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
                 while self.node.is_executing and time.time() < deadline:
                     time.sleep(0.05)
@@ -166,6 +185,10 @@ class MoveItRobotBackend(IRobotBackend):
                     self.node.get_logger().error(
                         f"[MOVE_PTP] Timed out waiting for move to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s")
                     return -1
+                self.node.get_logger().info(
+                    f"[TIMING] backend_move_ptp blocking_wait elapsed_s={perf_counter() - wait_started_at:.3f} "
+                    f"total_elapsed_s={perf_counter() - started_at:.3f}"
+                )
                 return self.node.last_move_result
 
             return 0
@@ -185,6 +208,7 @@ class MoveItRobotBackend(IRobotBackend):
         trajectory_optimizer=None,
         orientation_mode="constant",
     ):
+        started_at = perf_counter()
         """Execute path with automatic selection of best execution strategy.
 
         Strategy selection based on path density:
@@ -203,8 +227,14 @@ class MoveItRobotBackend(IRobotBackend):
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
-
+ 
         orientation_mode = str(orientation_mode or "constant").strip().lower()
+        # Convert velocity/acceleration from percentage (0-100) to scaling factor (0.0-1.0)
+        vel_scale = max(0.0, min(1.0, vel / 100.0))
+        acc_scale = max(0.0, min(1.0, acc / 100.0))
+        self.node.get_logger().info(
+            f"[EXECUTE_PATH] Velocity conversion: {vel}% → {vel_scale:.3f} scaling, {acc}% → {acc_scale:.3f} scaling"
+        )
         waypoints_pose = []
 
         for wp in path:
@@ -288,10 +318,10 @@ class MoveItRobotBackend(IRobotBackend):
                 "[EXECUTE_PATH] Single waypoint detected — delegating to single-target planner"
             )
             from motion.strategies import SingleTargetStrategy
-
+ 
             target = waypoints_pose[0]
             result = self.node.execute(
-                SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel, acc)
+                SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel_scale, acc_scale)
             )
         else:
             selected_optimizer = trajectory_optimizer
@@ -299,7 +329,7 @@ class MoveItRobotBackend(IRobotBackend):
                 selected_optimizer = str(
                     getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
                 ).strip().upper() or None
-
+ 
             # ✅ ALWAYS use compute_cartesian_path for consistency
             # Controller's spline interpolation + TOTG provides smooth continuous motion
             self.node.get_logger().info(
@@ -313,12 +343,16 @@ class MoveItRobotBackend(IRobotBackend):
                     rx,
                     ry,
                     rz,
-                    vel,
-                    acc,
+                    vel_scale,
+                    acc_scale,
                     selected_optimizer,
                     orientation_mode=orientation_mode,
                 )
             )
+        self.node.get_logger().info(
+            f"[TIMING] backend_execute_path submitted blocking={bool(blocking)} "
+            f"result={result} waypoints={len(waypoints_pose)} elapsed_s={perf_counter() - started_at:.3f}"
+        )
 
         # Return error code if planning/submission failed
         if result < 0:
@@ -342,6 +376,7 @@ class MoveItRobotBackend(IRobotBackend):
         # result == 0: executing immediately
         if blocking:
             import time
+            wait_started_at = perf_counter()
             deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
             while self.node.is_executing and time.time() < deadline:
                 time.sleep(0.05)
@@ -349,6 +384,10 @@ class MoveItRobotBackend(IRobotBackend):
                 self.node.get_logger().error(
                     f"[EXECUTE_PATH] Timed out waiting for move to complete after {config.BLOCKING_MOVE_TIMEOUT_S}s")
                 return -1
+            self.node.get_logger().info(
+                f"[TIMING] backend_execute_path blocking_wait elapsed_s={perf_counter() - wait_started_at:.3f} "
+                f"total_elapsed_s={perf_counter() - started_at:.3f}"
+            )
             return self.node.last_move_result
 
         return 0
@@ -563,7 +602,8 @@ class MoveItRobotBackend(IRobotBackend):
 
         try:
             x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
-            avoid_collisions = bool(getattr(config, 'JOG_AVOID_COLLISIONS', True))
+            from config import resolve_avoid_collisions
+            avoid_collisions = resolve_avoid_collisions(getattr(config, 'JOG_AVOID_COLLISIONS', True))
             result = self.node.send_cartesian_goal(
                 x_b, y_b, z_b, rx_b, ry_b, rz_b,
                 vel_scale=vel_scale, acc_scale=acc_scale,

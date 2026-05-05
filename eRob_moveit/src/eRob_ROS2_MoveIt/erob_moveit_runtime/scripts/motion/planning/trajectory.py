@@ -6,6 +6,7 @@ Multi-Waypoint Cartesian Path
 from copy import deepcopy
 from builtin_interfaces.msg import Duration
 from moveit_msgs.msg import RobotState
+from time import perf_counter
 from .trajectory_planner import _cartesian_path_response, _build_cartesian_request, _apply_time_param
 from .trajectory_planner import (
     _joint6_path_stats,
@@ -81,9 +82,17 @@ def _execute_path(
     orientation_mode="constant",
     skip_approach_check=False,
 ):
-    robot_controller.set_last_requested_delta_mm(0.0)
     num_waypoints = len(waypoints_mm)
-    robot_controller.get_logger().info(f'[EXECUTE_PATH] Received path with {num_waypoints} waypoints')
+    # Compute actual path length for partial-fraction diagnostics
+    total_dist_mm = 0.0
+    if num_waypoints > 1:
+        for i in range(1, num_waypoints):
+            dx = waypoints_mm[i][0] - waypoints_mm[i-1][0]
+            dy = waypoints_mm[i][1] - waypoints_mm[i-1][1]
+            dz = waypoints_mm[i][2] - waypoints_mm[i-1][2]
+            total_dist_mm += (dx*dx + dy*dy + dz*dz) ** 0.5
+    robot_controller.set_last_requested_delta_mm(total_dist_mm)
+    robot_controller.get_logger().info(f'[EXECUTE_PATH] Received path with {num_waypoints} waypoints, total_dist={total_dist_mm:.1f}mm')
     robot_controller.get_logger().info(f'[EXECUTE_PATH] Transforming waypoints from work object to base frame')
 
     if not _require_cart_path_service(robot_controller, 'EXECUTE_PATH'):
@@ -112,7 +121,10 @@ def _execute_path(
     #   avg spacing 12.0 mm -> 16.2 mm -> clamped to 15.0 mm
     #   avg spacing 20.0 mm -> 27.0 mm -> clamped to 15.0 mm
     avg_spacing_m = avg_spacing_mm / 1000.0
-    max_step = float(np.clip(avg_spacing_m * 1.35, 0.005, 0.015))
+    max_step_scale = float(getattr(config, 'PATH_EEF_STEP_SCALE', 2.5))
+    max_step_min_m = float(getattr(config, 'PATH_EEF_STEP_MIN_M', 0.005))
+    max_step_max_m = float(getattr(config, 'PATH_EEF_STEP_MAX_M', 0.03))
+    max_step = float(np.clip(avg_spacing_m * max_step_scale, max_step_min_m, max_step_max_m))
 
     # Build EE poses + safety check every waypoint
     orientation_mode = str(orientation_mode or "constant").strip().lower()
@@ -126,7 +138,7 @@ def _execute_path(
     else:
         waypoints_6d = [[wp[0], wp[1], wp[2], rx, ry, rz] for wp in waypoints_mm]
     waypoints, err = _to_pose_list(robot_controller, waypoints_6d, robot_controller.T_tool,
-                                   check_last_only=False)
+                                   check_last_only=True)
     if err:
         return err
 
@@ -145,7 +157,16 @@ def _execute_path(
 
     # Normal flow: robot is close to first waypoint, plan from current state
     request = _build_cartesian_request(robot_controller, waypoints, max_step, vel_scaling, acc_scaling)
-    robot_controller.get_logger().info(f'[Cartesian Path] max_step={max_step*1000:.1f}mm')
+    robot_controller.get_logger().info(
+        '[Cartesian Path] '
+        f'max_step={max_step * 1000:.1f}mm '
+        f'(avg_spacing={avg_spacing_mm:.2f}mm, '
+        f'scale={max_step_scale:.2f}, '
+        f'clamp=[{max_step_min_m * 1000:.1f}, {max_step_max_m * 1000:.1f}]mm)'
+    )
+    robot_controller._last_cartesian_request_started_at = perf_counter()
+    robot_controller._last_cartesian_request_kind = 'path'
+    robot_controller._last_cartesian_request_waypoints = len(waypoints)
     gen = _begin_execution(robot_controller)
     future = robot_controller.request_cartesian_path(request)
     future.add_done_callback(

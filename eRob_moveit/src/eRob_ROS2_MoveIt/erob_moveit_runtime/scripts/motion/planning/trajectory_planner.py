@@ -29,6 +29,7 @@ Data flow for sub-5mm Jacobian fallback:
 """
 from copy import deepcopy
 import math
+from time import perf_counter
 
 from .planner_utils import _set_result, _is_stale, _begin_execution
 from .planner_diagnostics import _diagnose_fk_mismatch, _diagnose_start_collision
@@ -712,7 +713,11 @@ def _log_cartesian_pose_diagnostics(robot_controller, label: str, pose, seed_joi
             _try_finish_classification()
         return _on_ik_done
 
-    for avoid_collisions in (False, True):
+    from config import resolve_avoid_collisions
+    collision_enabled = resolve_avoid_collisions(True)  # Check if global collision checking is on
+    avoid_collision_values = (False, True) if collision_enabled else (False,)
+
+    for avoid_collisions in avoid_collision_values:
         try:
             future = _request_cartesian_diag_ik_async(
                 robot_controller,
@@ -908,15 +913,32 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
         log_prefix:  log tag, e.g. '[Cartesian Path]' or '[EXECUTE_PATH]'
     """
     prepared_trajectory = _sanitize_optimizer_start(rc, trajectory, log_prefix)
+    optimizer_started_at = perf_counter()
 
     def on_done(result):
         if _is_stale(rc, gen):
             rc.get_logger().info(f'{log_prefix} Stale TOTG response discarded')
             return
         if result is None:
+            rc.get_logger().info(
+                f'[TIMING] optimizer kind={getattr(rc, "_last_cartesian_request_kind", "unknown")} '
+                f'optimizer={trajectory_optimizer_name or getattr(getattr(rc, "trajectory_optimizer", None), "__class__", type("", (), {})).__name__} '
+                f'success=false elapsed_s={perf_counter() - optimizer_started_at:.3f}'
+            )
             rc.get_logger().error(f'{log_prefix} Time parameterization failed')
             _set_result(rc, -7)
             return
+        total_from_request = None
+        request_started_at = getattr(rc, '_last_cartesian_request_started_at', None)
+        if request_started_at is not None:
+            total_from_request = perf_counter() - float(request_started_at)
+        rc.get_logger().info(
+            f'[TIMING] optimizer kind={getattr(rc, "_last_cartesian_request_kind", "unknown")} '
+            f'optimizer={trajectory_optimizer_name or getattr(getattr(rc, "trajectory_optimizer", None), "__class__", type("", (), {})).__name__} '
+            f'success=true traj_points={len(getattr(getattr(result, "joint_trajectory", None), "points", []) or [])} '
+            f'elapsed_s={perf_counter() - optimizer_started_at:.3f}'
+            + (f' total_from_request_s={total_from_request:.3f}' if total_from_request is not None else '')
+        )
         with rc.lock:
             rc.last_move_result = 0
         _send_trajectory_to_controller(rc, result.joint_trajectory)
@@ -932,7 +954,7 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
 
 
 def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
-                              start_state=None, avoid_collisions=True):
+                              start_state=None, avoid_collisions=False):
     req = GetCartesianPath.Request()
     req.header.frame_id               = config.BASE_LINK
     req.group_name                    = config.PLANNING_GROUP
@@ -997,8 +1019,22 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         return
 
     try:
+        callback_started = perf_counter()
         response = future.result()
         fraction = response.fraction
+        request_started_at = getattr(robot_controller, '_last_cartesian_request_started_at', None)
+        planning_elapsed_s = None
+        if request_started_at is not None:
+            planning_elapsed_s = callback_started - float(request_started_at)
+        solution = getattr(response, 'solution', None)
+        joint_trajectory = getattr(solution, 'joint_trajectory', None) if solution is not None else None
+        num_pts = len(getattr(joint_trajectory, 'points', []) or [])
+        robot_controller.get_logger().info(
+            f'[TIMING] cartesian_plan kind={getattr(robot_controller, "_last_cartesian_request_kind", "unknown")} '
+            f'waypoints={getattr(robot_controller, "_last_cartesian_request_waypoints", "unknown")} '
+            f'fraction={fraction:.4f} traj_points={num_pts} '
+            + (f'elapsed_s={planning_elapsed_s:.3f}' if planning_elapsed_s is not None else 'elapsed_s=unknown')
+        )
         robot_controller.get_logger().info(f'[Cartesian Path] Path computed: {fraction * 100:.1f}% successful')
 
         # ── Partial / zero path ──────────────────────────────────────────────

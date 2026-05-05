@@ -25,7 +25,15 @@ def _smoothstep5(t):
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
 
-def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scaling, generation):
+def _jacobian_fallback_move(
+    robot_controller,
+    waypoints,
+    vel_scaling,
+    acc_scaling,
+    generation,
+    *,
+    avoid_collisions=True,
+):
     """
     Execute a short Cartesian move directly via Jacobian pseudoinverse, bypassing
     the full MoveIt compute_cartesian_path pipeline.
@@ -43,6 +51,7 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
         5. Clamp to JACOBIAN_MAX_JOINT_STEP to prevent large jumps
         6. Build a 2-point JointTrajectory (start → start+Δq)
         7. Collision-check midpoint + endpoint in parallel before executing
+           unless the caller explicitly disabled collision checking for this move
 
     After building the trajectory, control is passed to _jacobian_check_and_execute()
     which handles the async collision checks and final dispatch.
@@ -227,11 +236,24 @@ def _jacobian_fallback_move(robot_controller, waypoints, vel_scaling, acc_scalin
     traj_msg.points = traj_points
 
     # Hand off to parallel collision check before executing
-    _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generation)
+    _jacobian_check_and_execute(
+        robot_controller,
+        joint_names,
+        traj_msg,
+        generation,
+        avoid_collisions=avoid_collisions,
+    )
     return True
 
 
-def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generation):
+def _jacobian_check_and_execute(
+    robot_controller,
+    joint_names,
+    traj_msg,
+    generation,
+    *,
+    avoid_collisions=True,
+):
     """
     Validate a Jacobian trajectory by collision-checking midpoint and endpoint in
     parallel, then execute only if both states are valid.
@@ -265,6 +287,15 @@ def _jacobian_check_and_execute(robot_controller, joint_names, traj_msg, generat
     from moveit_msgs.msg import RobotState
     from sensor_msgs.msg import JointState
     import threading
+
+    if not avoid_collisions:
+        robot_controller.get_logger().info(
+            '[JacMove] Collision checking disabled for this request — skipping midpoint/target validity checks'
+        )
+        with robot_controller.lock:
+            robot_controller.last_move_result = 0
+        _send_trajectory_to_controller(robot_controller, traj_msg)
+        return
 
     # Reuse a single persistent validity client
     state_validity_client = robot_controller.get_state_validity_client()

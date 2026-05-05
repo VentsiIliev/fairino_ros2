@@ -7,6 +7,11 @@ ACTIVE_PROFILE: paint
 # Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: true
 
+# Global collision checking toggle. Set to false to disable all collision
+# avoidance (useful for painting/welding where tool may be in contact).
+# When false, all avoid_collisions parameters default to False.
+ENABLE_COLLISION_CHECKING: true
+
 # Number of controlled robot joints.
 NUM_JOINTS: 6
 
@@ -90,10 +95,10 @@ PTP_MIN_INTERPOLATION_SEGMENTS: 8
 PTP_MAX_INTERPOLATION_SEGMENTS: 80
 
 # Speed used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.2
+EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.8
 
 # Acceleration used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 1.5
+EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 2.5
 
 # Tool transforms keyed by tool name, [x, y, z, rx, ry, rz] in mm/degrees.
 TOOL_REGISTRY:

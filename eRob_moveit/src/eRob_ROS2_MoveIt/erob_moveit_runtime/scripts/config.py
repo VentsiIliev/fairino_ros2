@@ -44,7 +44,7 @@ DEFAULTS = {
     'DEFAULT_ORIENTATION': [180.0, 0.0, 0.0],
     'PTP_LOCK_ORIENTATION_TOL_DEG': 2.0,
     'PTP_LOCKED_PATH_MAX_DRIFT_DEG': 2.0,
-    'PTP_ORIENTED_PATH_MAX_DEVIATION_DEG': 5.0,
+    'PTP_ORIENTED_PATH_MAX_DEVIATION_DEG': 10.0,
     'PTP_WRIST_PENALTY_START_DEG': 45.0,
     'PTP_MAX_WRIST_DELTA_DEG': 160.0,
     'PTP_LOCKED_MAX_WRIST_DELTA_DEG': 120.0,
@@ -54,6 +54,7 @@ DEFAULTS = {
     'PTP_MAX_INTERPOLATION_SEGMENTS': 80,
     'JOG_AVOID_COLLISIONS': True,
     'JOG_BLOCKING_TIMEOUT_S': 5.0,
+    'ENABLE_COLLISION_CHECKING': True,  # Global toggle for all collision avoidance
     'CARTESIAN_MIN_FRACTION': 1,
     'CARTESIAN_FAILURE_DIAGNOSTICS_ENABLED': False,
     'JACOBIAN_FALLBACK_MM': 0.1,
@@ -83,6 +84,9 @@ DEFAULTS = {
     'OPTIMIZER_START_ALIGN_TOL_RAD': 0.002,
     'OPTIMIZER_START_MERGE_TOL_RAD': 0.002,
     'PATH_APPROACH_THRESHOLD_MM': 100.0,
+    'PATH_EEF_STEP_SCALE': 1.35,
+    'PATH_EEF_STEP_MIN_M': 0.005,
+    'PATH_EEF_STEP_MAX_M': 0.015,
     'TRAJECTORY_OPTIMIZER': 'TOTG',
     'PATH_TRAJECTORY_OPTIMIZER': 'RUCKIG',
     'RUCKIG_SAMPLE_DT_S': 0.008,
@@ -247,3 +251,16 @@ def _load_runtime_config() -> dict[str, Any]:
 
 _CONFIG = _load_runtime_config()
 globals().update(_CONFIG)
+
+
+def resolve_avoid_collisions(requested_value):
+    """Resolve avoid_collisions flag based on global ENABLE_COLLISION_CHECKING.
+
+    If ENABLE_COLLISION_CHECKING is False, always return False (disable all collision checks).
+    Otherwise, use the requested_value (which may be None for default behavior).
+    """
+    if not _CONFIG.get('ENABLE_COLLISION_CHECKING', True):
+        return False
+    if requested_value is None:
+        return _CONFIG.get('JOG_AVOID_COLLISIONS', True)
+    return requested_value

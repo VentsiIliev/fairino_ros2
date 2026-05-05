@@ -544,12 +544,13 @@ class RobotController(Node):
         return self._motion.execute(strategy, queue_if_busy=queue_if_busy)
 
     def send_cartesian_goal(self, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
-                            tool_transform=None, queue_if_busy=True, avoid_collisions=True):
+                            tool_transform=None, queue_if_busy=True, avoid_collisions=None):
         from motion.strategies import SingleTargetStrategy
+        from config import resolve_avoid_collisions
         return self.execute(SingleTargetStrategy(
             x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
             tool_transform=tool_transform,
-            avoid_collisions=avoid_collisions), queue_if_busy=queue_if_busy)
+            avoid_collisions=resolve_avoid_collisions(avoid_collisions)), queue_if_busy=queue_if_busy)
 
     def _collision_monitor_config_callback(self, msg: String):
         try:
