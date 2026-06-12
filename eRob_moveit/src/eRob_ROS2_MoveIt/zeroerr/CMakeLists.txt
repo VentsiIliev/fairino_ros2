@@ -11,6 +11,7 @@ install(PROGRAMS
   scripts/zeroerr_torque_threshold_fit.py
   scripts/zeroerr_collision_monitor.py
   scripts/zeroerr_collision_monitor_gui.py
+  scripts/zeroerr_joint_jog_gui.py
   scripts/zeroerr_runtime.py
   DESTINATION lib/${PROJECT_NAME}
 )

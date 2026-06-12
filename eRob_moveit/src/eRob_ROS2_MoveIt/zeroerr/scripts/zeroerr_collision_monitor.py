@@ -328,6 +328,7 @@ class ZeroErrCollisionMonitor(Node):
                             ],
                             "friction_velocity_deadband_rad_s": self._friction_velocity_deadband_rad_s,
                             "dynamics_estimator_mode": self._dynamics_estimator_mode,
+                            "use_inverse_dynamics": self._use_inverse_dynamics,
                         },
                         indent=2,
                         sort_keys=True,
@@ -386,8 +387,23 @@ class ZeroErrCollisionMonitor(Node):
                     self._reinitialize_estimator()
                 updated = True
 
+        use_inverse_dynamics = payload.get("use_inverse_dynamics")
+        if use_inverse_dynamics is not None:
+            enabled = bool(use_inverse_dynamics)
+            if enabled != self._use_inverse_dynamics:
+                self._use_inverse_dynamics = enabled
+                self._clear_dynamics_collision_state()
+                self._reinitialize_estimator()
+            updated = True
 
         return updated
+
+    def _clear_dynamics_collision_state(self) -> None:
+        for joint_name in JOINT_NAMES[: self._slave_count]:
+            self._dynamics_cycles[joint_name] = 0
+            self._dynamics_latched[joint_name] = False
+            self._dynamics_active[joint_name] = False
+            self._dynamics_reason[joint_name] = ""
 
     def _load_persisted_config(self) -> None:
         path = self._collision_config_path
@@ -519,10 +535,6 @@ class ZeroErrCollisionMonitor(Node):
                         "[ZeroErrCollisionMonitor] dynamics collision suspect on "
                         f"{joint_name}: external_torque={external_torque:.2f} >= "
                         f"{self._external_torque_thresholds[joint_name]:.2f}"
-                        f"ADD MOTION STOP LOGIC HERE!"
-
-
-
                     )
                 continue
 
@@ -1088,6 +1100,7 @@ class ZeroErrCollisionMonitor(Node):
                     for joint_name in JOINT_NAMES[: self._slave_count]
                 ],
                 "dynamics_estimator_mode": self._dynamics_estimator_mode,
+                "use_inverse_dynamics": self._use_inverse_dynamics,
                 "friction_coulomb_nm": [
                     self._friction_coulomb_nm[joint_name]
                     for joint_name in JOINT_NAMES[: self._slave_count]

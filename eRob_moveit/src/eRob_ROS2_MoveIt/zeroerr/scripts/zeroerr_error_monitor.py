@@ -61,6 +61,8 @@ class SlaveFaultState:
     error_register: int
     history_count: Optional[int]
     latest_history: Optional[int]
+    target_position: Optional[int] = None
+    actual_position: Optional[int] = None
 
 
 class ZeroErrErrorMonitor(Node):
@@ -163,6 +165,8 @@ class ZeroErrErrorMonitor(Node):
                     error_register=error_register,
                     history_count=cached_state.history_count,
                     latest_history=cached_state.latest_history,
+                    target_position=cached_state.target_position,
+                    actual_position=cached_state.actual_position,
                 )
             )
             return
@@ -184,11 +188,19 @@ class ZeroErrErrorMonitor(Node):
         done_cb,
     ) -> None:
         if history_count is None:
-            done_cb(SlaveFaultState(error_code, error_register, None, None))
+            self._read_position_snapshot_if_needed(
+                slave_position,
+                SlaveFaultState(error_code, error_register, None, None),
+                done_cb,
+            )
             return
 
         if history_count <= 0:
-            done_cb(SlaveFaultState(error_code, error_register, history_count, None))
+            self._read_position_snapshot_if_needed(
+                slave_position,
+                SlaveFaultState(error_code, error_register, history_count, None),
+                done_cb,
+            )
             return
 
         self._read_sdo(
@@ -196,7 +208,54 @@ class ZeroErrErrorMonitor(Node):
             0x1003,
             1,
             "uint32",
-            lambda latest: done_cb(SlaveFaultState(error_code, error_register, history_count, latest)),
+            lambda latest: self._read_position_snapshot_if_needed(
+                slave_position,
+                SlaveFaultState(error_code, error_register, history_count, latest),
+                done_cb,
+            ),
+        )
+
+    def _read_position_snapshot_if_needed(
+        self,
+        slave_position: int,
+        state: SlaveFaultState,
+        done_cb,
+    ) -> None:
+        latest_16 = state.latest_history & 0xFFFF if state.latest_history is not None else 0
+        if state.error_code != 0x8400 and latest_16 != 0x8400:
+            done_cb(state)
+            return
+
+        self._read_sdo(
+            slave_position,
+            0x607A,
+            0,
+            "int32",
+            lambda target: self._after_target_position(slave_position, state, target, done_cb),
+        )
+
+    def _after_target_position(
+        self,
+        slave_position: int,
+        state: SlaveFaultState,
+        target_position: Optional[int],
+        done_cb,
+    ) -> None:
+        self._read_sdo(
+            slave_position,
+            0x6064,
+            0,
+            "int32",
+            lambda actual: done_cb(
+                SlaveFaultState(
+                    error_code=state.error_code,
+                    error_register=state.error_register,
+                    history_count=state.history_count,
+                    latest_history=state.latest_history,
+                    target_position=target_position,
+                    actual_position=actual,
+                )
+            ),
         )
 
     def _read_sdo(self, slave_position: int, index: int, subindex: int, data_type: str, done_cb) -> None:
@@ -253,32 +312,33 @@ class ZeroErrErrorMonitor(Node):
         error_text = self._translate_error_code(current.error_code)
         register_text = self._translate_error_register(current.error_register)
         history_text = self._translate_history(current.history_count, current.latest_history)
+        position_text = self._translate_position_snapshot(current)
         has_active_fault = current.error_code != 0
         has_error_bits = current.error_register != 0
 
         if not has_active_fault and not has_error_bits:
             if self._log_zero_state_once and not self._zero_state_logged and previous is None:
                 self.get_logger().info(
-                    f"{prefix}: no active fault, error_register=0x00, {history_text}"
+                    f"{prefix}: no active fault, error_register=0x00, {history_text}{position_text}"
                 )
                 self._zero_state_logged = True
             elif previous is not None and (previous.error_code != 0 or previous.error_register != 0):
                 self.get_logger().info(
                     f"{prefix}: fault cleared, error_code=0x0000 ({error_text}), "
-                    f"error_register=0x00 ({register_text}), {history_text}"
+                    f"error_register=0x00 ({register_text}), {history_text}{position_text}"
                 )
             return
 
         if not has_active_fault and has_error_bits:
             self.get_logger().warning(
                 f"{prefix}: no active drive error, but error_register=0x{current.error_register:02X} "
-                f"({register_text}), {history_text}"
+                f"({register_text}), {history_text}{position_text}"
             )
             return
 
         self.get_logger().error(
             f"{prefix}: error_code=0x{current.error_code:04X} ({error_text}), "
-            f"error_register=0x{current.error_register:02X} ({register_text}), {history_text}"
+            f"error_register=0x{current.error_register:02X} ({register_text}), {history_text}{position_text}"
         )
 
     def _translate_error_code(self, code: int) -> str:
@@ -306,6 +366,16 @@ class ZeroErrErrorMonitor(Node):
         latest_16 = latest & 0xFFFF
         latest_text = self._translate_error_code(latest_16)
         return f"history_count={count}, latest_history=0x{latest:08X} (0x{latest_16:04X}: {latest_text})"
+
+    def _translate_position_snapshot(self, state: SlaveFaultState) -> str:
+        if state.target_position is None or state.actual_position is None:
+            return ""
+        delta = state.target_position - state.actual_position
+        return (
+            f", target_position_0x607A={state.target_position}, "
+            f"actual_position_0x6064={state.actual_position}, "
+            f"target_minus_actual={delta}"
+        )
 
 
 def main(args=None) -> None:

@@ -224,7 +224,7 @@ def generate_launch_description():
             "poll_period_sec": 0.005,
             "confirm_cycles": 3,
             "print_table": False,
-            "use_inverse_dynamics": True,
+            "use_inverse_dynamics": False,
             "dynamics_estimator_mode": "momentum_observer",
             "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],

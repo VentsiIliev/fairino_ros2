@@ -1,6 +1,7 @@
 {
   "confirm_cycles": 1,
   "dynamics_estimator_mode": "momentum_observer",
+  "use_inverse_dynamics": false,
   "effort_thresholds": [
     NaN,
     NaN,

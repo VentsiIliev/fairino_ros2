@@ -40,6 +40,40 @@ from motion.execution.trajectory_optimizer import build_trajectory_optimizer
 from motion.planning.planner_context import PlannerContext
 from motion.planning.planner_support_service import PlannerSupportService
 from utils.workspace_extractor import _extract_workspace_from_urdf
+
+ZEROERR_DRIVE_ERROR_CODES = {
+    0x0000: "no active drive error",
+    0x2214: "motor current is over current",
+    0x2250: "sum of motor three phase current exceeds the limit",
+    0x2341: "U phase over current",
+    0x2342: "V phase over current",
+    0x2343: "W phase over current",
+    0x3210: "bus voltage is overvoltage",
+    0x3220: "bus voltage is undervoltage",
+    0x4110: "power component temperature is too high",
+    0x7121: "blocked motor rotation",
+    0x7305: "load-side single-turn encoder read data is incorrect",
+    0x7306: "motor-side single-turn encoder read data is incorrect",
+    0x730D: "battery warning error",
+    0x730F: "battery low voltage",
+    0x7311: "sampled motor-end position error exceeds the limit",
+    0x7314: "battery reconnection detected; reset load-side encoder to clear alarm",
+    0x7315: "sampled load-side position error exceeds the limit",
+    0x7350: "motor-side encoder type is not supported",
+    0x7374: "multi-turn position error",
+    0x7377: "reset pin error detected",
+    0x737A: "load-side single-turn encoder startup error",
+    0x737E: "motor-side single-turn encoder startup error",
+    0x8130: "CAN heartbeat error",
+    0x8400: "velocity error exceeds the limit value",
+    0x8401: "motor velocity exceeds the limit value",
+    0x8500: "position error exceeds the limit value",
+    0xA000: "master station offline / EtherCAT communication abnormal",
+    0xF004: "EtherCAT initialization error",
+    0xF005: "STO function is activated",
+    0xF006: "multi-turn circle count error",
+    0xF008: "bus voltage below minimum allowable supply voltage (19V)",
+}
 # All tunable constants live in config.py
 from config import (
     SAFETY_MARGIN_M as SAFETY_MARGIN,
@@ -215,7 +249,7 @@ class RobotController(Node):
         self._ethercat_motion_fault = False
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
-        self._collision_monitor_fault_enabled = False
+        self._collision_monitor_fault_enabled = True
         self._collision_fault_lock = Lock()
         self._collision_motion_fault = False
         self._collision_fault_reason = ""
@@ -585,12 +619,18 @@ class RobotController(Node):
             if index is None:
                 continue
             following_error = None
+            external_torque = None
+            torque_sensor = None
             contact_latched = False
             dynamics_latched = False
 
             for name, value in zip(interface_value.interface_names, interface_value.values):
                 if name == 'following_error_actual' and np.isfinite(value):
                     following_error = abs(float(value))
+                elif name == 'external_torque' and np.isfinite(value):
+                    external_torque = abs(float(value))
+                elif name == 'torque_sensor' and np.isfinite(value):
+                    torque_sensor = float(value)
                 elif name == 'contact_latched':
                     contact_latched = bool(value >= 0.5)
                 elif name == 'dynamics_latched':
@@ -599,21 +639,25 @@ class RobotController(Node):
             if not (contact_latched or dynamics_latched):
                 continue
 
-            threshold = float(thresholds[index]) if index < thresholds.size else 0.0
             threshold = float(thresholds[index]) if index < thresholds.size else np.nan
 
             if not np.isfinite(threshold):
-                continue
-
-
-            if following_error is None or following_error < threshold:
-                continue
+                threshold = float("nan")
 
             collision_type = 'dynamics_latched' if dynamics_latched else 'contact_latched'
-            reason = (
-                f'Collision detected on {joint_name}: {collision_type}=true and '
-                f'following_error={following_error:.1f} >= threshold={threshold:.1f}'
-            )
+            context = []
+            if following_error is not None:
+                if np.isfinite(threshold):
+                    context.append(f'following_error={following_error:.1f} threshold={threshold:.1f}')
+                else:
+                    context.append(f'following_error={following_error:.1f}')
+            if external_torque is not None:
+                context.append(f'external_torque={external_torque:.2f}')
+            if torque_sensor is not None:
+                context.append(f'torque_sensor={torque_sensor:.2f}')
+            reason = f'Collision detected on {joint_name}: {collision_type}=true'
+            if context:
+                reason += ' | ' + ', '.join(context)
             self._trip_collision_motion_fault(reason)
 
             return
@@ -806,7 +850,7 @@ class RobotController(Node):
             disable_set_command=np.zeros(NUM_JOINTS, dtype=float),
         )
         switch_ok = self._set_drag_controller_ownership(False)
-        self._send_hold_position_trajectory()
+        self._send_hold_position_trajectory(reason='drag mode disabled')
         self.get_logger().info(
             f"[DragMode] Disable result | enabled=False controller_switch_ok={bool(switch_ok)}"
         )
@@ -1179,17 +1223,21 @@ class RobotController(Node):
     def _format_drive_state_snapshot(self, label: str):
         with self._drag_lock:
             statusword = [int(round(value)) for value in self._drag_statusword.tolist()]
+            error_code = [int(round(value)) for value in self._drag_error_code.tolist()]
             mode_display = [int(round(value)) for value in self._drag_mode_display.tolist()]
             effort = [round(value, 3) for value in self._drive_effort_actual.tolist()]
             motor_current = [round(value, 3) for value in self._drive_motor_actual_current.tolist()]
             following_error = [round(value, 3) for value in self._drive_following_error_actual.tolist()]
         statusword_bits = [self._decode_statusword_bits(value) for value in statusword]
         statusword_state = [self._decode_statusword_state(value) for value in statusword]
+        error_text = [self._decode_drive_error_code(value) for value in error_code]
         return (
             f'[DriveState] {label}: '
             f'statusword={statusword} '
             f'status_state={statusword_state} '
             f'status_bits={statusword_bits} '
+            f'error_code={[f"0x{value:04X}" for value in error_code]} '
+            f'error_text={error_text} '
             f'mode_display={mode_display} '
             f'effort={effort} '
             f'motor_actual_current={motor_current} '
@@ -1226,6 +1274,9 @@ class RobotController(Node):
             0x0008: 'fault',
         }
         return state_map.get(state_code, f'unknown(0x{state_code:04X})')
+
+    def _decode_drive_error_code(self, error_code: int) -> str:
+        return ZEROERR_DRIVE_ERROR_CODES.get(error_code, "unknown drive error code")
 
     def _maybe_log_drive_state_snapshot(self, label: str):
         with self._drag_lock:
@@ -1404,24 +1455,53 @@ class RobotController(Node):
             raw[index] = torque_nm[index] * raw_per_nm
         return raw
 
-    def _send_hold_position_trajectory(self) -> None:
+    def _send_hold_position_trajectory(self, reason: str = 'hold position') -> bool:
         joint_state = self.current_joint_state
-        if joint_state is None or len(joint_state.position) < NUM_JOINTS:
-            return
+        if joint_state is None:
+            self.get_logger().warning(f'[HoldPosition] Cannot send hold trajectory for {reason}: no joint state yet')
+            return False
+        state_names = list(getattr(joint_state, 'name', []) or [])
+        state_positions = list(getattr(joint_state, 'position', []) or [])
+        if not state_names or len(state_names) != len(state_positions):
+            self.get_logger().warning(
+                f'[HoldPosition] Cannot send hold trajectory for {reason}: invalid joint state '
+                f'names={len(state_names)} positions={len(state_positions)}'
+            )
+            return False
+        position_by_name = {
+            name: position
+            for name, position in zip(state_names, state_positions)
+        }
+        missing = [name for name in JOINT_NAMES if name not in position_by_name]
+        if missing:
+            self.get_logger().warning(
+                f'[HoldPosition] Cannot send hold trajectory for {reason}: missing joints {missing}'
+            )
+            return False
+        positions = [float(position_by_name[name]) for name in JOINT_NAMES]
         traj = JointTrajectory()
         traj.joint_names = list(JOINT_NAMES)
         traj.header.stamp = self.get_clock().now().to_msg()
 
         start_pt = JointTrajectoryPoint()
-        start_pt.positions = list(joint_state.position[:NUM_JOINTS])
+        start_pt.positions = list(positions)
+        start_pt.velocities = [0.0] * NUM_JOINTS
+        start_pt.accelerations = [0.0] * NUM_JOINTS
         start_pt.time_from_start = Duration(sec=0, nanosec=0)
 
         end_pt = JointTrajectoryPoint()
-        end_pt.positions = list(joint_state.position[:NUM_JOINTS])
+        end_pt.positions = list(positions)
+        end_pt.velocities = [0.0] * NUM_JOINTS
+        end_pt.accelerations = [0.0] * NUM_JOINTS
         end_pt.time_from_start = Duration(sec=0, nanosec=200_000_000)
 
         traj.points = [start_pt, end_pt]
+        self.get_logger().warning(
+            f'[HoldPosition] Sending hold trajectory for {reason}: '
+            f'positions={[round(value, 6) for value in positions]}'
+        )
         self.trajectory_executor.send_trajectory_to_controller(traj)
+        return True
 
     def _ethercat_watchdog_loop(self):
         while self._ethercat_watchdog_running:

@@ -168,6 +168,28 @@ def generate_launch_description():
     )
     demo_ld.add_action(ethercat_sdo_server)
 
+    zeroerr_error_monitor = Node(
+        package="zeroerr",
+        executable="zeroerr_error_monitor.py",
+        name="zeroerr_error_monitor",
+        output="screen",
+        emulate_tty=True,
+        parameters=[{
+            "master_id": 0,
+            "slave_count": 6,
+            "poll_period_sec": 1.0,
+            "log_zero_state_once": True,
+        }],
+    )
+    demo_ld.add_action(
+        RegisterEventHandler(
+            OnProcessStart(
+                target_action=ethercat_sdo_server,
+                on_start=[TimerAction(period=2.0, actions=[zeroerr_error_monitor])],
+            )
+        )
+    )
+
     drag_effort_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drag_effort_controller"],
         output="screen",
@@ -245,7 +267,7 @@ def generate_launch_description():
             "poll_period_sec": 0.005,
             "confirm_cycles": 3,
             "print_table": False,
-            "use_inverse_dynamics": True,
+            "use_inverse_dynamics": False,
             "dynamics_estimator_mode": "momentum_observer",
             "static_torque_bias_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
