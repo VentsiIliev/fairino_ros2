@@ -50,6 +50,14 @@ ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 
+
+# Cartesian path interpolation density for multi-waypoint paint paths.
+# Larger values reduce MoveIt oversampling and planning time; verify paint path
+# accuracy after changing these because MoveIt interpolates more coarsely.
+PATH_EEF_STEP_SCALE: 1.5
+PATH_EEF_STEP_MIN_M: 0.006
+PATH_EEF_STEP_MAX_M: 0.018
+
 # Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
 # moves probe failed poses with IK/collision/branch variants. Keep false during
 # normal operation because it adds extra MoveIt service calls and noisy logs.
