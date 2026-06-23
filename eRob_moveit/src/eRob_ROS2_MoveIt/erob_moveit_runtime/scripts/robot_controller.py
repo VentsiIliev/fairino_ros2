@@ -12,7 +12,7 @@ from builtin_interfaces.msg import Duration
 from controller_manager_msgs.srv import ListControllers, SwitchController
 from control_msgs.msg import DynamicJointState
 from erob_moveit_runtime.srv import ApplyIPP
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Point, Pose, TransformStamped
 from moveit_msgs.msg import MotionSequenceItem, MotionSequenceRequest
 from moveit_msgs.srv import GetCartesianPath, GetMotionSequence
 from control_msgs.action import FollowJointTrajectory
@@ -24,6 +24,7 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from action_msgs.msg import GoalStatusArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from visualization_msgs.msg import Marker, MarkerArray
 import config
 from backend.runtime_adapter import create_runtime_adapter
 
@@ -83,6 +84,7 @@ from config import (
     MOTION_QUEUE_MAX_SIZE,
     MARKER_PUBLISH_INTERVAL_S,
     TOPIC_ROBOT_STATUS,
+    TOPIC_ACTIVE_TOOL_MARKERS,
     STATUS_PUBLISH_RATE_HZ,
     WS_EXTRACT_MAX_RETRIES,
     WS_EXTRACT_RETRY_DELAY,
@@ -150,6 +152,16 @@ class RobotController(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.active_tcp_tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        self.active_tool_marker_pub = self.create_publisher(
+            MarkerArray,
+            TOPIC_ACTIVE_TOOL_MARKERS,
+            10,
+        )
+        self.active_tool_marker_timer = self.create_timer(
+            0.1,
+            self._publish_active_tool_visualization,
+        )
 
         # Motion queue for sequential execution
         self.motion_queue = MotionQueue(max_size=MOTION_QUEUE_MAX_SIZE)
@@ -169,6 +181,8 @@ class RobotController(Node):
         self.tcp_loaded = False
         self.T_ee_link = None
         self.T_tool = np.eye(4)
+        self.T_monitor_tool = np.eye(4)
+        self.active_tool_name = "TOOL_0"
         self.runtime_adapter = create_runtime_adapter()
         # Reduced frequency - TCP transform typically available quickly
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
@@ -430,6 +444,152 @@ class RobotController(Node):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
 
+    def _publish_active_tool_visualization(self):
+        """Publish the current active TCP as a TF frame and RViz marker."""
+        if self.monitor is None:
+            return
+        pose = self.monitor.get_cartesian_position()
+        source_pose = self.monitor.get_cartesian_source_position()
+        if pose is None or len(pose) < 6:
+            return
+
+        try:
+            T_tcp = TransformationUtils.pose_to_transform(pose[:6])
+            q = TransformationUtils.matrix_to_quaternion(T_tcp[:3, :3])
+            T_source = None
+            if source_pose is not None and len(source_pose) >= 6:
+                T_source = TransformationUtils.pose_to_transform(source_pose[:6])
+        except Exception as exc:
+            self.get_logger().warning(f"[ActiveTCP] Failed to build marker pose: {exc}")
+            return
+
+        now = self.get_clock().now().to_msg()
+        self._publish_active_tcp_tf(now, T_tcp, q)
+        self._publish_active_tcp_markers(now, T_tcp, q, T_source)
+
+    def _publish_active_tcp_tf(self, stamp, T_tcp, quaternion):
+        transform = TransformStamped()
+        transform.header.stamp = stamp
+        transform.header.frame_id = BASE_LINK
+        transform.child_frame_id = "active_tcp"
+        transform.transform.translation.x = float(T_tcp[0, 3])
+        transform.transform.translation.y = float(T_tcp[1, 3])
+        transform.transform.translation.z = float(T_tcp[2, 3])
+        transform.transform.rotation.x = float(quaternion[0])
+        transform.transform.rotation.y = float(quaternion[1])
+        transform.transform.rotation.z = float(quaternion[2])
+        transform.transform.rotation.w = float(quaternion[3])
+        self.active_tcp_tf_broadcaster.sendTransform(transform)
+
+    def _publish_active_tcp_markers(self, stamp, T_tcp, quaternion, T_source=None):
+        marker_array = MarkerArray()
+        origin = T_tcp[:3, 3]
+        rotation = T_tcp[:3, :3]
+        source_origin = T_source[:3, 3] if T_source is not None else None
+        if source_origin is not None:
+            marker_array.markers.append(self._make_source_sphere_marker(stamp, source_origin))
+            marker_array.markers.append(self._make_source_to_tcp_marker(stamp, source_origin, origin))
+        marker_array.markers.append(self._make_tcp_sphere_marker(stamp, origin, quaternion))
+        marker_array.markers.extend(self._make_tcp_axis_markers(stamp, origin, rotation))
+        marker_array.markers.append(self._make_tcp_text_marker(stamp, origin, source_origin))
+        self.active_tool_marker_pub.publish(marker_array)
+
+    def _base_marker(self, stamp, marker_id: int, marker_type: int) -> Marker:
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = BASE_LINK
+        marker.ns = "active_tcp"
+        marker.id = marker_id
+        marker.type = marker_type
+        marker.action = Marker.ADD
+        marker.lifetime = Duration(sec=0, nanosec=500_000_000)
+        return marker
+
+    def _make_tcp_sphere_marker(self, stamp, origin, quaternion) -> Marker:
+        marker = self._base_marker(stamp, 0, Marker.SPHERE)
+        marker.pose.position.x = float(origin[0])
+        marker.pose.position.y = float(origin[1])
+        marker.pose.position.z = float(origin[2])
+        marker.pose.orientation.x = float(quaternion[0])
+        marker.pose.orientation.y = float(quaternion[1])
+        marker.pose.orientation.z = float(quaternion[2])
+        marker.pose.orientation.w = float(quaternion[3])
+        marker.scale.x = 0.018
+        marker.scale.y = 0.018
+        marker.scale.z = 0.018
+        marker.color.r = 1.0
+        marker.color.g = 0.85
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        return marker
+
+    def _make_source_sphere_marker(self, stamp, origin) -> Marker:
+        marker = self._base_marker(stamp, 5, Marker.SPHERE)
+        marker.pose.position.x = float(origin[0])
+        marker.pose.position.y = float(origin[1])
+        marker.pose.position.z = float(origin[2])
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.012
+        marker.scale.y = 0.012
+        marker.scale.z = 0.012
+        marker.color.r = 0.85
+        marker.color.g = 0.85
+        marker.color.b = 0.85
+        marker.color.a = 1.0
+        return marker
+
+    def _make_source_to_tcp_marker(self, stamp, source_origin, tcp_origin) -> Marker:
+        marker = self._base_marker(stamp, 6, Marker.LINE_STRIP)
+        marker.points = [
+            Point(x=float(source_origin[0]), y=float(source_origin[1]), z=float(source_origin[2])),
+            Point(x=float(tcp_origin[0]), y=float(tcp_origin[1]), z=float(tcp_origin[2])),
+        ]
+        marker.scale.x = 0.003
+        marker.color.r = 1.0
+        marker.color.g = 0.85
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        return marker
+
+    def _make_tcp_axis_markers(self, stamp, origin, rotation) -> list[Marker]:
+        colors = (
+            (1.0, 0.1, 0.1),
+            (0.1, 0.9, 0.1),
+            (0.2, 0.4, 1.0),
+        )
+        markers = []
+        for index, color in enumerate(colors):
+            marker = self._base_marker(stamp, index + 1, Marker.LINE_STRIP)
+            start = Point(x=float(origin[0]), y=float(origin[1]), z=float(origin[2]))
+            end_vec = origin + rotation[:, index] * 0.06
+            end = Point(x=float(end_vec[0]), y=float(end_vec[1]), z=float(end_vec[2]))
+            marker.points = [start, end]
+            marker.scale.x = 0.004
+            marker.color.r = color[0]
+            marker.color.g = color[1]
+            marker.color.b = color[2]
+            marker.color.a = 1.0
+            markers.append(marker)
+        return markers
+
+    def _make_tcp_text_marker(self, stamp, origin, source_origin=None) -> Marker:
+        marker = self._base_marker(stamp, 4, Marker.TEXT_VIEW_FACING)
+        marker.pose.position.x = float(origin[0])
+        marker.pose.position.y = float(origin[1])
+        marker.pose.position.z = float(origin[2] + 0.04)
+        marker.pose.orientation.w = 1.0
+        marker.scale.z = 0.03
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 1.0
+        marker.color.a = 1.0
+        if source_origin is None:
+            marker.text = f"{self.active_tool_name} active TCP"
+        else:
+            offset_mm = float(np.linalg.norm((origin - source_origin) * 1000.0))
+            marker.text = f"{self.active_tool_name} active TCP ({offset_mm:.1f} mm)"
+        return marker
+
     def enable_safety_walls(self) -> dict:
         """Enable safety walls and republish them to MoveIt/RViz."""
         self.safety_manager.enable_safety()
@@ -459,6 +619,16 @@ class RobotController(Node):
         """Return the transform RobotMonitor should apply on /cartesian_position."""
         return self.runtime_adapter.get_monitor_tcp_transform(self)
 
+    def _build_registry_tool_transform(self, tool_name):
+        offset = tool_registry[tool_name]
+        xyz = offset[:3]
+        rpy = offset[3:]
+
+        T_tool = np.eye(4)
+        T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
+        T_tool[:3, 3] = np.array(xyz) / 1000.0
+        return T_tool
+
     def get_tool_transform(self, tool_id):
         """
         Get tool transform matrix from tool ID.
@@ -474,16 +644,8 @@ class RobotController(Node):
             self.get_logger().warning(f"Tool {tool_name} not found in registry, using TOOL_0")
             tool_name = "TOOL_0"
 
-        offset = tool_registry[tool_name]
-        xyz = offset[:3]
-        rpy = offset[3:]
-
-        # Build tool offset transform (ee_link → TCP)
-        T_tool = np.eye(4)
-        T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
-        T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
-
-        return T_tool
+        registry_transform = self._build_registry_tool_transform(tool_name)
+        return self.runtime_adapter.get_planning_tool_transform(self, registry_transform)
 
     def set_tool(self, tool_name):
         """
@@ -494,19 +656,15 @@ class RobotController(Node):
             self.get_logger().warning(f"Tool {tool_name} not found in registry")
             return
 
-        offset = tool_registry[tool_name]
-        xyz = offset[:3]
-        rpy = offset[3:]
-
-        # Build tool offset transform (ee_link → TCP)
-        self.T_tool = np.eye(4)
-        self.T_tool[:3, :3] = TransformationUtils.euler_to_matrix(rpy)
-        self.T_tool[:3, 3] = np.array(xyz) / 1000.0  # Convert mm to meters
+        registry_transform = self._build_registry_tool_transform(tool_name)
+        self.T_monitor_tool = registry_transform
+        self.T_tool = self.runtime_adapter.get_planning_tool_transform(self, registry_transform)
         self.planner_context.T_tool = self.T_tool
+        self.active_tool_name = tool_name
 
         # Monitor transform depends on the backend's /cartesian_position source frame.
         if self.monitor is not None:
-            self.monitor.T_tcp = self._get_monitor_tcp_transform()
+            self.monitor.set_tcp_transform(self._get_monitor_tcp_transform())
             self.get_logger().info(f"Switched active tool to {tool_name}")
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")
@@ -520,6 +678,11 @@ class RobotController(Node):
                 # Load the wrist3 -> ee_link fixed transform from TF/URDF.
                 self.T_ee_link = self.get_tcp_transform(WRIST_LINK, EE_LINK)
                 print(f"[RobotController] Loaded ee_link transform:\n{self.T_ee_link}")
+                if self.active_tool_name in tool_registry:
+                    registry_transform = self._build_registry_tool_transform(self.active_tool_name)
+                    self.T_monitor_tool = registry_transform
+                    self.T_tool = self.runtime_adapter.get_planning_tool_transform(self, registry_transform)
+                    self.planner_context.T_tool = self.T_tool
 
                 # Monitor receives backend-specific Cartesian source frames:
                 # - ZeroErr/generic: ee_link pose

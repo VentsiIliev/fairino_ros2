@@ -1,5 +1,6 @@
 URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/paint/erob_arm_small.urdf
 SRDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/paint/eRobo3.srdf
+CARTESIAN_SOURCE_LINK: ee_link
 COLLISION_TIP_LINK: tool0
 DEFAULT_WORKOBJECT:
 - 0
@@ -12,3 +13,22 @@ DEFAULT_WORKOBJECT:
 
 # Painting: disable collision checking (tool contacts workpiece)
 ENABLE_COLLISION_CHECKING: false
+
+TOOL_REGISTRY:
+  TOOL_0:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  TOOL_1:
+  - -0.0246085740023
+  - -0.634028443519
+  - 155.642721597
+  - 0
+  - 0
+  - 0
+TOOL_ID_MAP:
+  0: TOOL_0
+  1: TOOL_1

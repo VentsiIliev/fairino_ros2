@@ -114,6 +114,18 @@ Visualization Manager:
         Value: /safety_walls
       Value: true
       Queue Size: 100
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Active TCP
+      Namespaces:
+        active_tcp: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /active_tool_markers
+      Value: true
+      Queue Size: 10
   Global Options:
     Fixed Frame: base_link
   Tools:

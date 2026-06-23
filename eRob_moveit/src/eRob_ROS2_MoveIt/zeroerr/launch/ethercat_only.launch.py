@@ -230,7 +230,7 @@ def generate_launch_description():
             "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             "urdf_path": _urdf_path_from_runtime(package_path),
             "base_link": "base_link",
-            "tip_link": "tool0",
+            "tip_link": _runtime_value(package_path, "COLLISION_TIP_LINK", "tool0"),
             "num_joints": 6,
             "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
             "filter_alpha": 0.7,

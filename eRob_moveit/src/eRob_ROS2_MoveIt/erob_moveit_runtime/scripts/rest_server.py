@@ -292,6 +292,75 @@ def start_rest_server(
             return jsonify({"error": "Failed to get position"}), 500
         return jsonify({"position": pos})
 
+    @app.route("/position/flange", methods=["GET"])
+    def get_flange_position():
+        pos = robot.get_current_flange_position()
+        if pos is None:
+            return jsonify({"error": "Failed to get flange position"}), 500
+        return jsonify({"success": True, "position": pos})
+
+    @app.route("/tool/registry", methods=["GET"])
+    def get_tool_registry():
+        return jsonify({"success": True, **config.get_tool_registry_snapshot()})
+
+    @app.route("/tool/active", methods=["GET"])
+    def get_active_tool():
+        return jsonify({
+            "success": True,
+            "tool_name": getattr(node, "active_tool_name", "TOOL_0"),
+        })
+
+    @app.route("/tool/active", methods=["POST"])
+    def set_active_tool():
+        try:
+            payload = request.json or {}
+            if "tool_id" in payload:
+                tool_name = config.resolve_tool_name(payload.get("tool_id"))
+            else:
+                tool_name = str(payload.get("name") or payload.get("tool_name") or "").strip()
+                if not tool_name:
+                    raise ValueError("tool_id or tool_name is required")
+            node.set_tool(tool_name)
+            return jsonify({
+                "success": True,
+                "tool_name": getattr(node, "active_tool_name", tool_name),
+            })
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            traceback_text = traceback.format_exc()
+            node.get_logger().error(
+                "REST /tool/active exception: "
+                f"{exc}\n{traceback_text}"
+            )
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.route("/tool/registry/<int:tool_id>", methods=["POST"])
+    def update_tool_registry(tool_id):
+        try:
+            payload = request.json or {}
+            transform = payload.get("transform")
+            name = payload.get("name")
+            persist = bool(payload.get("persist", False))
+            snapshot = config.update_tool_registry(
+                tool_id=tool_id,
+                name=name,
+                transform=transform,
+                persist=persist,
+            )
+            if getattr(node, "active_tool_name", None) == config.resolve_tool_name(tool_id):
+                node.set_tool(config.resolve_tool_name(tool_id))
+            return jsonify({"success": True, **snapshot})
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            traceback_text = traceback.format_exc()
+            node.get_logger().error(
+                "REST /tool/registry exception: "
+                f"{exc}\n{traceback_text}"
+            )
+            return jsonify({"success": False, "error": str(exc)}), 500
+
     @app.route("/reachability/pose", methods=["POST"])
     def validate_pose():
         try:

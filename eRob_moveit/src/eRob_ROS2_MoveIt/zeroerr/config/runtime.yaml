@@ -36,6 +36,11 @@ EE_LINK: ee_link
 
 # Wrist link used by diagnostics and wrist-specific logic.
 WRIST_LINK: Link_6
+x
+# TF link published on /cartesian_position before runtime tool transforms.
+# Keep separate from EE_LINK so MoveIt can plan with ee_link while current-pose
+# reporting and TCP calibration can use the physical tool/flange reference.
+CARTESIAN_SOURCE_LINK: ee_link
 
 # Link treated as the collision/tool tip for safety monitoring.
 COLLISION_TIP_LINK: tool0
@@ -54,9 +59,14 @@ TRAJECTORY_OPTIMIZER: RUCKIG
 # Cartesian path interpolation density for multi-waypoint paint paths.
 # Larger values reduce MoveIt oversampling and planning time; verify paint path
 # accuracy after changing these because MoveIt interpolates more coarsely.
-PATH_EEF_STEP_SCALE: 1.5
-PATH_EEF_STEP_MIN_M: 0.006
-PATH_EEF_STEP_MAX_M: 0.018
+PATH_EEF_STEP_SCALE: 3.0
+PATH_EEF_STEP_MIN_M: 0.012
+PATH_EEF_STEP_MAX_M: 0.050
+PATH_WAYPOINT_SIMPLIFY_ENABLED: false
+PATH_WAYPOINT_SIMPLIFY_POSITION_TOL_MM: 0.35
+PATH_WAYPOINT_SIMPLIFY_ORIENTATION_TOL_DEG: 0.35
+PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 30.0
+PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 1.0
 
 # Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
 # moves probe failed poses with IK/collision/branch variants. Keep false during
@@ -104,10 +114,10 @@ PTP_MIN_INTERPOLATION_SEGMENTS: 8
 PTP_MAX_INTERPOLATION_SEGMENTS: 80
 
 # Speed used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.8
+EXECUTOR_POST_UNWIND_SPEED_RAD_S: 2.5
 
 # Acceleration used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 2.5
+EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 3.5
 
 # Tool transforms keyed by tool name, [x, y, z, rx, ry, rz] in mm/degrees.
 TOOL_REGISTRY:

@@ -62,6 +62,7 @@ class RobotMonitor:
         self._stable_timer = None
 
         self.T_tcp = tcp_transform if tcp_transform is not None else np.eye(4)
+        self._last_source_transform = None
 
         self.cart_pos_sub = self.node.create_subscription(
             PoseStamped,
@@ -148,13 +149,25 @@ class RobotMonitor:
         T_ee[:3, :3] = ee_rot_matrix
         T_ee[:3, 3] = ee_pos
 
-        T_tcp = T_ee @ self.T_tcp
+        self._last_source_transform = T_ee
+        self._update_cartesian_from_source()
 
+    def set_tcp_transform(self, tcp_transform):
+        self.T_tcp = tcp_transform if tcp_transform is not None else np.eye(4)
+        self._update_cartesian_from_source()
+
+    def _update_cartesian_from_source(self):
+        if self._last_source_transform is None:
+            return
+
+        source_pos = self._last_source_transform[:3, 3] * 1000.0
+        source_euler_deg = TransformationUtils.matrix_to_euler(self._last_source_transform[:3, :3])
+        self.latest_data['cartesian_source'] = np.concatenate([source_pos, source_euler_deg])
+
+        T_tcp = self._last_source_transform @ self.T_tcp
         tcp_pos = T_tcp[:3, 3] * 1000.0
         tcp_euler_deg = TransformationUtils.matrix_to_euler(T_tcp[:3, :3])
-
-        cart_pos = np.concatenate([tcp_pos, tcp_euler_deg])
-        self.latest_data['cartesian'] = cart_pos
+        self.latest_data['cartesian'] = np.concatenate([tcp_pos, tcp_euler_deg])
 
     def _cartesian_velocity_callback(self, msg: TwistStamped):
 
@@ -360,6 +373,18 @@ class RobotMonitor:
             np.array: [x, y, z, rx, ry, rz] or None
         """
         return self.latest_data.get('cartesian')
+
+    def get_cartesian_source_position(self):
+        """
+        Get current unmodified Cartesian source position.
+
+        For Fairino this is the flange pose reported by the native controller.
+        For generic/ZeroErr backends this is the pose published on /cartesian_position.
+
+        Returns:
+            np.array: [x, y, z, rx, ry, rz] or None
+        """
+        return self.latest_data.get('cartesian_source')
 
     def get_cartesian_velocity(self):
         """

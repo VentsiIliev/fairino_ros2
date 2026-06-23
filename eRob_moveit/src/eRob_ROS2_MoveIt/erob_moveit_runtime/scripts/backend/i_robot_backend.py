@@ -44,6 +44,9 @@ class IRobotBackend(ABC):
     def get_current_position(self): ...
 
     @abstractmethod
+    def get_current_flange_position(self): ...
+
+    @abstractmethod
     def get_current_velocity(self): ...
 
     @abstractmethod

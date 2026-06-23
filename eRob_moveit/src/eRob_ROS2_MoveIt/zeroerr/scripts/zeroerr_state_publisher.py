@@ -2,7 +2,7 @@
 """
 ZeroErr State Publisher
 =======================
-Publishes Cartesian position by looking up the 'ee_link' frame in 'base_link'
+Publishes Cartesian position by looking up the configured source frame in 'base_link'
 via TF2, which is populated by the standard robot_state_publisher node from
 /joint_states + URDF.
 
@@ -24,14 +24,19 @@ from tf2_ros import LookupException, ConnectivityException, ExtrapolationExcepti
 
 
 _BASE_FRAME = 'base_link'
-_TCP_FRAME  = 'ee_link'
+_DEFAULT_SOURCE_FRAME = 'ee_link'
 
 
 class ZeroErrStatePublisher(CartesianPublisherBase):
-    """Cartesian source: TF2 lookup of 'ee_link' in 'base_link' (URDF-consistent)."""
+    """Cartesian source: TF2 lookup of the configured source frame in 'base_link'."""
 
     def __init__(self) -> None:
         super().__init__('zeroerr_state_publisher')
+        self.declare_parameter('cartesian_source_link', _DEFAULT_SOURCE_FRAME)
+        self._source_frame = str(
+            self.get_parameter('cartesian_source_link').value
+            or _DEFAULT_SOURCE_FRAME
+        )
 
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
@@ -39,13 +44,13 @@ class ZeroErrStatePublisher(CartesianPublisherBase):
 
         self.get_logger().info(
             f'[ZeroErrStatePublisher] Cartesian source: TF2 '
-            f'{_BASE_FRAME} ← {_TCP_FRAME}')
+            f'{_BASE_FRAME} ← {self._source_frame}')
 
     def _get_cartesian_pose(self) -> Optional[PoseStamped]:
         try:
             t = self._tf_buffer.lookup_transform(
                 _BASE_FRAME,
-                _TCP_FRAME,
+                self._source_frame,
                 rclpy.time.Time(),          # latest available
             )
             self._tf_warn_logged = False
@@ -68,7 +73,7 @@ class ZeroErrStatePublisher(CartesianPublisherBase):
             if not self._tf_warn_logged:
                 self.get_logger().warning(
                     f'[ZeroErrStatePublisher] TF2 lookup failed '
-                    f'({_BASE_FRAME}←{_TCP_FRAME}): {exc}')
+                    f'({_BASE_FRAME}←{self._source_frame}): {exc}')
                 self._tf_warn_logged = True
             return None
 

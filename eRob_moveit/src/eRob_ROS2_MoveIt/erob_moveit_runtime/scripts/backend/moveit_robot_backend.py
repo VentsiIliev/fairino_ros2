@@ -492,6 +492,29 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"get_current_position error: {e}")
             return None
 
+    def get_current_flange_position(self):
+        """
+        Retrieves the current unmodified Cartesian source pose.
+
+        For Fairino this is the robot flange pose reported by the native
+        controller before ee_link/tool transforms are applied by RobotMonitor.
+
+        Returns:
+            list: Current flange/source pose [x, y, z, rx, ry, rz] in mm/degrees or None on error
+        """
+        if self.node is None or getattr(self.node, "monitor", None) is None:
+            return None
+
+        data = self.node.monitor.get_latest_data()
+        if data is None or 'cartesian_source' not in data:
+            return None
+
+        try:
+            return data['cartesian_source'].tolist()
+        except Exception as e:
+            print(f"get_current_flange_position error: {e}")
+            return None
+
     def get_current_velocity(self):
         """
         Retrieves the current Cartesian velocity.

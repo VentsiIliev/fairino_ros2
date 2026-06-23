@@ -23,6 +23,7 @@ DEFAULTS = {
     'TOPIC_JOINT_ACCELERATION': '/joint_acceleration',
     'TOPIC_PLANNING_SCENE': '/planning_scene',
     'TOPIC_SAFETY_WALLS': '/safety_walls',
+    'TOPIC_ACTIVE_TOOL_MARKERS': '/active_tool_markers',
     'SERVICE_CARTESIAN_PATH': '/compute_cartesian_path',
     'SERVICE_IK': '/compute_ik',
     'SERVICE_FK': '/compute_fk',
@@ -36,6 +37,7 @@ DEFAULTS = {
     'SAFETY_WALL_NAMES': ['wall_x_min', 'wall_x_max', 'wall_y_min', 'wall_y_max', 'wall_z_min', 'wall_z_max'],
     'TOOL_REGISTRY': {'TOOL_0': [0, 0, 0, 0, 0, 0]},
     'TOOL_ID_MAP': {0: 'TOOL_0'},
+    'CARTESIAN_SOURCE_LINK': 'ee_link',
     'DEFAULT_VEL_PERCENT': 30,
     'DEFAULT_ACC_PERCENT': 30,
     'DEFAULT_VEL_SCALING': 0.6,
@@ -87,6 +89,11 @@ DEFAULTS = {
     'PATH_EEF_STEP_SCALE': 1.35,
     'PATH_EEF_STEP_MIN_M': 0.005,
     'PATH_EEF_STEP_MAX_M': 0.015,
+    'PATH_WAYPOINT_SIMPLIFY_ENABLED': False,
+    'PATH_WAYPOINT_SIMPLIFY_POSITION_TOL_MM': 0.35,
+    'PATH_WAYPOINT_SIMPLIFY_ORIENTATION_TOL_DEG': 0.35,
+    'PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM': 12.0,
+    'PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG': 4.0,
     'TRAJECTORY_OPTIMIZER': 'TOTG',
     'PATH_TRAJECTORY_OPTIMIZER': 'RUCKIG',
     'RUCKIG_SAMPLE_DT_S': 0.008,
@@ -153,6 +160,7 @@ REQUIRED_KEYS = frozenset({
     'BASE_LINK',
     'EE_LINK',
     'WRIST_LINK',
+    'CARTESIAN_SOURCE_LINK',
     'COLLISION_TIP_LINK',
     'URDF_PATH',
     'ACTION_FOLLOW_TRAJECTORY',
@@ -222,6 +230,7 @@ def _load_runtime_config() -> dict[str, Any]:
     path = _runtime_yaml_path()
     if not path or not path.exists():
         return dict(DEFAULTS)
+    active_path = path
     with path.open('r', encoding='utf-8') as handle:
         loaded = yaml.safe_load(handle) or {}
     config = _merge(DEFAULTS, loaded)
@@ -237,12 +246,15 @@ def _load_runtime_config() -> dict[str, Any]:
         with profile_path.open('r', encoding='utf-8') as handle:
             profile_loaded = yaml.safe_load(handle) or {}
         config = _merge(config, profile_loaded)
+        active_path = profile_path
 
     missing = sorted(key for key in REQUIRED_KEYS if key not in config or config[key] in (None, ''))
     if missing:
         raise RuntimeError(
             f"Runtime config {path} is missing required keys: {', '.join(missing)}"
         )
+    config['_RUNTIME_CONFIG_PATH'] = str(path)
+    config['_ACTIVE_RUNTIME_CONFIG_PATH'] = str(active_path)
     config['WALL_BYPASS_LINKS'] = frozenset(config.get('WALL_BYPASS_LINKS', []))
     config['SAFETY_WALL_NAMES'] = frozenset(config.get('SAFETY_WALL_NAMES', []))
     config['TOOL_ID_MAP'] = {int(k): v for k, v in dict(config.get('TOOL_ID_MAP', {})).items()}
@@ -264,3 +276,135 @@ def resolve_avoid_collisions(requested_value):
     if requested_value is None:
         return _CONFIG.get('JOG_AVOID_COLLISIONS', True)
     return requested_value
+
+
+def get_tool_registry_snapshot() -> dict[str, Any]:
+    return {
+        'tool_registry': {
+            str(name): [float(v) for v in values]
+            for name, values in dict(TOOL_REGISTRY).items()
+        },
+        'tool_id_map': {
+            int(tool_id): str(name)
+            for tool_id, name in dict(TOOL_ID_MAP).items()
+        },
+        'active_runtime_config_path': _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH'),
+    }
+
+
+def resolve_tool_name(tool_id: int | str) -> str:
+    try:
+        resolved_tool_id = int(tool_id)
+    except (TypeError, ValueError):
+        raise ValueError('tool_id must be an integer') from None
+    if resolved_tool_id < 0:
+        raise ValueError('tool_id must be non-negative')
+    tool_name = TOOL_ID_MAP.get(resolved_tool_id, f'TOOL_{resolved_tool_id}')
+    if tool_name not in TOOL_REGISTRY:
+        raise ValueError(f'tool_id {resolved_tool_id} maps to unknown tool {tool_name!r}')
+    return tool_name
+
+
+def _validate_tool_transform(transform) -> list[float]:
+    if not isinstance(transform, (list, tuple)) or len(transform) != 6:
+        raise ValueError('transform must contain exactly 6 values [x, y, z, rx, ry, rz]')
+    values = []
+    for value in transform:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            raise ValueError('transform values must be numeric') from None
+        if not (parsed == parsed and parsed not in (float('inf'), float('-inf'))):
+            raise ValueError('transform values must be finite')
+        values.append(parsed)
+    return values
+
+
+def _validate_tool_name(name: str) -> str:
+    cleaned = str(name or '').strip()
+    if not cleaned:
+        raise ValueError('tool name must not be empty')
+    if not all(ch.isalnum() or ch == '_' for ch in cleaned):
+        raise ValueError('tool name may contain only letters, numbers, and underscores')
+    return cleaned
+
+
+def update_tool_registry(tool_id: int, name: str | None, transform, persist: bool = False) -> dict[str, Any]:
+    try:
+        resolved_tool_id = int(tool_id)
+    except (TypeError, ValueError):
+        raise ValueError('tool_id must be an integer') from None
+    if resolved_tool_id < 0:
+        raise ValueError('tool_id must be non-negative')
+
+    current_name = TOOL_ID_MAP.get(resolved_tool_id, f'TOOL_{resolved_tool_id}')
+    tool_name = _validate_tool_name(name or current_name)
+    values = _validate_tool_transform(transform)
+
+    TOOL_REGISTRY[tool_name] = values
+    TOOL_ID_MAP[resolved_tool_id] = tool_name
+    _CONFIG['TOOL_REGISTRY'] = TOOL_REGISTRY
+    _CONFIG['TOOL_ID_MAP'] = TOOL_ID_MAP
+
+    if persist:
+        _persist_tool_registry()
+
+    return get_tool_registry_snapshot()
+
+
+def _persist_tool_registry() -> None:
+    path_value = _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH')
+    if not path_value:
+        raise RuntimeError('active runtime config path is unavailable')
+    path = Path(path_value)
+    text = path.read_text(encoding='utf-8') if path.exists() else ''
+    text = _replace_top_level_yaml_block(text, 'TOOL_REGISTRY', _format_tool_registry_block())
+    text = _replace_top_level_yaml_block(text, 'TOOL_ID_MAP', _format_tool_id_map_block())
+    path.write_text(text, encoding='utf-8')
+
+
+def _format_tool_registry_block() -> list[str]:
+    lines = ['TOOL_REGISTRY:']
+    for name, values in dict(TOOL_REGISTRY).items():
+        lines.append(f'  {name}:')
+        for value in values:
+            lines.append(f'  - {_format_yaml_number(float(value))}')
+    return lines
+
+
+def _format_tool_id_map_block() -> list[str]:
+    lines = ['TOOL_ID_MAP:']
+    for tool_id, name in dict(TOOL_ID_MAP).items():
+        lines.append(f'  {int(tool_id)}: {name}')
+    return lines
+
+
+def _format_yaml_number(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return f'{value:.12g}'
+
+
+def _replace_top_level_yaml_block(text: str, key: str, replacement_lines: list[str]) -> str:
+    lines = text.splitlines()
+    key_prefix = f'{key}:'
+    start = None
+    for index, line in enumerate(lines):
+        if line.startswith(key_prefix):
+            start = index
+            break
+
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append('')
+        lines.extend(replacement_lines)
+        return '\n'.join(lines) + '\n'
+
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        if line and not line[0].isspace():
+            break
+        end += 1
+
+    return '\n'.join(lines[:start] + replacement_lines + lines[end:]) + '\n'
