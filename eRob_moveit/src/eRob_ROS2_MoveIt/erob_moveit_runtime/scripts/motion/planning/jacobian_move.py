@@ -218,10 +218,10 @@ def _jacobian_fallback_move(
     )
     if requested_delta_mm <= config.SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM:
         duration_s = max(duration_s, config.JACOBIAN_SHORT_MOVE_MIN_DURATION_S)
-    # robot_controller.get_logger().info(
-    #     f'[JacMove] duration={duration_s:.3f}s for delta={requested_delta_mm:.3f}mm, '
-    #     f'max_dq={max_dq:.5f}rad, vel_scaling={vel_scaling:.3f}'
-    # )
+    robot_controller.get_logger().info(
+        f'[JacMove] duration={duration_s:.3f}s for delta={requested_delta_mm:.3f}mm, '
+        f'max_dq={max_dq:.5f}rad, vel_scaling={vel_scaling:.3f}'
+    )
     delta_q_full = target_joints - q0
     traj_points = []
     for fraction in _JACOBIAN_TRAJ_TIME_FRACTIONS:
