@@ -14,6 +14,29 @@ DEFAULT_WORKOBJECT:
 # Painting: disable collision checking (tool contacts workpiece)
 ENABLE_COLLISION_CHECKING: false
 
+# Dense paint contours use direct IK plus TOTG timing. Ruckig can introduce
+# implausible local timing gaps on these long wrapped Joint_6 paths.
+PATH_TRAJECTORY_OPTIMIZER: TOTG
+
+# Paint contour execution: enable the dense direct-IK path only for this
+# profile. The detailed IK tolerances live in erob_moveit_runtime/scripts/config.py.
+CONTOUR_DIRECT_IK_ENABLED: true
+
+# Cartesian fallback tuning for dense paint paths. Larger EEF steps and waypoint
+# simplification reduce MoveIt fallback planning time; direct IK remains the
+# preferred path when available.
+PATH_EEF_STEP_SCALE: 3.0
+PATH_EEF_STEP_MIN_M: 0.012
+PATH_EEF_STEP_MAX_M: 0.050
+PATH_WAYPOINT_SIMPLIFY_ENABLED: false
+PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 30.0
+PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 1.0
+
+# Paint unwind is intentional because the hose/camera cable can wrap around
+# Joint_6 while rotating the workpiece.
+EXECUTOR_POST_UNWIND_SPEED_RAD_S: 2.5
+EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 3.5
+
 TOOL_REGISTRY:
   TOOL_0:
   - 0
@@ -23,8 +46,8 @@ TOOL_REGISTRY:
   - 0
   - 0
   TOOL_1:
-  - -0.0246085740023
-  - -0.634028443519
+  - 0.51898295
+  - -0.37440409
   - 155.642721597
   - 0
   - 0

@@ -1,0 +1,35 @@
+# Batch contour IK request.
+sensor_msgs/JointState seed_state
+geometry_msgs/Pose[] poses
+string group_name
+string link_name
+float64 timeout_s
+float64 retry_timeout_s
+float64 fk_position_tolerance_mm
+float64 fk_orientation_tolerance_deg
+float64 max_joint_step_rad
+float64 max_joint_span_rad
+float64 max_endpoint_delta_rad
+string[] full_turn_joint_names
+float64 full_turn_max_joint_span_rad
+float64 full_turn_max_endpoint_delta_rad
+bool smoothing_enabled
+uint32 smoothing_iterations
+float64 smoothing_alpha
+float64 smoothing_fk_position_tolerance_mm
+float64 smoothing_fk_orientation_tolerance_deg
+---
+bool success
+int32 error_code
+string message
+moveit_msgs/RobotTrajectory trajectory
+uint32 points_solved
+uint32 failed_index
+uint32 fast_failures
+uint32 retries
+float64 max_fk_position_error_mm
+float64 max_fk_orientation_error_deg
+float64 max_joint_step_rad
+float64 max_joint_span_rad
+float64 max_endpoint_delta_rad
+float64 solve_time_s

@@ -69,6 +69,92 @@ def _wrap_angle_into_limits(reference: float, value: float, lower: float, upper:
     return min(candidates, key=lambda candidate: abs(candidate - reference))
 
 
+def _duration_to_float(duration) -> float:
+    return float(getattr(duration, "sec", 0)) + float(getattr(duration, "nanosec", 0)) * 1e-9
+
+
+def _set_duration_from_float(duration, seconds: float) -> None:
+    seconds = max(0.0, float(seconds))
+    sec = int(math.floor(seconds))
+    nanosec = int(round((seconds - sec) * 1e9))
+    if nanosec >= 1_000_000_000:
+        sec += 1
+        nanosec -= 1_000_000_000
+    duration.sec = sec
+    duration.nanosec = nanosec
+
+
+def _scale_optional_sequence(values, scale: float):
+    if not values:
+        return values
+    return [float(value) * scale for value in values]
+
+
+def _stretch_single_target_joint_rate_if_needed(rc, joint_trajectory):
+    """Stretch single-target timing when a configured joint rate is too high."""
+    if getattr(rc, "_last_cartesian_request_kind", None) != "single_target":
+        return joint_trajectory
+
+    points = list(getattr(joint_trajectory, "points", []) or [])
+    joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+    if len(points) < 2 or not joint_names:
+        return joint_trajectory
+
+    limits = getattr(config, "SINGLE_TARGET_JOINT_RATE_LIMITS_RAD_S", {}) or {}
+    if not isinstance(limits, dict) or not limits:
+        return joint_trajectory
+
+    required_scale = 1.0
+    worst_name = ""
+    worst_rate = 0.0
+    worst_limit = 0.0
+    for joint_name, raw_limit in limits.items():
+        if joint_name not in joint_names:
+            continue
+        try:
+            limit = float(raw_limit)
+        except (TypeError, ValueError):
+            continue
+        if limit <= 0.0:
+            continue
+
+        joint_index = joint_names.index(joint_name)
+        for prev_point, point in zip(points, points[1:]):
+            prev_t = _duration_to_float(prev_point.time_from_start)
+            point_t = _duration_to_float(point.time_from_start)
+            dt = point_t - prev_t
+            if dt <= 1e-9:
+                continue
+            delta = abs(float(point.positions[joint_index]) - float(prev_point.positions[joint_index]))
+            rate = delta / dt
+            scale = rate / limit
+            if scale > required_scale:
+                required_scale = scale
+                worst_name = str(joint_name)
+                worst_rate = rate
+                worst_limit = limit
+
+    if required_scale <= 1.001:
+        return joint_trajectory
+
+    for point in points:
+        t = _duration_to_float(point.time_from_start)
+        _set_duration_from_float(point.time_from_start, t * required_scale)
+        point.velocities = _scale_optional_sequence(point.velocities, 1.0 / required_scale)
+        point.accelerations = _scale_optional_sequence(
+            point.accelerations,
+            1.0 / (required_scale * required_scale),
+        )
+
+    rc.get_logger().warning(
+        f'[Single Point] Stretched trajectory timing by {required_scale:.2f}x '
+        f'to respect {worst_name} rate limit '
+        f'(peak {worst_rate:.3f} rad/s > {worst_limit:.3f} rad/s); '
+        f'new duration {_duration_to_float(points[-1].time_from_start):.3f}s'
+    )
+    return joint_trajectory
+
+
 def _unwrap_joint_trajectory_positions(trajectory, reference_positions=None) -> tuple[object, float]:
     """Keep revolute joint positions on a continuous branch across the path.
 
@@ -941,7 +1027,8 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
         )
         with rc.lock:
             rc.last_move_result = 0
-        _send_trajectory_to_controller(rc, result.joint_trajectory)
+        joint_trajectory = _stretch_single_target_joint_rate_if_needed(rc, result.joint_trajectory)
+        _send_trajectory_to_controller(rc, joint_trajectory)
 
     optimizer = resolve_trajectory_optimizer(trajectory_optimizer_name, node=rc, default_optimizer=rc.trajectory_optimizer)
     optimizer.optimize(

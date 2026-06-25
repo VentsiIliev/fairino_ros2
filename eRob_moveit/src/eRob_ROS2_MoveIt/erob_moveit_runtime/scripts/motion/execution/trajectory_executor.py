@@ -3,6 +3,7 @@ from control_msgs.msg import JointTolerance
 from builtin_interfaces.msg import Duration
 from copy import deepcopy
 import math
+import time
 import config
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -16,6 +17,7 @@ class TrajectoryExecutor:
         self._queue = motion_queue
         self._controller_client = controller_client
         self._last_sent_trajectory = None
+        self._active_unwind_check = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
@@ -235,27 +237,37 @@ class TrajectoryExecutor:
         traj.joint_names = joint_names
         traj.header.stamp = self._node.get_clock().now().to_msg()
 
-        start_pt = JointTrajectoryPoint()
-        start_pt.positions = list(current_positions)
-        start_pt.velocities = [0.0] * len(current_positions)
-        start_pt.accelerations = [0.0] * len(current_positions)
-        start_pt.time_from_start = Duration(sec=0, nanosec=0)
+        max_segment = max(
+            float(getattr(config, 'EXECUTOR_POST_UNWIND_MAX_SEGMENT_RAD', 1.2)),
+            1e-3,
+        )
+        segment_count = max(1, int(math.ceil(abs(delta) / max_segment)))
+        unwind_velocity = delta / max(duration_sec, 1e-3)
+        points = []
+        for step_index in range(segment_count + 1):
+            fraction = step_index / segment_count
+            positions = list(current_positions)
+            positions[joint_index] = current_value + delta * fraction
 
-        end_positions = list(current_positions)
-        end_positions[joint_index] = target_value
-        end_pt = JointTrajectoryPoint()
-        end_pt.positions = end_positions
-        end_pt.velocities = [0.0] * len(end_positions)
-        end_pt.accelerations = [0.0] * len(end_positions)
-        end_pt.time_from_start = self._sec_to_duration(duration_sec)
+            point = JointTrajectoryPoint()
+            point.positions = positions
+            velocities = [0.0] * len(positions)
+            if 0 < step_index < segment_count:
+                velocities[joint_index] = unwind_velocity
+            point.velocities = velocities
+            point.accelerations = [0.0] * len(positions)
+            point.time_from_start = self._sec_to_duration(duration_sec * fraction)
+            points.append(point)
 
-        traj.points = [start_pt, end_pt]
+        traj.points = points
         return {
             'joint_name': unwind_joint_name,
+            'joint_index': joint_index,
             'current_value': current_value,
             'target_value': target_value,
             'delta': delta,
             'duration_sec': duration_sec,
+            'segment_count': segment_count,
             'vel_percent': vel_percent,
             'acc_percent': acc_percent,
             'vel': speed,
@@ -385,11 +397,15 @@ class TrajectoryExecutor:
                 f'max adjustment {max_adjustment:.4f} rad)'
             )
 
-    def _execute_post_success_unwind(self, trajectory):
-        self.send_trajectory_to_controller(trajectory, preserve_explicit_wrap=True)
+    def _execute_post_success_unwind(self, trajectory, unwind_check=None):
+        self.send_trajectory_to_controller(
+            trajectory,
+            preserve_explicit_wrap=True,
+            unwind_check=unwind_check,
+        )
         return 0
 
-    def request_explicit_unwind(self, queue_if_busy=True, vel=None, acc=None):
+    def _execute_explicit_unwind_from_latest_state(self, vel=None, acc=None):
         queued_unwind = self._build_post_success_unwind_trajectory(
             require_enabled=False,
             vel=vel,
@@ -397,32 +413,95 @@ class TrajectoryExecutor:
         )
         if queued_unwind is None:
             self._node.get_logger().info(
-                '[Controller] Explicit Joint_6 unwind skipped — no unwind needed'
+                '[Controller] Queued explicit Joint_6 unwind skipped — no unwind needed'
             )
             self._motion.last_move_result = 0
+            self._queue.mark_current_complete(0)
+            self.process_next_queued_task()
             return 0
 
+        self._node.get_logger().info(
+            '[Controller] Executing queued explicit Joint_6 unwind: '
+            f'{queued_unwind["current_value"]:.3f} -> '
+            f'{queued_unwind["target_value"]:.3f} rad '
+            f'over {queued_unwind["duration_sec"]:.2f}s '
+            f'(vel={queued_unwind["vel_percent"]:.1f}%, '
+            f'acc={queued_unwind["acc_percent"]:.1f}%, '
+            f'{queued_unwind["vel"]:.3f} rad/s, '
+            f'{queued_unwind["acc"]:.3f} rad/s^2, '
+            f'{queued_unwind["segment_count"]} segments)'
+        )
+        return self._execute_post_success_unwind(
+            queued_unwind['trajectory'],
+            unwind_check=queued_unwind,
+        )
+
+    def _verify_explicit_unwind_complete(self, unwind_check):
+        joint_names = list(unwind_check.get('joint_names') or [])
+        joint_name = str(unwind_check.get('joint_name') or '')
+        target_value = float(unwind_check.get('target_value'))
+        tolerance = float(
+            getattr(config, 'EXECUTOR_POST_UNWIND_VERIFY_TOL_RAD', 0.12)
+        )
+        timeout_s = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_POST_UNWIND_VERIFY_TIMEOUT_S', 0.5)),
+        )
+        deadline = time.time() + timeout_s
+        actual_positions = None
+
+        while True:
+            actual_positions = self._get_latest_joint_state_in_trajectory_order(joint_names)
+            if actual_positions is not None:
+                break
+            if time.time() >= deadline:
+                break
+            time.sleep(0.02)
+
+        if actual_positions is None:
+            self._node.get_logger().error(
+                f'[Controller] Explicit {joint_name} unwind verification failed: '
+                'latest joint state unavailable'
+            )
+            return False
+
+        joint_index = int(unwind_check.get('joint_index'))
+        actual_value = float(actual_positions[joint_index])
+        error = actual_value - target_value
+        if abs(error) <= tolerance:
+            self._node.get_logger().info(
+                f'[Controller] Explicit {joint_name} unwind verified: '
+                f'actual={actual_value:.4f} target={target_value:.4f} '
+                f'error={error:.4f} rad tol={tolerance:.4f}'
+            )
+            return True
+
+        self._node.get_logger().error(
+            f'[Controller] Explicit {joint_name} unwind verification failed: '
+            f'actual={actual_value:.4f} target={target_value:.4f} '
+            f'error={error:.4f} rad tol={tolerance:.4f}'
+        )
+        return False
+
+    def request_explicit_unwind(self, queue_if_busy=True, vel=None, acc=None):
         with self._motion.lock:
             is_busy = bool(self._motion.is_executing)
 
         if queue_if_busy and is_busy:
+            vel_percent = self._clamp_percentage(vel)
+            acc_percent = self._clamp_percentage(acc)
             queue_result = self._queue.submit(
-                task_function=self._execute_post_success_unwind,
-                task_args=[queued_unwind['trajectory']],
+                task_function=self._execute_explicit_unwind_from_latest_state,
+                task_args=[vel, acc],
             )
             if isinstance(queue_result, tuple):
                 task_id, position = queue_result
                 self._motion.last_submitted_task_id = task_id
                 self._node.get_logger().info(
                     '[Controller] Queued explicit Joint_6 unwind '
-                    f'at position {position} (task #{task_id}): '
-                    f"{queued_unwind['current_value']:.3f} -> "
-                    f"{queued_unwind['target_value']:.3f} rad "
-                    f'over {queued_unwind["duration_sec"]:.2f}s '
-                    f'(vel={queued_unwind["vel_percent"]:.1f}%, '
-                    f'acc={queued_unwind["acc_percent"]:.1f}%, '
-                    f'{queued_unwind["vel"]:.3f} rad/s, '
-                    f'{queued_unwind["acc"]:.3f} rad/s^2)'
+                    f'at position {position} (task #{task_id}); '
+                    'target will be computed from latest Joint_6 state at execution time '
+                    f'(vel={vel_percent:.1f}%, acc={acc_percent:.1f}%)'
                 )
                 return position
             self._node.get_logger().error(
@@ -436,6 +515,18 @@ class TrajectoryExecutor:
             )
             return -1
 
+        queued_unwind = self._build_post_success_unwind_trajectory(
+            require_enabled=False,
+            vel=vel,
+            acc=acc,
+        )
+        if queued_unwind is None:
+            self._node.get_logger().info(
+                '[Controller] Explicit Joint_6 unwind skipped — no unwind needed'
+            )
+            self._motion.last_move_result = 0
+            return 0
+
         task_id = self._queue.allocate_task_id()
         self._motion.last_submitted_task_id = task_id
         self._queue.start_immediate_task(task_id)
@@ -447,23 +538,34 @@ class TrajectoryExecutor:
             f'(vel={queued_unwind["vel_percent"]:.1f}%, '
             f'acc={queued_unwind["acc_percent"]:.1f}%, '
             f'{queued_unwind["vel"]:.3f} rad/s, '
-            f'{queued_unwind["acc"]:.3f} rad/s^2)'
+            f'{queued_unwind["acc"]:.3f} rad/s^2, '
+            f'{queued_unwind["segment_count"]} segments)'
         )
-        result = self._execute_post_success_unwind(queued_unwind['trajectory'])
+        result = self._execute_post_success_unwind(
+            queued_unwind['trajectory'],
+            unwind_check=queued_unwind,
+        )
         if result != 0:
             self._queue.mark_current_complete(result)
         return result
 
-    def send_trajectory_to_controller(self, joint_trajectory, preserve_explicit_wrap=False):
+    def send_trajectory_to_controller(
+        self,
+        joint_trajectory,
+        preserve_explicit_wrap=False,
+        unwind_check=None,
+    ):
         """Send trajectory directly to the low-level controller for smooth execution."""
         if not self._motion.execution_lock.acquire(blocking=False):
             self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
+            self._motion.last_move_result = -1
             return
 
         if not self._controller_client.wait_for_server(timeout_sec=1.0):
             self._node.get_logger().error(
                 f'[Controller] {self._controller_name} not available'
             )
+            self._motion.last_move_result = -1
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
@@ -471,6 +573,7 @@ class TrajectoryExecutor:
 
         if len(joint_trajectory.points) == 0:
             self._node.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
+            self._motion.last_move_result = -1
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
@@ -482,6 +585,7 @@ class TrajectoryExecutor:
         )
         if not has_valid_timestamps:
             self._node.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
+            self._motion.last_move_result = -1
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
@@ -511,6 +615,12 @@ class TrajectoryExecutor:
         controller_goal.path_tolerance = []
         controller_goal.goal_tolerance = goal_tolerance
         self._last_sent_trajectory = deepcopy(joint_trajectory)
+        self._active_unwind_check = None
+        if unwind_check is not None:
+            copied_check = dict(unwind_check)
+            copied_check['joint_names'] = list(joint_trajectory.joint_names)
+            copied_check.pop('trajectory', None)
+            self._active_unwind_check = copied_check
 
         if len(joint_trajectory.points) > 0:
             last_point = joint_trajectory.points[-1]
@@ -568,6 +678,7 @@ class TrajectoryExecutor:
                     f'[Controller] Trajectory execution rejected by {self._controller_name}'
                 )
                 self._motion.active_controller_goal = None
+                self._active_unwind_check = None
                 with self._motion.lock:
                     self._motion.is_executing = False
                 self._motion.execution_lock.release()
@@ -581,6 +692,7 @@ class TrajectoryExecutor:
             result_future.add_done_callback(self._on_controller_goal_result)
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Goal response error: {e}')
+            self._active_unwind_check = None
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
@@ -598,16 +710,27 @@ class TrajectoryExecutor:
         try:
             result = future.result().result
             queued_unwind = None
+            active_unwind_check = self._active_unwind_check
             if result.error_code == 0:
                 self._node.get_logger().info('[Controller] ✓ Trajectory execution succeeded!')
-                self._motion.last_move_result = 0
+                if active_unwind_check is not None:
+                    if self._verify_explicit_unwind_complete(active_unwind_check):
+                        self._motion.last_move_result = 0
+                    else:
+                        self._motion.last_move_result = -6
+                else:
+                    self._motion.last_move_result = 0
                 queue_size = self._queue.get_status().get('queue_size', 0)
-                if queue_size == 0 and not self._should_skip_post_success_unwind():
+                if (
+                    active_unwind_check is None
+                    and queue_size == 0
+                    and not self._should_skip_post_success_unwind()
+                ):
                     queued_unwind = self._build_post_success_unwind_trajectory()
                     if queued_unwind is not None:
                         queue_result = self._queue.submit(
                             task_function=self._execute_post_success_unwind,
-                            task_args=[queued_unwind['trajectory']],
+                            task_args=[queued_unwind['trajectory'], queued_unwind],
                         )
                         if isinstance(queue_result, tuple):
                             task_id, _position = queue_result
@@ -633,6 +756,7 @@ class TrajectoryExecutor:
             self._motion.last_move_result = -1
         finally:
             self._motion.active_controller_goal = None
+            self._active_unwind_check = None
             lock_released = False
             if self._motion.execution_lock.locked():
                 self._motion.execution_lock.release()

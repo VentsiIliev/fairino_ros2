@@ -7,6 +7,7 @@ class PlannerSupportService:
         self._node = node
         self._fk_client = None
         self._ik_client = None
+        self._contour_ik_client = None
         self._state_validity_client = None
 
     def get_fk_client(self):
@@ -20,6 +21,16 @@ class PlannerSupportService:
             from moveit_msgs.srv import GetPositionIK
             self._ik_client = self._node.create_client(GetPositionIK, '/compute_ik')
         return self._ik_client
+
+    def get_contour_ik_client(self):
+        if self._contour_ik_client is None:
+            import config
+            from erob_moveit_runtime.srv import ComputeContourIK
+            self._contour_ik_client = self._node.create_client(
+                ComputeContourIK,
+                getattr(config, 'SERVICE_CONTOUR_IK', '/compute_contour_ik'),
+            )
+        return self._contour_ik_client
 
     def get_state_validity_client(self):
         if self._state_validity_client is None:

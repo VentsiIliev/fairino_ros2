@@ -211,6 +211,14 @@ def generate_launch_description():
         parameters=helper_parameters,
     )
 
+    contour_ik_helper_node = Node(
+        package="erob_moveit_runtime",
+        executable="contour_ik_helper",
+        name="contour_ik_helper",
+        output="screen",
+        parameters=helper_parameters,
+    )
+
     collision_monitor_kwargs = {
         "package": "zeroerr",
         "executable": "zeroerr_collision_monitor.py",
@@ -280,6 +288,7 @@ def generate_launch_description():
         ethercat_sdo_server,
         ipp_helper_node,
         ruckig_helper_node,
+        contour_ik_helper_node,
         wait_for_op_process,
         RegisterEventHandler(
             OnProcessExit(

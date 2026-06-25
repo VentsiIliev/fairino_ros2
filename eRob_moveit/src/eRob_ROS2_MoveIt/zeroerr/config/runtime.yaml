@@ -36,7 +36,7 @@ EE_LINK: ee_link
 
 # Wrist link used by diagnostics and wrist-specific logic.
 WRIST_LINK: Link_6
-x
+
 # TF link published on /cartesian_position before runtime tool transforms.
 # Keep separate from EE_LINK so MoveIt can plan with ee_link while current-pose
 # reporting and TCP calibration can use the physical tool/flange reference.
@@ -55,18 +55,47 @@ ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 
-
-# Cartesian path interpolation density for multi-waypoint paint paths.
-# Larger values reduce MoveIt oversampling and planning time; verify paint path
-# accuracy after changing these because MoveIt interpolates more coarsely.
-PATH_EEF_STEP_SCALE: 3.0
-PATH_EEF_STEP_MIN_M: 0.012
-PATH_EEF_STEP_MAX_M: 0.050
+# Shared Cartesian path defaults. Profiles can override these for process-
+# specific dense paths such as paint contours.
+PATH_EEF_STEP_SCALE: 1.35
+PATH_EEF_STEP_MIN_M: 0.005
+PATH_EEF_STEP_MAX_M: 0.015
 PATH_WAYPOINT_SIMPLIFY_ENABLED: false
 PATH_WAYPOINT_SIMPLIFY_POSITION_TOL_MM: 0.35
 PATH_WAYPOINT_SIMPLIFY_ORIENTATION_TOL_DEG: 0.35
-PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 30.0
-PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 1.0
+PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 12.0
+PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 4.0
+
+# Shared dense-contour IK defaults. The solver stays disabled here; process
+# profiles opt in after validating their motion and fallback behavior.
+CONTOUR_DIRECT_IK_ENABLED: false
+CONTOUR_BATCH_IK_ENABLED: true
+CONTOUR_BATCH_IK_SERVICE_TIMEOUT_S: 10.0
+CONTOUR_DIRECT_IK_MIN_POINTS: 50
+CONTOUR_DIRECT_IK_MIN_TOTAL_LENGTH_MM: 20.0
+CONTOUR_IK_TIMEOUT_S: 0.0015
+CONTOUR_IK_ATTEMPTS: 1
+CONTOUR_IK_RETRY_TIMEOUT_S: 0.02
+CONTOUR_IK_RETRY_ATTEMPTS: 3
+CONTOUR_IK_FK_POSITION_TOL_MM: 0.15
+CONTOUR_IK_FK_ORIENTATION_TOL_DEG: 0.25
+CONTOUR_IK_MAX_JOINT_STEP_RAD: 0.08
+CONTOUR_IK_MAX_JOINT_SPAN_RAD: 3.141592653589793
+CONTOUR_IK_MAX_ENDPOINT_DELTA_RAD: 3.141592653589793
+CONTOUR_IK_FULL_TURN_JOINT_NAMES: [Joint_6]
+CONTOUR_IK_FULL_TURN_MAX_JOINT_SPAN_RAD: 6.6
+CONTOUR_IK_FULL_TURN_MAX_ENDPOINT_DELTA_RAD: 6.6
+CONTOUR_IK_SMOOTHING_ENABLED: true
+CONTOUR_IK_SMOOTHING_ITERATIONS: 2
+CONTOUR_IK_SMOOTHING_ALPHA: 0.35
+CONTOUR_IK_SMOOTHING_FK_POSITION_TOL_MM: 0.05
+CONTOUR_IK_SMOOTHING_FK_ORIENTATION_TOL_DEG: 0.10
+CONTOUR_VALIDATE_REDUCED_MOVEIT_ENABLED: false
+CONTOUR_VALIDATE_REDUCED_POSITION_TOL_MM: 0.35
+CONTOUR_VALIDATE_REDUCED_ORIENTATION_TOL_DEG: 0.35
+CONTOUR_VALIDATE_REDUCED_MAX_TRANSLATION_MM: 10.0
+CONTOUR_STATE_VALIDITY_ENABLED: false
+CONTOUR_STATE_VALIDITY_STRIDE: 10
 
 # Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
 # moves probe failed poses with IK/collision/branch variants. Keep false during
@@ -113,11 +142,12 @@ PTP_MIN_INTERPOLATION_SEGMENTS: 8
 # PTP: maximum number of joint interpolation segments checked before execution.
 PTP_MAX_INTERPOLATION_SEGMENTS: 80
 
-# Speed used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_SPEED_RAD_S: 2.5
-
-# Acceleration used for optional explicit/post-success Joint_6 unwind moves.
-EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 3.5
+# Defaults for optional explicit/post-success Joint_6 unwind moves.
+EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.8
+EXECUTOR_POST_UNWIND_ACCEL_RAD_S2: 2.5
+EXECUTOR_POST_UNWIND_MAX_SEGMENT_RAD: 1.2
+EXECUTOR_POST_UNWIND_VERIFY_TOL_RAD: 0.12
+EXECUTOR_POST_UNWIND_VERIFY_TIMEOUT_S: 0.5
 
 # Tool transforms keyed by tool name, [x, y, z, rx, ry, rz] in mm/degrees.
 TOOL_REGISTRY:

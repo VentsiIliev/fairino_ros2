@@ -26,7 +26,8 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ApplyIPP.srv"
-  DEPENDENCIES trajectory_msgs moveit_msgs
+  "srv/ComputeContourIK.srv"
+  DEPENDENCIES trajectory_msgs moveit_msgs sensor_msgs geometry_msgs
 )
 
 # Install the shared Python package so robot-specific publishers can import it
@@ -92,5 +93,16 @@ set_target_properties(ruckig_helper PROPERTIES
   BUILD_WITH_INSTALL_RPATH FALSE
   INSTALL_RPATH_USE_LINK_PATH TRUE)
 install(TARGETS ruckig_helper DESTINATION lib/${PROJECT_NAME})
+
+add_executable(contour_ik_helper src_cpp/contour_ik_helper_node.cpp)
+ament_target_dependencies(contour_ik_helper
+  rclcpp moveit_core moveit_ros_planning_interface moveit_ros_planning
+  moveit_msgs sensor_msgs trajectory_msgs geometry_msgs)
+target_link_libraries(contour_ik_helper ${cpp_typesupport_target})
+set_target_properties(contour_ik_helper PROPERTIES
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/../../../lib:$ORIGIN/../../../../fairino_msgs/lib"
+  BUILD_WITH_INSTALL_RPATH FALSE
+  INSTALL_RPATH_USE_LINK_PATH TRUE)
+install(TARGETS contour_ik_helper DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

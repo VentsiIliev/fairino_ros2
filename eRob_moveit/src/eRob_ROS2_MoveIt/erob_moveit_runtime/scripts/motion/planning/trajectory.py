@@ -16,6 +16,7 @@ from .trajectory_planner import (
     _stabilize_joint6_path_shape,
     _unwrap_joint_trajectory_positions,
 )
+from .direct_contour_ik import maybe_execute_direct_contour_ik
 from .planner_diagnostics import _diagnose_start_collision
 from .planner_utils import _set_result, _is_stale, _begin_execution, _require_cart_path_service, _to_pose_list
 from .single_target import _execute_single_point
@@ -216,6 +217,17 @@ def _execute_path(
             _plan_then_approach(robot_controller, waypoints, waypoints_mm[0], rx, ry, rz,
                                 vel_scaling, acc_scaling, max_step, trajectory_optimizer_name)
             return 0
+
+    if maybe_execute_direct_contour_ik(
+        robot_controller,
+        waypoints_6d,
+        waypoints,
+        total_dist_mm,
+        vel_scaling,
+        acc_scaling,
+        trajectory_optimizer_name=trajectory_optimizer_name,
+    ):
+        return 0
 
     # Normal flow: robot is close to first waypoint, plan from current state
     request = _build_cartesian_request(robot_controller, waypoints, max_step, vel_scaling, acc_scaling)

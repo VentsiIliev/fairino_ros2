@@ -244,6 +244,20 @@ def generate_launch_description():
     )
     demo_ld.add_action(ruckig_helper_node)
 
+    contour_ik_helper_node = Node(
+        package="erob_moveit_runtime",
+        executable="contour_ik_helper",
+        name="contour_ik_helper",
+        output="screen",
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+        ],
+    )
+    demo_ld.add_action(contour_ik_helper_node)
+
     # ZeroErr-specific state publisher: TCP position via TF2 lookup (URDF-consistent)
     # (joint vel/acc + Cartesian vel/acc from shared base class)
     zeroerr_state_publisher = Node(
