@@ -8,6 +8,12 @@ ACTIVE_PROFILE: paint
 # Enables the EtherCAT OP-state watchdog before allowing motion.
 ETHERCAT_WATCHDOG_ENABLED: true
 
+# Request OP again when the watchdog sees slaves drop from OP. Motion remains
+# interlocked until all slaves are observed back in OP.
+ETHERCAT_RECOVERY_ENABLED: true
+ETHERCAT_RECOVERY_MIN_INTERVAL_S: 2.0
+ETHERCAT_RECOVERY_CMD_TIMEOUT_S: 2.0
+
 # Global collision checking toggle. Set to false to disable all collision
 # avoidance (useful for painting/welding where tool may be in contact).
 # When false, all avoid_collisions parameters default to False.

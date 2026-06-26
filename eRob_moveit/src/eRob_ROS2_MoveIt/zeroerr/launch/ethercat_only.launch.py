@@ -150,24 +150,12 @@ def generate_launch_description():
         cmd=["ros2", "run", "controller_manager", "spawner", "manipulator_controller"],
         output="screen",
     )
-    load_drag_effort_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_effort_controller"],
+    load_drive_enable_set_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
         output="screen",
     )
-    load_drag_torque_offset_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_torque_offset_controller"],
-        output="screen",
-    )
-    load_drag_mode_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_mode_controller"],
-        output="screen",
-    )
-    load_drag_enable_set_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_enable_set_controller"],
-        output="screen",
-    )
-    load_drag_disable_set_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_disable_set_controller"],
+    load_drive_disable_set_controller = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
         output="screen",
     )
 
@@ -280,11 +268,8 @@ def generate_launch_description():
         ros2_control_node,
         load_joint_state_broadcaster,
         load_manipulator_controller,
-        load_drag_effort_controller,
-        load_drag_torque_offset_controller,
-        load_drag_mode_controller,
-        load_drag_enable_set_controller,
-        load_drag_disable_set_controller,
+        load_drive_enable_set_controller,
+        load_drive_disable_set_controller,
         ethercat_sdo_server,
         ipp_helper_node,
         ruckig_helper_node,

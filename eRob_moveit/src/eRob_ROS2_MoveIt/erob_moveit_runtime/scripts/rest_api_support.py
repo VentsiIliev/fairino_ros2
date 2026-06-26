@@ -25,12 +25,13 @@ MOTION_ERROR_DESCRIPTIONS = {
     -10: "Collision detected during Jacobian check",
     -11: "Cartesian path planning failed: target unreachable, collision, or joint-limit constraint",
     -12: "Hardware not ready: EtherCAT slave not in OP",
+    -13: "Drive operation is not enabled; call POST /drive/enable before motion",
 }
 
 
 def motion_error_response(result: int):
     description = MOTION_ERROR_DESCRIPTIONS.get(result, f"Unknown error code {result}")
-    http_status = 503 if result in (-2, -5) else 400 if result in (-3, -11) else 500
+    http_status = 503 if result in (-2, -5, -12) else 409 if result == -13 else 400 if result in (-3, -11) else 500
     return jsonify({"result": result, "success": False, "error": description}), http_status
 
 

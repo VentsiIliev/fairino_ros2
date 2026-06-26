@@ -70,10 +70,23 @@ class MoveItRobotBackend(IRobotBackend):
 
     # ---------------- Movement Methods ----------------
 
+    def _reject_if_drive_not_enabled(self, label):
+        if self.node is None:
+            return None
+        if not self.node.is_drive_operation_enabled_for_motion():
+            self.node.get_logger().error(
+                f"[{label}] Rejected: {self.node.get_drive_enable_fault_reason()}"
+            )
+            return config.MOTION_ERROR_DRIVE_NOT_ENABLED
+        return None
+
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
         started_at = perf_counter()
         if len(position) != 6:
             return -1
+        drive_error = self._reject_if_drive_not_enabled("MOVE_LINER")
+        if drive_error is not None:
+            return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[MOVE_LINER] Rejected: %s",
@@ -140,6 +153,9 @@ class MoveItRobotBackend(IRobotBackend):
         started_at = perf_counter()
         if len(position) != 6:
             return -1
+        drive_error = self._reject_if_drive_not_enabled("MOVE_PTP")
+        if drive_error is not None:
+            return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[MOVE_PTP] Rejected: %s",
@@ -219,6 +235,9 @@ class MoveItRobotBackend(IRobotBackend):
         """
         if not path or self.node is None:
             return -1
+        drive_error = self._reject_if_drive_not_enabled("EXECUTE_PATH")
+        if drive_error is not None:
+            return drive_error
         if not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[EXECUTE_PATH] Rejected: %s",
@@ -395,6 +414,9 @@ class MoveItRobotBackend(IRobotBackend):
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
         if self.node is None:
             return -1
+        drive_error = self._reject_if_drive_not_enabled("UNWIND_J6")
+        if drive_error is not None:
+            return drive_error
         if not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[UNWIND_J6] Rejected: %s",
@@ -584,6 +606,9 @@ class MoveItRobotBackend(IRobotBackend):
 
     # ---------------- Jog / Control / Misc ----------------
     def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc):
+        drive_error = self._reject_if_drive_not_enabled("JOG")
+        if drive_error is not None:
+            return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[JOG] Rejected: %s",

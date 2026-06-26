@@ -16,6 +16,10 @@ controller_manager:
       type: forward_command_controller/ForwardCommandController
     drag_disable_set_controller:
       type: forward_command_controller/ForwardCommandController
+    drive_enable_set_controller:
+      type: forward_command_controller/ForwardCommandController
+    drive_disable_set_controller:
+      type: forward_command_controller/ForwardCommandController
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 manipulator_controller:
@@ -37,6 +41,7 @@ manipulator_controller:
     allow_nonzero_velocity_at_trajectory_end: true
     allow_partial_joints_goal: false
     open_loop_control: false
+    set_last_command_interface_value_as_state_on_activation: false
     state_publish_rate: 100.0
     action_monitor_rate: 200.0
     # Enable trajectory point velocities for continuous motion
@@ -103,6 +108,28 @@ drag_enable_set_controller:
     interface_name: enable_set
 
 drag_disable_set_controller:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    interface_name: disable_set
+
+drive_enable_set_controller:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    interface_name: enable_set
+
+drive_disable_set_controller:
   ros__parameters:
     joints:
       - Joint_1

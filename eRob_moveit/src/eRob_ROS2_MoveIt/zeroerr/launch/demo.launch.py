@@ -71,7 +71,7 @@ def _runtime_value(package_path: str, key: str, default):
     except Exception:
         return default
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
-from launch.event_handlers import OnProcessExit, OnProcessStart
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
@@ -183,38 +183,32 @@ def generate_launch_description():
     )
     demo_ld.add_action(
         RegisterEventHandler(
-            OnProcessStart(
-                target_action=ethercat_sdo_server,
-                on_start=[TimerAction(period=2.0, actions=[zeroerr_error_monitor])],
+            OnProcessExit(
+                target_action=wait_for_op_process,
+                on_exit=[TimerAction(period=2.0, actions=[zeroerr_error_monitor])],
             )
         )
     )
 
-    drag_effort_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_effort_controller"],
+    drive_enable_set_spawner = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
         output="screen",
     )
-    drag_torque_offset_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_torque_offset_controller"],
+    drive_disable_set_spawner = ExecuteProcess(
+        cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
         output="screen",
     )
-    drag_mode_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_mode_controller"],
-        output="screen",
+    demo_ld.add_action(
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=wait_for_op_process,
+                on_exit=[
+                    TimerAction(period=0.5, actions=[drive_enable_set_spawner]),
+                    TimerAction(period=1.0, actions=[drive_disable_set_spawner]),
+                ],
+            )
+        )
     )
-    drag_enable_set_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_enable_set_controller"],
-        output="screen",
-    )
-    drag_disable_set_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drag_disable_set_controller"],
-        output="screen",
-    )
-    demo_ld.add_action(drag_effort_spawner)
-    demo_ld.add_action(drag_torque_offset_spawner)
-    demo_ld.add_action(drag_mode_spawner)
-    demo_ld.add_action(drag_enable_set_spawner)
-    demo_ld.add_action(drag_disable_set_spawner)
 
     ipp_helper_node = Node(
         package="erob_moveit_runtime",
@@ -353,12 +347,13 @@ def generate_launch_description():
         output="screen",
         emulate_tty=True,
     )
-    # Delay the runtime GUI until the RT/control path and MoveIt startup have settled.
+    # Delay runtime until EtherCAT OP is stable. If the OP wait never succeeds,
+    # runtime must not start and issue motion interlocks against a still-booting bus.
     demo_ld.add_action(
         RegisterEventHandler(
-            OnProcessStart(
-                target_action=zeroerr_state_publisher,
-                on_start=[TimerAction(period=20.0, actions=[velocity_monitor_gui])],
+            OnProcessExit(
+                target_action=wait_for_op_process,
+                on_exit=[TimerAction(period=8.0, actions=[velocity_monitor_gui])],
             )
         )
     )

@@ -107,7 +107,11 @@ from config import (
     ETHERCAT_EXPECTED_SLAVES,
     ETHERCAT_WATCHDOG_POLL_S,
     ETHERCAT_WATCHDOG_CMD_TIMEOUT_S,
+    ETHERCAT_RECOVERY_ENABLED,
+    ETHERCAT_RECOVERY_MIN_INTERVAL_S,
+    ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
     MOTION_ERROR_HARDWARE_NOT_READY,
+    MOTION_ERROR_DRIVE_NOT_ENABLED,
     DRAG_MODE_ENABLED_DEFAULT,
     DRAG_MODE_UPDATE_RATE_HZ,
     DRAG_MODE_MODE_COMMAND_TOPIC,
@@ -115,6 +119,8 @@ from config import (
     DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC,
     DRAG_MODE_ENABLE_SET_COMMAND_TOPIC,
     DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
+    DRIVE_ENABLE_SET_COMMAND_TOPIC,
+    DRIVE_DISABLE_SET_COMMAND_TOPIC,
     DRAG_MODE_CSP_VALUE,
     DRAG_MODE_CST_VALUE,
     DRAG_MODE_COMPENSATION_SCALE,
@@ -141,6 +147,10 @@ class RobotController(Node):
         'drag_torque_offset_controller',
         'drag_enable_set_controller',
         'drag_disable_set_controller',
+    )
+    _DRIVE_SET_CONTROLLER_NAMES = (
+        'drive_enable_set_controller',
+        'drive_disable_set_controller',
     )
 
     def __init__(self):
@@ -263,6 +273,7 @@ class RobotController(Node):
         self._ethercat_motion_fault = False
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
+        self._ethercat_last_recovery_attempt_ts = 0.0
         self._collision_monitor_fault_enabled = True
         self._collision_fault_lock = Lock()
         self._collision_motion_fault = False
@@ -284,6 +295,8 @@ class RobotController(Node):
             self.get_logger().info('[EtherCAT] Runtime OP watchdog disabled for this robot backend')
 
         self._drag_lock = Lock()
+        self._drive_enable_lock = Lock()
+        self._drive_operation_enabled_requested = False
         self._drag_enabled = bool(DRAG_MODE_ENABLED_DEFAULT)
         self._drag_update_dt = 1.0 / max(float(DRAG_MODE_UPDATE_RATE_HZ), 1.0)
         self._drag_mode_csp = float(DRAG_MODE_CSP_VALUE)
@@ -363,6 +376,8 @@ class RobotController(Node):
         self._drag_torque_offset_pub = None
         self._drag_enable_set_pub = None
         self._drag_disable_set_pub = None
+        self._drive_enable_set_pub = None
+        self._drive_disable_set_pub = None
         self._drag_timer = None
         if self.runtime_adapter.supports_drag_mode:
             self._drag_mode_pub = self.create_publisher(
@@ -388,6 +403,16 @@ class RobotController(Node):
             self._drag_disable_set_pub = self.create_publisher(
                 Float64MultiArray,
                 DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self._drive_enable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRIVE_ENABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self._drive_disable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRIVE_DISABLE_SET_COMMAND_TOPIC,
                 10,
             )
             self.create_subscription(
@@ -728,6 +753,11 @@ class RobotController(Node):
         if drag_enabled:
             self.get_logger().error('[DragMode] Rejecting motion while CST drag mode is enabled')
             return MOTION_ERROR_HARDWARE_NOT_READY
+        if not self.is_drive_operation_enabled_for_motion():
+            self.get_logger().error(
+                f'[DriveEnable] Rejecting motion: {self.get_drive_enable_fault_reason()}'
+            )
+            return MOTION_ERROR_DRIVE_NOT_ENABLED
         if not self.is_hardware_ready_for_motion():
             self.get_logger().error(
                 f'[EtherCAT] Rejecting motion: {self.get_hardware_fault_reason()}'
@@ -964,30 +994,15 @@ class RobotController(Node):
         return self._motion.stop_motion()
 
     def enable_drag_mode(self) -> dict:
-        if not self.runtime_adapter.supports_drag_mode:
-            return {
-                "enabled": False,
-                "stopped": False,
-                "mode": "unsupported",
-                "state": "UNSUPPORTED",
-                "controller_switch_ok": False,
-            }
-        stop_result = self.stop_motion()
-        self.get_logger().info(f'[DragMode] Enable requested | stop_result={stop_result}')
-        switch_ok = self._set_drag_controller_ownership(True)
-        with self._drag_lock:
-            self._drag_enabled = bool(switch_ok)
-            self._drag_last_transition_ts = time.monotonic()
-            self._drag_last_diag_log_ts = 0.0
-        self.get_logger().info(
-            f"[DragMode] Enable result | enabled={bool(switch_ok)} controller_switch_ok={bool(switch_ok)}"
+        self.get_logger().error(
+            '[DragMode] Enable rejected: drag mode is disabled because it is not fully implemented and tested'
         )
         return {
-            "enabled": bool(switch_ok),
-            "stopped": bool(isinstance(stop_result, dict) and stop_result.get("stopped", False)),
-            "mode": "cst",
-            "state": "ENABLING" if switch_ok else "ERROR",
-            "controller_switch_ok": bool(switch_ok),
+            "enabled": False,
+            "stopped": False,
+            "mode": "disabled",
+            "state": "DISABLED_FOR_SAFETY",
+            "controller_switch_ok": False,
         }
 
     def disable_drag_mode(self) -> dict:
@@ -1023,6 +1038,126 @@ class RobotController(Node):
             "mode": "csp",
             "state": "DISABLING" if switch_ok else "ERROR",
             "controller_switch_ok": bool(switch_ok),
+        }
+
+    def set_drive_operation_enabled(self, enabled: bool) -> dict:
+        if not self.runtime_adapter.supports_drag_mode:
+            return {
+                "enabled": False,
+                "requested_enabled": bool(enabled),
+                "state": "UNSUPPORTED",
+                "controller_switch_ok": False,
+            }
+        if enabled and not self.is_hardware_ready_for_motion():
+            with self._drive_enable_lock:
+                self._drive_operation_enabled_requested = False
+            reason = self.get_hardware_fault_reason()
+            self.get_logger().error(f'[DriveEnable] Enable rejected: {reason}')
+            return {
+                "success": False,
+                "enabled": False,
+                "requested_enabled": False,
+                "state": "HARDWARE_NOT_READY",
+                "controller_switch_ok": False,
+                "error": reason,
+            }
+        switch_ok = self._ensure_drive_set_controllers_active()
+        if not switch_ok:
+            return {
+                "enabled": False,
+                "requested_enabled": bool(enabled),
+                "state": "ERROR",
+                "controller_switch_ok": False,
+                "error": "failed to activate enable_set/disable_set controllers",
+            }
+
+        if enabled:
+            self._send_hold_position_trajectory(reason='drive enable')
+            time.sleep(0.25)
+
+        pulse = np.ones(NUM_JOINTS, dtype=float)
+        zeros = np.zeros(NUM_JOINTS, dtype=float)
+        enable_msg = Float64MultiArray()
+        disable_msg = Float64MultiArray()
+        if enabled:
+            enable_msg.data = pulse.tolist()
+            disable_msg.data = zeros.tolist()
+        else:
+            enable_msg.data = zeros.tolist()
+            disable_msg.data = pulse.tolist()
+        self._drive_enable_set_pub.publish(enable_msg)
+        self._drive_disable_set_pub.publish(disable_msg)
+        time.sleep(0.05)
+        enable_msg.data = zeros.tolist()
+        disable_msg.data = zeros.tolist()
+        self._drive_enable_set_pub.publish(enable_msg)
+        self._drive_disable_set_pub.publish(disable_msg)
+        with self._drive_enable_lock:
+            self._drive_operation_enabled_requested = bool(enabled)
+        self.get_logger().info(
+            f"[DriveEnable] {'Enable' if enabled else 'Disable'} operation requested via enable_set/disable_set"
+        )
+        return {
+            "success": True,
+            "requested_enabled": bool(enabled),
+            "state": "ENABLE_REQUESTED" if enabled else "DISABLE_REQUESTED",
+            "controller_switch_ok": True,
+            "mode": "csp",
+        }
+
+    def is_drive_operation_enabled_for_motion(self) -> bool:
+        with self._drive_enable_lock:
+            requested_enabled = bool(self._drive_operation_enabled_requested)
+        if not requested_enabled:
+            return False
+        with self._drag_lock:
+            statusword = [int(round(value)) for value in self._drag_statusword.tolist()]
+        if len(statusword) < NUM_JOINTS:
+            return False
+        return all(
+            self._decode_statusword_state(value) == 'operation_enabled'
+            for value in statusword[:NUM_JOINTS]
+        )
+
+    def get_drive_enable_fault_reason(self) -> str:
+        with self._drive_enable_lock:
+            requested_enabled = bool(self._drive_operation_enabled_requested)
+        if not requested_enabled:
+            return "drive operation is not enabled; call POST /drive/enable before motion"
+        with self._drag_lock:
+            statusword = [int(round(value)) for value in self._drag_statusword.tolist()]
+        statusword_state = [
+            self._decode_statusword_state(value)
+            for value in statusword[:NUM_JOINTS]
+        ]
+        return (
+            "drive enable was requested, but not all drives report operation_enabled "
+            f"(status_state={statusword_state})"
+        )
+
+    def get_drive_operation_status(self) -> dict:
+        with self._drive_enable_lock:
+            requested_enabled = bool(self._drive_operation_enabled_requested)
+        with self._drag_lock:
+            statusword = [int(round(value)) for value in self._drag_statusword.tolist()]
+        statusword_state = [
+            self._decode_statusword_state(value)
+            for value in statusword[:NUM_JOINTS]
+        ]
+        actual_enabled = (
+            len(statusword_state) == NUM_JOINTS
+            and all(state == 'operation_enabled' for state in statusword_state)
+        )
+        return {
+            "success": True,
+            "requested_enabled": requested_enabled,
+            "actual_enabled": actual_enabled,
+            "motion_allowed_by_drive_enable": requested_enabled and actual_enabled,
+            "state": "OPERATION_ENABLED" if actual_enabled else (
+                "ENABLE_REQUESTED" if requested_enabled else "DISABLED"
+            ),
+            "statusword": statusword,
+            "status_state": statusword_state,
         }
 
     def get_drag_mode_status(self) -> dict:
@@ -1174,20 +1309,24 @@ class RobotController(Node):
         request.strictness = 2
         request.activate_asap = True
         request.timeout = Duration(sec=2, nanosec=0)
-        request.activate_controllers = [
-            name for name in self._DRAG_CONTROLLER_NAMES
-            if controller_states.get(name) != 'active'
-        ]
         if drag_enabled:
+            request.activate_controllers = [
+                name for name in self._DRAG_CONTROLLER_NAMES
+                if controller_states.get(name) != 'active'
+            ]
             request.deactivate_controllers = (
                 [self._MANIPULATOR_CONTROLLER_NAME]
                 if controller_states.get(self._MANIPULATOR_CONTROLLER_NAME) == 'active'
                 else []
             )
         else:
+            request.activate_controllers = []
             if controller_states.get(self._MANIPULATOR_CONTROLLER_NAME) != 'active':
                 request.activate_controllers.append(self._MANIPULATOR_CONTROLLER_NAME)
-            request.deactivate_controllers = []
+            request.deactivate_controllers = [
+                name for name in self._DRAG_CONTROLLER_NAMES
+                if controller_states.get(name) == 'active'
+            ]
 
         if not request.activate_controllers and not request.deactivate_controllers:
             self.get_logger().info('[DragMode] Controller ownership already in desired state')
@@ -1214,6 +1353,40 @@ class RobotController(Node):
         self.get_logger().info(
             f"[DragMode] Controller ownership set for {'drag' if drag_enabled else 'trajectory'} mode"
         )
+        return True
+
+    def _ensure_drive_set_controllers_active(self) -> bool:
+        controller_states = self._get_controller_states()
+        if controller_states is None:
+            return False
+        if not self.switch_controller_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error('[DriveEnable] /controller_manager/switch_controller not available')
+            return False
+
+        request = SwitchController.Request()
+        request.strictness = 2
+        request.activate_asap = True
+        request.timeout = Duration(sec=2, nanosec=0)
+        request.activate_controllers = [
+            name for name in self._DRIVE_SET_CONTROLLER_NAMES
+            if controller_states.get(name) != 'active'
+        ]
+        request.deactivate_controllers = []
+
+        if not request.activate_controllers:
+            return True
+
+        self.get_logger().info(
+            f"[DriveEnable] Activating set controllers: {request.activate_controllers}"
+        )
+        future = self.switch_controller_client.call_async(request)
+        response = self._wait_for_service_future(future, timeout_s=3.0)
+        if response is None:
+            self.get_logger().error('[DriveEnable] Timed out activating set controllers')
+            return False
+        if not response.ok:
+            self.get_logger().error('[DriveEnable] Controller manager rejected set controller activation')
+            return False
         return True
 
     def _get_controller_states(self) -> dict[str, str] | None:
@@ -1518,7 +1691,8 @@ class RobotController(Node):
 
         enable_set_command = np.zeros(NUM_JOINTS, dtype=float)
         disable_set_command = np.zeros(NUM_JOINTS, dtype=float)
-        elapsed = max(0.0, time.monotonic() - transition_ts)
+        now = time.monotonic()
+        elapsed = max(0.0, now - transition_ts)
         if drag_enabled:
             if elapsed < self._drag_disable_pulse_s:
                 disable_set_command.fill(1.0)
@@ -1539,7 +1713,6 @@ class RobotController(Node):
         effort_command_raw = self._drag_nm_to_drive_units(effort_command)
         torque_offset_command_raw = self._drag_nm_to_drive_units(torque_offset)
 
-        now = time.monotonic()
         if now - last_diag_log_ts >= 1.0:
             mode_match = bool(np.all(np.abs(mode_display - target_mode) < 0.5))
             if drag_enabled and not mode_match:
@@ -1719,6 +1892,8 @@ class RobotController(Node):
             if faulted:
                 should_stop_motion = not self._ethercat_fault_stop_issued
                 self._ethercat_fault_stop_issued = True
+                with self._drive_enable_lock:
+                    self._drive_operation_enabled_requested = False
             else:
                 self._ethercat_fault_stop_issued = False
 
@@ -1737,6 +1912,46 @@ class RobotController(Node):
                 self.get_logger().error(
                     f'[EtherCAT] Failed to stop motion after slave state fault: {exc}'
                 )
+        if faulted:
+            self._maybe_attempt_ethercat_recovery(reason)
+
+    def _maybe_attempt_ethercat_recovery(self, reason: str):
+        if not bool(ETHERCAT_RECOVERY_ENABLED):
+            return
+        now = time.monotonic()
+        min_interval = max(float(ETHERCAT_RECOVERY_MIN_INTERVAL_S), 0.1)
+        with self._ethercat_fault_lock:
+            if now - self._ethercat_last_recovery_attempt_ts < min_interval:
+                return
+            self._ethercat_last_recovery_attempt_ts = now
+
+        try:
+            self.get_logger().warning(
+                f'[EtherCAT] Requesting slave recovery to OP after fault: {reason}'
+            )
+            result = subprocess.run(
+                ['ethercat', 'states', 'OP'],
+                capture_output=True,
+                text=True,
+                timeout=max(float(ETHERCAT_RECOVERY_CMD_TIMEOUT_S), 0.1),
+                check=False,
+            )
+        except Exception as exc:
+            self.get_logger().error(f'[EtherCAT] Recovery command failed: {exc}')
+            return
+
+        stdout = (result.stdout or '').strip()
+        stderr = (result.stderr or '').strip()
+        if result.returncode == 0:
+            detail = f' stdout={stdout!r}' if stdout else ''
+            self.get_logger().warning(
+                f'[EtherCAT] Recovery command issued: ethercat states OP{detail}'
+            )
+        else:
+            self.get_logger().error(
+                '[EtherCAT] Recovery command failed: '
+                f'code={result.returncode} stdout={stdout!r} stderr={stderr!r}'
+            )
 
     @property
     def active_execute_send_future(self):

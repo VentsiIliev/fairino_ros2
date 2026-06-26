@@ -496,7 +496,11 @@ def start_rest_server(
     @app.route("/drag/enable", methods=["POST"])
     def enable_drag():
         result = node.enable_drag_mode()
-        return jsonify({"success": True, **result})
+        return jsonify({
+            "success": False,
+            "error": "Drag mode is disabled because it is not fully implemented and tested",
+            **result,
+        }), 423
 
     @app.route("/drag/disable", methods=["POST"])
     def disable_drag():
@@ -506,6 +510,22 @@ def start_rest_server(
     @app.route("/drag/status", methods=["GET"])
     def drag_status():
         return jsonify(node.get_drag_mode_status())
+
+    @app.route("/drive/enable", methods=["POST"])
+    def enable_drive_operation():
+        result = node.set_drive_operation_enabled(True)
+        status = 200 if result.get("success", False) else 500
+        return jsonify(result), status
+
+    @app.route("/drive/disable", methods=["POST"])
+    def disable_drive_operation():
+        result = node.set_drive_operation_enabled(False)
+        status = 200 if result.get("success", False) else 500
+        return jsonify(result), status
+
+    @app.route("/drive/status", methods=["GET"])
+    def drive_operation_status():
+        return jsonify(node.get_drive_operation_status())
 
     # ------------------------------------------------------------------
     # Run server
