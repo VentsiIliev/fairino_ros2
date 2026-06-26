@@ -5,6 +5,7 @@ from copy import deepcopy
 import math
 import time
 import config
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -18,6 +19,7 @@ class TrajectoryExecutor:
         self._controller_client = controller_client
         self._last_sent_trajectory = None
         self._active_unwind_check = None
+        self._unwind_diag_timers = []
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
@@ -80,6 +82,177 @@ class TrajectoryExecutor:
                 f'{[round(p, 6) for p in point.positions]}'
             )
 
+    def _log_planned_trajectory_metrics(self, joint_trajectory):
+        if not bool(getattr(config, 'TRAJ_METRICS_ENABLED', True)):
+            return
+
+        points = list(getattr(joint_trajectory, 'points', []) or [])
+        joint_names = list(getattr(joint_trajectory, 'joint_names', []) or [])
+        if len(points) < 2 or not joint_names:
+            return
+
+        times = [self._duration_to_sec(point.time_from_start) for point in points]
+        duration = times[-1] - times[0]
+        if duration <= 1e-9:
+            return
+
+        peak_joint_rates = [0.0] * len(joint_names)
+        for prev_point, point, prev_t, point_t in zip(points, points[1:], times, times[1:]):
+            dt = point_t - prev_t
+            if dt <= 1e-9:
+                continue
+            for index, (prev_pos, pos) in enumerate(zip(prev_point.positions, point.positions)):
+                rate = abs(float(pos) - float(prev_pos)) / dt
+                if rate > peak_joint_rates[index]:
+                    peak_joint_rates[index] = rate
+
+        for point in points:
+            velocities = list(getattr(point, 'velocities', []) or [])
+            for index, velocity in enumerate(velocities[:len(peak_joint_rates)]):
+                peak_joint_rates[index] = max(peak_joint_rates[index], abs(float(velocity)))
+
+        joint_rate_text = ', '.join(
+            f'{name}={rate:.3f}'
+            for name, rate in zip(joint_names, peak_joint_rates)
+        )
+        self._node.get_logger().info(
+            f'[TRAJ_METRICS] joint_peak_rad_s: {joint_rate_text}'
+        )
+
+        tcp_samples = self._sample_tcp_positions_with_moveit_fk(joint_names, points, times)
+        if not tcp_samples:
+            return
+
+        path_length_m = 0.0
+        peak_speed_m_s = 0.0
+        segment_velocities = []
+        segment_times = []
+        for (prev_t, prev_pos), (point_t, pos) in zip(tcp_samples, tcp_samples[1:]):
+            dt = point_t - prev_t
+            if dt <= 1e-9:
+                continue
+            dx = pos[0] - prev_pos[0]
+            dy = pos[1] - prev_pos[1]
+            dz = pos[2] - prev_pos[2]
+            distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+            path_length_m += distance
+            speed = distance / dt
+            peak_speed_m_s = max(peak_speed_m_s, speed)
+            segment_velocities.append([dx / dt, dy / dt, dz / dt])
+            segment_times.append((prev_t + point_t) * 0.5)
+
+        peak_accel_m_s2 = 0.0
+        for prev_vel, vel, prev_t, t in zip(
+            segment_velocities,
+            segment_velocities[1:],
+            segment_times,
+            segment_times[1:],
+        ):
+            dt = t - prev_t
+            if dt <= 1e-9:
+                continue
+            dvx = vel[0] - prev_vel[0]
+            dvy = vel[1] - prev_vel[1]
+            dvz = vel[2] - prev_vel[2]
+            accel = math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz) / dt
+            peak_accel_m_s2 = max(peak_accel_m_s2, accel)
+
+        avg_speed_m_s = path_length_m / duration if duration > 1e-9 else 0.0
+        self._node.get_logger().info(
+            '[TRAJ_METRICS] tcp_linear '
+            f'path={path_length_m:.4f}m duration={duration:.3f}s '
+            f'avg_vel={avg_speed_m_s:.4f}m/s '
+            f'peak_vel={peak_speed_m_s:.4f}m/s '
+            f'peak_acc={peak_accel_m_s2:.4f}m/s^2'
+        )
+
+    def _sample_tcp_positions_with_moveit_fk(self, joint_names, points, times):
+        get_fk_client = getattr(self._node, 'get_fk_client', None)
+        if not callable(get_fk_client):
+            self._node.get_logger().warning(
+                '[TRAJ_METRICS] TCP metrics unavailable: FK client helper missing'
+            )
+            return []
+
+        fk_client = get_fk_client()
+        if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
+            self._node.get_logger().warning(
+                '[TRAJ_METRICS] TCP metrics unavailable: /compute_fk service unavailable'
+            )
+            return []
+
+        try:
+            from moveit_msgs.srv import GetPositionFK
+        except Exception as exc:
+            self._node.get_logger().warning(
+                f'[TRAJ_METRICS] TCP metrics unavailable: cannot import GetPositionFK ({exc})'
+            )
+            return []
+
+        sample_limit = max(
+            2,
+            int(getattr(config, 'TRAJ_METRICS_FK_SAMPLE_LIMIT', 80)),
+        )
+        if len(points) <= sample_limit:
+            sample_indices = list(range(len(points)))
+        else:
+            sample_indices = sorted({
+                round(index * (len(points) - 1) / (sample_limit - 1))
+                for index in range(sample_limit)
+            })
+
+        samples = []
+        timeout_s = max(
+            0.05,
+            float(getattr(config, 'TRAJ_METRICS_FK_TIMEOUT_S', 0.25)),
+        )
+        for index in sample_indices:
+            point = points[index]
+            request = GetPositionFK.Request()
+            request.header.frame_id = getattr(config, 'BASE_LINK', 'base_link')
+            request.fk_link_names = [getattr(config, 'EE_LINK', 'ee_link')]
+            request.robot_state.joint_state = JointState(
+                name=list(joint_names),
+                position=[float(value) for value in point.positions],
+            )
+            request.robot_state.is_diff = False
+
+            future = fk_client.call_async(request)
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                if future.done():
+                    break
+                time.sleep(0.002)
+
+            if not future.done():
+                self._node.get_logger().warning(
+                    '[TRAJ_METRICS] TCP metrics unavailable: /compute_fk timed out'
+                )
+                return []
+
+            response = future.result()
+            error_code = int(getattr(getattr(response, 'error_code', None), 'val', 0))
+            poses = list(getattr(response, 'pose_stamped', []) or [])
+            if error_code != 1 or not poses:
+                self._node.get_logger().warning(
+                    f'[TRAJ_METRICS] TCP metrics unavailable: /compute_fk failed '
+                    f'(error_code={error_code})'
+                )
+                return []
+
+            position = poses[0].pose.position
+            samples.append((
+                times[index],
+                [float(position.x), float(position.y), float(position.z)],
+            ))
+
+        if len(samples) < 2:
+            self._node.get_logger().warning(
+                '[TRAJ_METRICS] TCP metrics unavailable: fewer than 2 FK samples'
+            )
+            return []
+        return samples
+
     def _get_latest_joint_state_in_trajectory_order(self, joint_names):
         current_joint_state = getattr(self._node, 'current_joint_state', None)
         if current_joint_state is None:
@@ -124,6 +297,111 @@ class TrajectoryExecutor:
         self._node.get_logger().error(
             f'[Controller] Final joint error (actual - expected): {[round(v, 6) for v in errors]}'
         )
+
+    def _joint_value_from_latest_state(self, joint_name):
+        current_joint_state = getattr(self._node, 'current_joint_state', None)
+        if current_joint_state is None:
+            return None
+        names = list(getattr(current_joint_state, 'name', []) or [])
+        positions = list(getattr(current_joint_state, 'position', []) or [])
+        velocities = list(getattr(current_joint_state, 'velocity', []) or [])
+        if joint_name not in names:
+            return None
+        index = names.index(joint_name)
+        position = float(positions[index]) if index < len(positions) else None
+        velocity = float(velocities[index]) if index < len(velocities) else None
+        return position, velocity
+
+    def _log_unwind_diagnostics(self, label, joint_trajectory=None, unwind_check=None):
+        if not bool(getattr(config, 'EXECUTOR_UNWIND_DIAGNOSTICS_ENABLED', True)):
+            return
+
+        check = unwind_check or self._active_unwind_check
+        if check is None:
+            return
+
+        joint_name = str(check.get('joint_name') or '')
+        latest = self._joint_value_from_latest_state(joint_name)
+        if latest is None:
+            actual_text = 'actual=unavailable vel=unavailable'
+        else:
+            actual, velocity = latest
+            actual_text = (
+                f'actual={actual:.6f} '
+                f'vel={velocity:.6f}' if velocity is not None else f'actual={actual:.6f} vel=unavailable'
+            )
+
+        context = (
+            f'[UNWIND_DIAG] {label}: {joint_name} '
+            f'current={float(check.get("current_value", 0.0)):.6f} '
+            f'target={float(check.get("target_value", 0.0)):.6f} '
+            f'delta={float(check.get("delta", 0.0)):.6f} '
+            f'{actual_text}'
+        )
+
+        if joint_trajectory is not None and getattr(joint_trajectory, 'points', None):
+            joint_names = list(getattr(joint_trajectory, 'joint_names', []) or [])
+            if joint_name in joint_names:
+                index = joint_names.index(joint_name)
+                points = list(joint_trajectory.points)
+                first = float(points[0].positions[index])
+                second = float(points[1].positions[index]) if len(points) > 1 else first
+                last = float(points[-1].positions[index])
+                context += (
+                    f' commanded_first={first:.6f}'
+                    f' commanded_second={second:.6f}'
+                    f' commanded_last={last:.6f}'
+                    f' points={len(points)}'
+                )
+
+        self._node.get_logger().info(context)
+        format_drive_state = getattr(self._node, '_format_drive_state_snapshot', None)
+        if callable(format_drive_state):
+            self._node.get_logger().info(format_drive_state(f'unwind_{label}'))
+
+    def _schedule_unwind_diagnostics(self):
+        if not bool(getattr(config, 'EXECUTOR_UNWIND_DIAGNOSTICS_ENABLED', True)):
+            return
+        if self._active_unwind_check is None:
+            return
+
+        self._cancel_unwind_diagnostic_timers()
+        delays = getattr(config, 'EXECUTOR_UNWIND_DIAGNOSTIC_DELAYS_S', [0.2, 0.5, 1.0])
+        for raw_delay in delays:
+            try:
+                delay = float(raw_delay)
+            except (TypeError, ValueError):
+                continue
+            if delay <= 0.0:
+                continue
+
+            timer_ref = {'timer': None}
+
+            def _callback(delay_s=delay, holder=timer_ref):
+                timer = holder.get('timer')
+                if timer is not None:
+                    try:
+                        timer.cancel()
+                        self._node.destroy_timer(timer)
+                    except Exception:
+                        pass
+                    if timer in self._unwind_diag_timers:
+                        self._unwind_diag_timers.remove(timer)
+                self._log_unwind_diagnostics(f'accepted_plus_{delay_s:.1f}s')
+
+            timer = self._node.create_timer(delay, _callback)
+            timer_ref['timer'] = timer
+            self._unwind_diag_timers.append(timer)
+
+    def _cancel_unwind_diagnostic_timers(self):
+        timers = list(self._unwind_diag_timers)
+        self._unwind_diag_timers.clear()
+        for timer in timers:
+            try:
+                timer.cancel()
+                self._node.destroy_timer(timer)
+            except Exception:
+                pass
 
     def _soften_trajectory_start(self, joint_trajectory):
         """Insert a short ramp-in sequence after the live start state."""
@@ -189,6 +467,16 @@ class TrajectoryExecutor:
         return 2.0 * (velocity / acceleration) + (cruise_distance / velocity)
 
     @staticmethod
+    def _smoothstep5(fraction):
+        u = max(0.0, min(1.0, float(fraction)))
+        return u * u * u * (10.0 + u * (-15.0 + 6.0 * u))
+
+    @staticmethod
+    def _smoothstep5_derivative(fraction):
+        u = max(0.0, min(1.0, float(fraction)))
+        return 30.0 * u * u * (1.0 - u) * (1.0 - u)
+
+    @staticmethod
     def _clamp_percentage(value, default_percent=100.0):
         if value is None:
             return float(default_percent)
@@ -228,9 +516,15 @@ class TrajectoryExecutor:
         speed = max(base_speed * (vel_percent / 100.0), 1e-3)
         acceleration = max(base_acceleration * (acc_percent / 100.0), 1e-3)
         min_duration = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DURATION_S', 2.0))
+        distance = abs(delta)
+        # Dense smoothstep sampling is deliberately used for cable unwind.  The
+        # equivalent -2pi -> 0 branch change is mechanically real for the cable,
+        # so keep it monotonic and easy for the drive to track.
         duration_sec = max(
             min_duration,
-            self._estimate_point_to_point_duration(abs(delta), speed, acceleration),
+            self._estimate_point_to_point_duration(distance, speed, acceleration),
+            1.875 * distance / speed,
+            math.sqrt(5.8 * distance / acceleration),
         )
 
         traj = JointTrajectory()
@@ -241,19 +535,29 @@ class TrajectoryExecutor:
             float(getattr(config, 'EXECUTOR_POST_UNWIND_MAX_SEGMENT_RAD', 1.2)),
             1e-3,
         )
-        segment_count = max(1, int(math.ceil(abs(delta) / max_segment)))
-        unwind_velocity = delta / max(duration_sec, 1e-3)
+        sample_period = max(
+            float(getattr(config, 'EXECUTOR_POST_UNWIND_SAMPLE_PERIOD_S', 0.05)),
+            1e-3,
+        )
+        segment_count = max(
+            1,
+            int(math.ceil(distance / max_segment)),
+            int(math.ceil(duration_sec / sample_period)),
+        )
         points = []
         for step_index in range(segment_count + 1):
             fraction = step_index / segment_count
+            smooth_fraction = self._smoothstep5(fraction)
             positions = list(current_positions)
-            positions[joint_index] = current_value + delta * fraction
+            positions[joint_index] = current_value + delta * smooth_fraction
 
             point = JointTrajectoryPoint()
             point.positions = positions
             velocities = [0.0] * len(positions)
             if 0 < step_index < segment_count:
-                velocities[joint_index] = unwind_velocity
+                velocities[joint_index] = (
+                    delta * self._smoothstep5_derivative(fraction) / max(duration_sec, 1e-3)
+                )
             point.velocities = velocities
             point.accelerations = [0.0] * len(positions)
             point.time_from_start = self._sec_to_duration(duration_sec * fraction)
@@ -621,6 +925,7 @@ class TrajectoryExecutor:
             copied_check['joint_names'] = list(joint_trajectory.joint_names)
             copied_check.pop('trajectory', None)
             self._active_unwind_check = copied_check
+            self._log_unwind_diagnostics('submit', joint_trajectory, copied_check)
 
         if len(joint_trajectory.points) > 0:
             last_point = joint_trajectory.points[-1]
@@ -636,6 +941,7 @@ class TrajectoryExecutor:
             self._node.get_logger().info(
                 f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
             self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+            self._log_planned_trajectory_metrics(joint_trajectory)
             self._log_final_trajectory_segment(joint_trajectory)
         else:
             time_tolerance_sec = config.EXECUTOR_TIME_MIN_S
@@ -687,6 +993,9 @@ class TrajectoryExecutor:
             self._node.get_logger().info(
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
+            if self._active_unwind_check is not None:
+                self._log_unwind_diagnostics('accepted')
+                self._schedule_unwind_diagnostics()
             self._motion.active_controller_goal = goal_handle
             result_future = goal_handle.get_result_async()
             result_future.add_done_callback(self._on_controller_goal_result)
@@ -749,12 +1058,15 @@ class TrajectoryExecutor:
             else:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution failed with error: {result.error_code}')
+                if active_unwind_check is not None:
+                    self._log_unwind_diagnostics('failed_result')
                 self._log_final_tracking_error()
                 self._motion.last_move_result = result.error_code
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Result error: {e}')
             self._motion.last_move_result = -1
         finally:
+            self._cancel_unwind_diagnostic_timers()
             self._motion.active_controller_goal = None
             self._active_unwind_check = None
             lock_released = False

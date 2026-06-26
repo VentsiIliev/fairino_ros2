@@ -196,7 +196,7 @@ private:
 
     bool fkWithinTolerance(
         moveit::core::RobotState& state,
-        const std::vector<std::string>& joint_names,
+        const std::vector<int>& variable_indices,
         const std::vector<double>& positions,
         const std::string& link_name,
         const geometry_msgs::msg::Pose& target_pose,
@@ -205,7 +205,7 @@ private:
         double* position_error_mm = nullptr,
         double* orientation_error_deg = nullptr)
     {
-        state.setVariablePositions(joint_names, positions);
+        setVariablePositionsByIndex(state, variable_indices, positions);
         state.update();
         const auto& actual_tf = state.getGlobalLinkTransform(link_name);
         const double pos_error = positionErrorMm(target_pose, actual_tf);
@@ -221,9 +221,42 @@ private:
         return pos_error <= position_tolerance_mm && ori_error <= orientation_tolerance_deg;
     }
 
+    void setVariablePositionsByIndex(
+        moveit::core::RobotState& state,
+        const std::vector<int>& variable_indices,
+        const std::vector<double>& positions) const
+    {
+        for (std::size_t j = 0; j < variable_indices.size(); ++j)
+        {
+            state.setVariablePosition(variable_indices[j], positions[j]);
+        }
+    }
+
+    bool copyVariablePositionsByIndex(
+        const moveit::core::RobotState& state,
+        const std::vector<int>& variable_indices,
+        const std::vector<double>& previous_positions,
+        double max_step_rad,
+        std::vector<double>& positions) const
+    {
+        positions.resize(variable_indices.size());
+        for (std::size_t j = 0; j < variable_indices.size(); ++j)
+        {
+            const double value = nearestEquivalentAngle(
+                previous_positions[j],
+                state.getVariablePosition(variable_indices[j]));
+            if (std::abs(value - previous_positions[j]) > max_step_rad)
+            {
+                return false;
+            }
+            positions[j] = value;
+        }
+        return true;
+    }
+
     std::size_t smoothSolvedPoints(
         const std::shared_ptr<ComputeContourIK::Request>& request,
-        const std::vector<std::string>& joint_names,
+        const std::vector<int>& variable_indices,
         const std::string& link_name,
         double max_step_rad,
         moveit::core::RobotState& state,
@@ -260,6 +293,7 @@ private:
         double max_joint_adjustment = 0.0;
         double max_position_error_mm = 0.0;
         double max_orientation_error_deg = 0.0;
+        std::vector<double> candidate;
 
         for (std::size_t iter = 0; iter < iterations; ++iter)
         {
@@ -267,7 +301,7 @@ private:
             for (std::size_t i = 1; i + 1 < solved_points.size(); ++i)
             {
                 const double smoothing_candidate_started_s = steadySeconds();
-                std::vector<double> candidate = solved_points[i];
+                candidate = solved_points[i];
                 double candidate_adjustment = 0.0;
                 bool step_ok = true;
                 for (std::size_t j = 0; j < candidate.size(); ++j)
@@ -298,7 +332,7 @@ private:
                 const double smoothing_fk_started_s = steadySeconds();
                 if (!fkWithinTolerance(
                         state,
-                        joint_names,
+                        variable_indices,
                         candidate,
                         link_name,
                         request->poses[i],
@@ -358,6 +392,7 @@ private:
         const std::shared_ptr<ComputeContourIK::Request>& request,
         const std::shared_ptr<ComputeContourIK::Response>& response,
         const std::vector<std::string>& joint_names,
+        const std::vector<int>& variable_indices,
         const std::string& link_name,
         const std::unordered_set<std::string>& full_turn_joints,
         double fk_pos_tol_mm,
@@ -382,7 +417,7 @@ private:
             double ori_error_deg = 0.0;
             if (!fkWithinTolerance(
                     state,
-                    joint_names,
+                    variable_indices,
                     solved_points[i],
                     link_name,
                     request->poses[i],
@@ -492,7 +527,7 @@ private:
         const moveit::core::JointModelGroup* joint_model_group,
         const geometry_msgs::msg::Pose& pose,
         const std::string& link_name,
-        const std::vector<std::string>& joint_names,
+        const std::vector<int>& variable_indices,
         const std::vector<double>& previous_positions,
         const std::vector<double>& seed_positions,
         double timeout_s,
@@ -500,7 +535,7 @@ private:
         std::vector<double>& candidate_positions,
         TimingStats* timing_stats = nullptr)
     {
-        state.setVariablePositions(joint_names, seed_positions);
+        setVariablePositionsByIndex(state, variable_indices, seed_positions);
         state.update();
 
         moveit::core::GroupStateValidityCallbackFn local_continuity_cb =
@@ -510,9 +545,9 @@ private:
             {
                 double max_delta = 0.0;
 
-                for (std::size_t j = 0; j < joint_names.size(); ++j)
+                for (std::size_t j = 0; j < variable_indices.size(); ++j)
                 {
-                    double value = candidate_state->getVariablePosition(joint_names[j]);
+                    double value = candidate_state->getVariablePosition(variable_indices[j]);
                     value = nearestEquivalentAngle(previous_positions[j], value);
                     max_delta = std::max(max_delta, std::abs(value - previous_positions[j]));
                 }
@@ -541,18 +576,14 @@ private:
             return false;
         }
 
-        candidate_positions.clear();
-        candidate_positions.reserve(joint_names.size());
-        for (std::size_t j = 0; j < joint_names.size(); ++j)
+        if (!copyVariablePositionsByIndex(
+                state,
+                variable_indices,
+                previous_positions,
+                max_step_rad,
+                candidate_positions))
         {
-            const double value = nearestEquivalentAngle(
-                previous_positions[j],
-                state.getVariablePosition(joint_names[j]));
-            if (std::abs(value - previous_positions[j]) > max_step_rad)
-            {
-                return false;
-            }
-            candidate_positions.push_back(value);
+            return false;
         }
         if (timing_stats)
         {
@@ -566,7 +597,7 @@ private:
         const moveit::core::JointModelGroup* joint_model_group,
         const geometry_msgs::msg::Pose& pose,
         const std::string& link_name,
-        const std::vector<std::string>& joint_names,
+        const std::vector<int>& variable_indices,
         const std::vector<double>& previous_positions,
         const std::vector<double>* previous_previous_positions,
         double timeout_s,
@@ -600,18 +631,19 @@ private:
 
         bool found = false;
         std::vector<double> best_positions;
+        std::vector<double> candidate_positions;
+        candidate_positions.reserve(previous_positions.size());
         double best_score = std::numeric_limits<double>::infinity();
 
         for (const auto& seed_positions : seed_candidates)
         {
-            std::vector<double> candidate_positions;
             const double candidate_eval_started_s = steadySeconds();
             if (!solveLocalIKCandidate(
                     state,
                     joint_model_group,
                     pose,
                     link_name,
-                    joint_names,
+                    variable_indices,
                     previous_positions,
                     seed_positions,
                     timeout_s,
@@ -645,7 +677,7 @@ private:
                 {
                     timing_stats->candidate_eval_s += steadySeconds() - candidate_eval_started_s;
                 }
-                state.setVariablePositions(joint_names, candidate_positions);
+                setVariablePositionsByIndex(state, variable_indices, candidate_positions);
                 state.update();
                 return true;
             }
@@ -666,7 +698,7 @@ private:
             return false;
         }
 
-        state.setVariablePositions(joint_names, best_positions);
+        setVariablePositionsByIndex(state, variable_indices, best_positions);
         state.update();
         return true;
     }
@@ -731,12 +763,28 @@ private:
             request->full_turn_joint_names.begin(),
             request->full_turn_joint_names.end());
 
+        const std::vector<std::string> output_joint_names = request->seed_state.name;
+        std::vector<int> output_variable_indices;
+        output_variable_indices.reserve(output_joint_names.size());
+        try
+        {
+            for (const auto& joint_name : output_joint_names)
+            {
+                output_variable_indices.push_back(
+                    static_cast<int>(model_->getVariableIndex(joint_name)));
+            }
+        }
+        catch (const std::exception& exc)
+        {
+            fail(response, ERROR_INVALID_REQUEST, std::string("seed_state contains unknown joint: ") + exc.what());
+            return;
+        }
+
         moveit::core::RobotState state(model_);
         state.setToDefaultValues();
-        state.setVariablePositions(request->seed_state.name, request->seed_state.position);
+        setVariablePositionsByIndex(state, output_variable_indices, request->seed_state.position);
         state.update();
 
-        const std::vector<std::string> output_joint_names = request->seed_state.name;
         std::vector<double> previous_positions = request->seed_state.position;
         std::vector<double> previous_previous_positions;
         std::vector<std::vector<double>> solved_points;
@@ -760,7 +808,7 @@ private:
                 joint_model_group,
                 request->poses[pose_index],
                 link_name,
-                output_joint_names,
+                output_variable_indices,
                 previous_positions,
                 previous_previous,
                 solve_timeout_s,
@@ -777,7 +825,7 @@ private:
                     joint_model_group,
                     request->poses[pose_index],
                     link_name,
-                    output_joint_names,
+                    output_variable_indices,
                     previous_positions,
                     previous_previous,
                     retry_timeout_s,
@@ -788,28 +836,27 @@ private:
             return ok;
         };
 
+        std::vector<double> accepted_positions;
+        accepted_positions.reserve(output_joint_names.size());
         auto accept_current_state = [&](std::size_t pose_index) -> bool
         {
-            state.update();
-            std::vector<double> positions;
-            positions.reserve(output_joint_names.size());
-            for (std::size_t j = 0; j < output_joint_names.size(); ++j)
+            if (!copyVariablePositionsByIndex(
+                    state,
+                    output_variable_indices,
+                    previous_positions,
+                    std::numeric_limits<double>::infinity(),
+                    accepted_positions))
             {
-                double value = state.getVariablePosition(output_joint_names[j]);
-                value = nearestEquivalentAngle(previous_positions[j], value);
-                positions.push_back(value);
+                return false;
             }
-
-            state.setVariablePositions(output_joint_names, positions);
-            state.update();
 
             double pos_error_mm = 0.0;
             double ori_error_deg = 0.0;
             const double per_point_fk_started_s = steadySeconds();
             if (!fkWithinTolerance(
                     state,
-                    output_joint_names,
-                    positions,
+                    output_variable_indices,
+                    accepted_positions,
                     link_name,
                     request->poses[pose_index],
                     fk_pos_tol_mm,
@@ -828,9 +875,9 @@ private:
             timing_stats.per_point_fk_s += steadySeconds() - per_point_fk_started_s;
 
             double max_step = 0.0;
-            for (std::size_t j = 0; j < positions.size(); ++j)
+            for (std::size_t j = 0; j < accepted_positions.size(); ++j)
             {
-                max_step = std::max(max_step, std::abs(positions[j] - previous_positions[j]));
+                max_step = std::max(max_step, std::abs(accepted_positions[j] - previous_positions[j]));
             }
             response->max_joint_step_rad =
                 std::max(response->max_joint_step_rad, max_step);
@@ -844,9 +891,9 @@ private:
                 return false;
             }
 
-            solved_points.push_back(positions);
+            solved_points.push_back(accepted_positions);
             previous_previous_positions = previous_positions;
-            previous_positions = positions;
+            previous_positions = accepted_positions;
             return true;
         };
 
@@ -869,7 +916,7 @@ private:
                     previous_previous_positions = request->seed_state.position;
                 }
             }
-            state.setVariablePositions(output_joint_names, previous_positions);
+            setVariablePositionsByIndex(state, output_variable_indices, previous_positions);
             state.update();
         };
 
@@ -937,7 +984,7 @@ private:
         const double max_curvature_before_smoothing = trajectoryMaxCurvature(solved_points);
         const std::size_t smoothing_updates = smoothSolvedPoints(
             request,
-            output_joint_names,
+            output_variable_indices,
             link_name,
             max_step_rad,
             state,
@@ -951,6 +998,7 @@ private:
                 request,
                 response,
                 output_joint_names,
+                output_variable_indices,
                 link_name,
                 full_turn_joints,
                 fk_pos_tol_mm,
