@@ -20,6 +20,7 @@ class TrajectoryExecutor:
         self._last_sent_trajectory = None
         self._active_unwind_check = None
         self._unwind_diag_timers = []
+        self._unwind_cancel_reason = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
@@ -359,6 +360,78 @@ class TrajectoryExecutor:
         if callable(format_drive_state):
             self._node.get_logger().info(format_drive_state(f'unwind_{label}'))
 
+    def _get_unwind_drive_state(self, unwind_check):
+        joint_name = str(unwind_check.get('joint_name') or '')
+        joint_index = unwind_check.get('joint_index')
+        drag_order = list(getattr(self._node, '_drag_joint_order', []) or [])
+        if joint_name in drag_order:
+            joint_index = drag_order.index(joint_name)
+
+        try:
+            joint_index = int(joint_index)
+        except (TypeError, ValueError):
+            return None
+
+        drag_lock = getattr(self._node, '_drag_lock', None)
+        status_values = None
+        if drag_lock is not None:
+            with drag_lock:
+                statusword = getattr(self._node, '_drag_statusword', None)
+                if statusword is not None:
+                    status_values = [int(round(value)) for value in statusword.tolist()]
+        if status_values is None:
+            return None
+        if joint_index < 0 or joint_index >= len(status_values):
+            return None
+
+        statusword = status_values[joint_index]
+        decode_state = getattr(self._node, '_decode_statusword_state', None)
+        decode_bits = getattr(self._node, '_decode_statusword_bits', None)
+        state = decode_state(statusword) if callable(decode_state) else ''
+        bits = decode_bits(statusword) if callable(decode_bits) else ''
+        return {
+            'joint_name': joint_name,
+            'joint_index': joint_index,
+            'statusword': statusword,
+            'state': state,
+            'bits': bits,
+        }
+
+    def _cancel_active_unwind_if_drive_disabled(self, label):
+        if not bool(getattr(config, 'EXECUTOR_UNWIND_CANCEL_ON_DRIVE_DISABLE', True)):
+            return False
+        unwind_check = self._active_unwind_check
+        if unwind_check is None:
+            return False
+
+        drive_state = self._get_unwind_drive_state(unwind_check)
+        if drive_state is None:
+            return False
+        if drive_state['state'] == 'operation_enabled':
+            return False
+
+        reason = (
+            f"explicit {drive_state['joint_name']} unwind cancelled after drive left "
+            f"operation_enabled at {label}: statusword={drive_state['statusword']} "
+            f"state={drive_state['state']} bits={drive_state['bits']}"
+        )
+        if self._unwind_cancel_reason == reason:
+            return True
+        self._unwind_cancel_reason = reason
+        self._node.get_logger().error(f'[Controller] {reason}')
+
+        goal_handle = None
+        with self._motion.lock:
+            goal_handle = self._motion.active_controller_goal
+        if goal_handle is not None:
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception as exc:
+                self._node.get_logger().error(
+                    f'[Controller] Failed to cancel explicit unwind after drive disable: {exc}'
+                )
+        return True
+
     def _schedule_unwind_diagnostics(self):
         if not bool(getattr(config, 'EXECUTOR_UNWIND_DIAGNOSTICS_ENABLED', True)):
             return
@@ -388,6 +461,7 @@ class TrajectoryExecutor:
                     if timer in self._unwind_diag_timers:
                         self._unwind_diag_timers.remove(timer)
                 self._log_unwind_diagnostics(f'accepted_plus_{delay_s:.1f}s')
+                self._cancel_active_unwind_if_drive_disabled(f'accepted_plus_{delay_s:.1f}s')
 
             timer = self._node.create_timer(delay, _callback)
             timer_ref['timer'] = timer
@@ -920,6 +994,7 @@ class TrajectoryExecutor:
         controller_goal.goal_tolerance = goal_tolerance
         self._last_sent_trajectory = deepcopy(joint_trajectory)
         self._active_unwind_check = None
+        self._unwind_cancel_reason = None
         if unwind_check is not None:
             copied_check = dict(unwind_check)
             copied_check['joint_names'] = list(joint_trajectory.joint_names)
@@ -993,10 +1068,11 @@ class TrajectoryExecutor:
             self._node.get_logger().info(
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
+            self._motion.active_controller_goal = goal_handle
             if self._active_unwind_check is not None:
                 self._log_unwind_diagnostics('accepted')
                 self._schedule_unwind_diagnostics()
-            self._motion.active_controller_goal = goal_handle
+                self._cancel_active_unwind_if_drive_disabled('accepted')
             result_future = goal_handle.get_result_async()
             result_future.add_done_callback(self._on_controller_goal_result)
         except Exception as e:
@@ -1059,6 +1135,10 @@ class TrajectoryExecutor:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution failed with error: {result.error_code}')
                 if active_unwind_check is not None:
+                    if self._unwind_cancel_reason:
+                        self._node.get_logger().error(
+                            f'[Controller] {self._unwind_cancel_reason}'
+                        )
                     self._log_unwind_diagnostics('failed_result')
                 self._log_final_tracking_error()
                 self._motion.last_move_result = result.error_code
@@ -1069,6 +1149,7 @@ class TrajectoryExecutor:
             self._cancel_unwind_diagnostic_timers()
             self._motion.active_controller_goal = None
             self._active_unwind_check = None
+            self._unwind_cancel_reason = None
             lock_released = False
             if self._motion.execution_lock.locked():
                 self._motion.execution_lock.release()
