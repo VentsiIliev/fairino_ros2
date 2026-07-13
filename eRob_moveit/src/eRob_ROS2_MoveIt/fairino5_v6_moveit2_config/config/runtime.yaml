@@ -145,6 +145,9 @@ DEFAULT_JERK_SCALING: 0.5
 # Whether jog moves should be collision checked.
 JOG_AVOID_COLLISIONS: false
 
+# Maximum RX/RY/RZ delta per interpolated rotational jog waypoint.
+JOG_MAX_ORIENTATION_STEP_DEG: 5.0
+
 # Fallback TCP orientation [rx, ry, rz] in degrees.
 DEFAULT_ORIENTATION:
 - 180.0

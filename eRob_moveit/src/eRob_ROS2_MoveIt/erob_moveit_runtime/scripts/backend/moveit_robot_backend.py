@@ -2,6 +2,7 @@
 from enums import RobotAxis, Direction
 from time import perf_counter
 from threading import Event
+import math
 import time
 import config
 from backend.i_robot_backend import IRobotBackend
@@ -639,25 +640,35 @@ class MoveItRobotBackend(IRobotBackend):
         x, y, z, rx, ry, rz = current_pos_wobj
         deltas = [0.0] * 6
         deltas[axis_val - 1] = step * dir_val
-
-        new_pos_base = self.apply_workobject([
+        target_pos_wobj = [
             x + deltas[0], y + deltas[1], z + deltas[2],
             rx + deltas[3], ry + deltas[4], rz + deltas[5]
-        ])
+        ]
+
+        new_pos_base = self.apply_workobject(target_pos_wobj)
 
         vel_scale = max(0.0, min(1.0, vel / 100.0))
         acc_scale = max(0.0, min(1.0, acc / 100.0))
 
         try:
-            x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
-            from config import resolve_avoid_collisions
-            avoid_collisions = resolve_avoid_collisions(getattr(config, 'JOG_AVOID_COLLISIONS', True))
-            result = self.node.send_cartesian_goal(
-                x_b, y_b, z_b, rx_b, ry_b, rz_b,
-                vel_scale=vel_scale, acc_scale=acc_scale,
-                queue_if_busy=False,
-                avoid_collisions=avoid_collisions,
-            )
+            if axis_val >= 4 and self._should_interpolate_rotational_jog(deltas[axis_val - 1]):
+                result = self._send_rotational_jog_path(
+                    current_pos_wobj,
+                    target_pos_wobj,
+                    axis_val - 1,
+                    vel_scale,
+                    acc_scale,
+                )
+            else:
+                x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
+                from config import resolve_avoid_collisions
+                avoid_collisions = resolve_avoid_collisions(getattr(config, 'JOG_AVOID_COLLISIONS', True))
+                result = self.node.send_cartesian_goal(
+                    x_b, y_b, z_b, rx_b, ry_b, rz_b,
+                    vel_scale=vel_scale, acc_scale=acc_scale,
+                    queue_if_busy=False,
+                    avoid_collisions=avoid_collisions,
+                )
             if result != 0:
                 return result
 
@@ -680,6 +691,46 @@ class MoveItRobotBackend(IRobotBackend):
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
             return -1
+
+    @staticmethod
+    def _rotational_jog_max_step_deg():
+        return max(0.1, float(getattr(config, 'JOG_MAX_ORIENTATION_STEP_DEG', 5.0)))
+
+    def _should_interpolate_rotational_jog(self, angular_delta_deg):
+        return abs(float(angular_delta_deg)) > self._rotational_jog_max_step_deg()
+
+    def _send_rotational_jog_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+        angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
+        max_step = self._rotational_jog_max_step_deg()
+        step_count = max(2, int(math.ceil(abs(angular_delta) / max_step)))
+        waypoints_base = []
+        for step_index in range(1, step_count + 1):
+            alpha = step_index / float(step_count)
+            waypoint = list(current_pos_wobj[:6])
+            waypoint[3] = float(current_pos_wobj[3]) + (float(target_pos_wobj[3]) - float(current_pos_wobj[3])) * alpha
+            waypoint[4] = float(current_pos_wobj[4]) + (float(target_pos_wobj[4]) - float(current_pos_wobj[4])) * alpha
+            waypoint[5] = float(current_pos_wobj[5]) + (float(target_pos_wobj[5]) - float(current_pos_wobj[5])) * alpha
+            waypoints_base.append(list(self.apply_workobject(waypoint)[:6]))
+
+        target_base = waypoints_base[-1]
+        self.node.get_logger().info(
+            f'[JOG] Rotational jog path: axis_index={rotation_index} '
+            f'delta={angular_delta:.3f}deg waypoints={len(waypoints_base)} '
+            f'max_step={max_step:.3f}deg'
+        )
+        from motion.strategies import PathStrategy
+        return self.node.execute(
+            PathStrategy(
+                waypoints_base,
+                target_base[3],
+                target_base[4],
+                target_base[5],
+                vel_scale,
+                acc_scale,
+                orientation_mode='per_waypoint',
+            ),
+            queue_if_busy=False,
+        )
 
     def enable(self):
         """
