@@ -11,6 +11,7 @@ class PlannerContext:
         motion_queue,
         safety_manager,
         cart_path_client,
+        sequence_client,
         ipp_client,
         trajectory_executor,
         planner_support,
@@ -22,6 +23,7 @@ class PlannerContext:
         self.motion_queue = motion_queue
         self.safety_manager = safety_manager
         self.cart_path_client = cart_path_client
+        self.sequence_client = sequence_client
         self.ipp_client = ipp_client
         self.trajectory_executor = trajectory_executor
         self.trajectory_optimizer = trajectory_optimizer
@@ -48,6 +50,12 @@ class PlannerContext:
 
     def wait_for_cartesian_path_service(self, timeout_sec=1.0):
         return self.cart_path_client.wait_for_service(timeout_sec=timeout_sec)
+
+    def request_motion_sequence(self, request):
+        return self.sequence_client.call_async(request)
+
+    def wait_for_motion_sequence_service(self, timeout_sec=1.0):
+        return self.sequence_client.wait_for_service(timeout_sec=timeout_sec)
 
     def force_safety_update(self):
         self.safety_manager.force_update()

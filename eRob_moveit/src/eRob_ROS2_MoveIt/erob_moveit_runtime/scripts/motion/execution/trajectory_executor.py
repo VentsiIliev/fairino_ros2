@@ -1109,6 +1109,7 @@ class TrajectoryExecutor:
                 if (
                     active_unwind_check is None
                     and queue_size == 0
+                    and not bool(getattr(self._node, "_suppress_post_success_unwind", False))
                     and not self._should_skip_post_success_unwind()
                 ):
                     queued_unwind = self._build_post_success_unwind_trajectory()

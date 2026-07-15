@@ -412,6 +412,180 @@ class MoveItRobotBackend(IRobotBackend):
 
         return 0
 
+    def execute_sequence(self, segments, tool=0, user=0, blocking=True):
+        started_at = perf_counter()
+        if not segments:
+            return -1
+        drive_error = self._reject_if_drive_not_enabled("EXECUTE_SEQUENCE")
+        if drive_error is not None:
+            return drive_error
+        if self.node is not None and not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[EXECUTE_SEQUENCE] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+        try:
+            tool_transform = self.node.get_tool_transform(tool)
+            sequence_segments = []
+            for segment in segments:
+                position_base = self.apply_workobject(segment["position"], user_id=user)
+                sequence_segments.append({
+                    "position": position_base,
+                    "vel": float(segment["vel"]),
+                    "acc": float(segment["acc"]),
+                    "motion_type": str(segment.get("motion_type", "linear")),
+                    "blend_radius": float(segment.get("blend_radius", 0.0)),
+                })
+            from motion.strategies import SequenceStrategy
+            result = self.node.execute(SequenceStrategy(
+                sequence_segments,
+                tool_transform=tool_transform,
+            ))
+            self.node.get_logger().info(
+                f"[TIMING] backend_execute_sequence submitted blocking={bool(blocking)} "
+                f"result={result} segments={len(sequence_segments)} elapsed_s={perf_counter() - started_at:.3f}"
+            )
+            if result != 0:
+                if blocking and result > 0:
+                    task_id = getattr(self.node, 'last_submitted_task_id', None)
+                    if task_id is not None:
+                        waited = self.node.motion_queue.wait_for_task(task_id, config.BLOCKING_MOVE_TIMEOUT_S)
+                        if waited is None:
+                            self.node.get_logger().error(
+                                f"[EXECUTE_SEQUENCE] Timed out waiting for queued sequence task #{task_id} to complete")
+                            return -1
+                        return waited
+                return result
+
+            if blocking:
+                import time
+                wait_started_at = perf_counter()
+                deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
+                while self.node.is_executing and time.time() < deadline:
+                    time.sleep(0.05)
+                if self.node.is_executing:
+                    self.node.get_logger().error(
+                        f"[EXECUTE_SEQUENCE] Timed out waiting for sequence after {config.BLOCKING_MOVE_TIMEOUT_S}s")
+                    return -1
+                self.node.get_logger().info(
+                    f"[TIMING] backend_execute_sequence blocking_wait elapsed_s={perf_counter() - wait_started_at:.3f} "
+                    f"total_elapsed_s={perf_counter() - started_at:.3f}"
+                )
+                return self.node.last_move_result
+
+            return 0
+        except Exception as e:
+            print(f"execute_sequence error: {e}")
+            return -1
+
+    def execute_custom_sequence(self, segments, tool=0, user=0, blocking=True):
+        started_at = perf_counter()
+        if self.node is None:
+            return -1
+        if not segments:
+            return -1
+        drive_error = self._reject_if_drive_not_enabled("EXECUTE_CUSTOM_SEQUENCE")
+        if drive_error is not None:
+            return drive_error
+        if self.node is not None and not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[EXECUTE_CUSTOM_SEQUENCE] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+        try:
+            tool_transform = self.node.get_tool_transform(tool)
+            custom_segments = []
+            for segment in segments:
+                position_base = self.apply_workobject(segment["position"], user_id=user)
+                custom_segments.append({
+                    "label": str(segment.get("label", "")),
+                    "position": position_base,
+                    "vel": float(segment["vel"]),
+                    "acc": float(segment["acc"]),
+                    "motion_type": str(segment.get("motion_type", "linear")),
+                })
+
+            from motion.planning.custom_sequence import execute_custom_sequence
+            result = execute_custom_sequence(
+                self.node,
+                custom_segments,
+                tool_transform=tool_transform,
+            )
+            self.node.get_logger().info(
+                f"[TIMING] backend_execute_custom_sequence blocking={bool(blocking)} "
+                f"result={result} segments={len(custom_segments)} elapsed_s={perf_counter() - started_at:.3f}"
+            )
+            return result
+        except Exception as e:
+            print(f"execute_custom_sequence error: {e}")
+            return -1
+
+    def execute_staged_path(
+        self,
+        stage_position,
+        path,
+        tool=0,
+        user=0,
+        stage_vel=0.6,
+        stage_acc=0.4,
+        path_vel=0.6,
+        path_acc=0.4,
+        blocking=True,
+        trajectory_optimizer=None,
+    ):
+        started_at = perf_counter()
+        if self.node is None or not stage_position or not path:
+            return -1
+        drive_error = self._reject_if_drive_not_enabled("EXECUTE_STAGED_PATH")
+        if drive_error is not None:
+            return drive_error
+        if not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[EXECUTE_STAGED_PATH] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+        try:
+            tool_transform = self.node.get_tool_transform(tool)
+            stage_position_base = self.apply_workobject(list(stage_position[:6]), user_id=user)
+            path_base = []
+            for waypoint in path:
+                if len(waypoint) >= 6:
+                    wp_full = list(waypoint[:6])
+                else:
+                    current = self.get_current_position() or [0, 0, 0, *config.DEFAULT_ORIENTATION]
+                    wp_full = [waypoint[0], waypoint[1], waypoint[2], current[3], current[4], current[5]]
+                path_base.append(list(self.apply_workobject(wp_full, user_id=user)[:6]))
+
+            selected_optimizer = trajectory_optimizer
+            if not selected_optimizer:
+                selected_optimizer = str(
+                    getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
+                ).strip().upper() or None
+
+            from motion.planning.staged_path import execute_staged_path
+            result = execute_staged_path(
+                self.node,
+                stage_position=list(stage_position_base[:6]),
+                command_path=path_base,
+                stage_vel=float(stage_vel),
+                stage_acc=float(stage_acc),
+                path_vel=float(path_vel),
+                path_acc=float(path_acc),
+                tool_transform=tool_transform,
+                trajectory_optimizer_name=selected_optimizer,
+            )
+            self.node.get_logger().info(
+                f"[TIMING] backend_execute_staged_path blocking={bool(blocking)} "
+                f"result={result} waypoints={len(path_base)} elapsed_s={perf_counter() - started_at:.3f}"
+            )
+            return result
+        except Exception as e:
+            print(f"execute_staged_path error: {e}")
+            return -1
+
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
         if self.node is None:
             return -1

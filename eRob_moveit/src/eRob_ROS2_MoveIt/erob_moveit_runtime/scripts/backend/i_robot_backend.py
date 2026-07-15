@@ -29,6 +29,27 @@ class IRobotBackend(ABC):
     ): ...
 
     @abstractmethod
+    def execute_sequence(self, segments, tool=0, user=0, blocking=True): ...
+
+    @abstractmethod
+    def execute_custom_sequence(self, segments, tool=0, user=0, blocking=True): ...
+
+    @abstractmethod
+    def execute_staged_path(
+        self,
+        stage_position,
+        path,
+        tool=0,
+        user=0,
+        stage_vel=0.6,
+        stage_acc=0.4,
+        path_vel=0.6,
+        path_acc=0.4,
+        blocking=True,
+        trajectory_optimizer=None,
+    ): ...
+
+    @abstractmethod
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None): ...
 
     @abstractmethod

@@ -90,6 +90,7 @@ from config import (
     WS_EXTRACT_RETRY_DELAY,
     ACTION_FOLLOW_TRAJECTORY,
     SERVICE_CARTESIAN_PATH,
+    SERVICE_MOTION_SEQUENCE,
     SERVICE_APPLY_IPP,
     COLLISION_TIP_LINK,
     BASE_LINK,
@@ -239,6 +240,7 @@ class RobotController(Node):
             '/controller_manager/switch_controller',
         )
         self.cart_path_client = self.create_client(GetCartesianPath, SERVICE_CARTESIAN_PATH)
+        self.sequence_client = self.create_client(GetMotionSequence, SERVICE_MOTION_SEQUENCE)
         self.ipp_client = self.create_client(ApplyIPP, SERVICE_APPLY_IPP)
         self.trajectory_executor = TrajectoryExecutor(
             node=self,
@@ -260,6 +262,7 @@ class RobotController(Node):
             motion_queue=self.motion_queue,
             safety_manager=self.safety_manager,
             cart_path_client=self.cart_path_client,
+            sequence_client=self.sequence_client,
             ipp_client=self.ipp_client,
             trajectory_executor=self.trajectory_executor,
             planner_support=self.planner_support,

@@ -110,15 +110,15 @@ def _direct_ik_should_run(robot_controller, waypoints_6d, total_dist_mm: float) 
     return True
 
 
-def _build_direct_contour_trajectory(robot_controller, poses) -> ContourIkExecution:
+def _build_direct_contour_trajectory(robot_controller, poses, seed_state=None) -> ContourIkExecution:
     if bool(getattr(config, "CONTOUR_BATCH_IK_ENABLED", True)):
-        batched = _build_batched_contour_trajectory(robot_controller, poses)
+        batched = _build_batched_contour_trajectory(robot_controller, poses, seed_state=seed_state)
         if batched is not None:
             return batched
 
     report = ContourValidationReport(points=len(poses))
     solve_started_at = perf_counter()
-    joint_names, seed_positions = _current_positions_in_config_order(robot_controller)
+    joint_names, seed_positions = _positions_in_config_order(robot_controller, seed_state=seed_state)
     initial_positions = list(seed_positions)
     seed_state = _joint_state(robot_controller, joint_names, seed_positions)
 
@@ -165,7 +165,7 @@ def _build_direct_contour_trajectory(robot_controller, poses) -> ContourIkExecut
     return ContourIkExecution(trajectory, report)
 
 
-def _build_batched_contour_trajectory(robot_controller, poses):
+def _build_batched_contour_trajectory(robot_controller, poses, seed_state=None):
     try:
         from erob_moveit_runtime.srv import ComputeContourIK
     except Exception as exc:
@@ -181,7 +181,7 @@ def _build_batched_contour_trajectory(robot_controller, poses):
         )
         return None
 
-    joint_names, seed_positions = _current_positions_in_config_order(robot_controller)
+    joint_names, seed_positions = _positions_in_config_order(robot_controller, seed_state=seed_state)
     request = ComputeContourIK.Request()
     request.seed_state = _joint_state(robot_controller, joint_names, seed_positions)
     request.poses = list(poses)
@@ -418,7 +418,13 @@ def _validate_sampled_state_validity(robot_controller, joint_names, solved_point
 
 
 def _current_positions_in_config_order(robot_controller):
-    state = robot_controller.current_joint_state
+    return _positions_in_config_order(robot_controller, seed_state=None)
+
+
+def _positions_in_config_order(robot_controller, seed_state=None):
+    state = getattr(seed_state, "joint_state", seed_state)
+    if state is None:
+        state = robot_controller.current_joint_state
     names = list(getattr(state, "name", []) or [])
     positions = list(getattr(state, "position", []) or [])
     if not names or len(names) != len(positions):

@@ -25,6 +25,7 @@ DEFAULTS = {
     'TOPIC_SAFETY_WALLS': '/safety_walls',
     'TOPIC_ACTIVE_TOOL_MARKERS': '/active_tool_markers',
     'SERVICE_CARTESIAN_PATH': '/compute_cartesian_path',
+    'SERVICE_MOTION_SEQUENCE': '/plan_sequence_path',
     'SERVICE_IK': '/compute_ik',
     'SERVICE_FK': '/compute_fk',
     'SERVICE_CONTOUR_IK': '/compute_contour_ik',

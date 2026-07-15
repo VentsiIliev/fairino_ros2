@@ -19,7 +19,10 @@ from utils.work_object import WorkObject
 import config
 from rest_api_support import (
     motion_error_response,
+    parse_execute_custom_sequence_request,
     parse_execute_path_request,
+    parse_execute_sequence_request,
+    parse_execute_staged_path_request,
     parse_jog_request,
     parse_move_linear_request,
     validate_pose_from_start,
@@ -207,6 +210,103 @@ def start_rest_server(
             import traceback
             traceback.print_exc()
             robot.node.get_logger().error(f"Error executing path: {e}")
+            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
+
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
+        elif result == 0:
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
+        else:
+            return motion_error_response(result)
+
+    @app.route("/execute/sequence", methods=["POST"])
+    def execute_sequence():
+        try:
+            payload = parse_execute_sequence_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        robot.node.get_logger().info(
+            f"Executing sequence with {len(payload['segments'])} segments")
+
+        try:
+            result = robot.execute_sequence(
+                payload["segments"],
+                tool=payload["tool"],
+                user=payload["user"],
+                blocking=payload["blocking"],
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            robot.node.get_logger().error(f"Error executing sequence: {e}")
+            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
+
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
+        elif result == 0:
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
+        else:
+            return motion_error_response(result)
+
+    @app.route("/execute/custom_sequence", methods=["POST"])
+    def execute_custom_sequence():
+        try:
+            payload = parse_execute_custom_sequence_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        robot.node.get_logger().info(
+            f"Executing custom sequence with {len(payload['segments'])} segments")
+
+        try:
+            result = robot.execute_custom_sequence(
+                payload["segments"],
+                tool=payload["tool"],
+                user=payload["user"],
+                blocking=payload["blocking"],
+            )
+        except Exception as e:
+            traceback.print_exc()
+            robot.node.get_logger().error(f"Error executing custom sequence: {e}")
+            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
+
+        task_id = getattr(robot.node, 'last_submitted_task_id', None)
+        if result > 0:
+            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
+        elif result == 0:
+            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
+        else:
+            return motion_error_response(result)
+
+    @app.route("/execute/staged_path", methods=["POST"])
+    def execute_staged_path():
+        try:
+            payload = parse_execute_staged_path_request(request.json)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        robot.node.get_logger().info(
+            f"Executing staged path with {len(payload['path'])} waypoints")
+
+        try:
+            result = robot.execute_staged_path(
+                stage_position=payload["stage_position"],
+                path=payload["path"],
+                tool=payload["tool"],
+                user=payload["user"],
+                stage_vel=payload["stage_vel"],
+                stage_acc=payload["stage_acc"],
+                path_vel=payload["path_vel"],
+                path_acc=payload["path_acc"],
+                blocking=payload["blocking"],
+                trajectory_optimizer=payload["trajectory_optimizer"],
+            )
+        except Exception as e:
+            traceback.print_exc()
+            robot.node.get_logger().error(f"Error executing staged path: {e}")
             return jsonify({"result": -1, "success": False, "error": str(e)}), 500
 
         task_id = getattr(robot.node, 'last_submitted_task_id', None)

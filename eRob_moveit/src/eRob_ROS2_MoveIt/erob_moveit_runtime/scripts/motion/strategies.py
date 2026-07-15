@@ -94,3 +94,19 @@ class PathStrategy(MotionStrategy):
             self.vel_scaling, self.acc_scaling,
             trajectory_optimizer_name=self.trajectory_optimizer,
             orientation_mode=self.orientation_mode)
+
+
+
+class SequenceStrategy(MotionStrategy):
+    def __init__(self, segments, tool_transform=None):
+        self.segments = list(segments)
+        self.tool_transform = tool_transform
+
+    def execute(self, robot_controller) -> int:
+        from .planning.sequence import send_motion_sequence
+        planner_context = getattr(robot_controller, "planner_context", robot_controller)
+        return send_motion_sequence(
+            planner_context,
+            self.segments,
+            tool_transform=self.tool_transform,
+        )
