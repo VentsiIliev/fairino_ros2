@@ -36,7 +36,7 @@ def _clean_live_start_state(rc) -> RobotState:
     return state
 
 
-def _build_cleanup_trajectory(
+def _build_follow_path_trajectory(
     rc,
     *,
     command_path: list[list[float]],
@@ -51,7 +51,7 @@ def _build_cleanup_trajectory(
     total_dist_mm = _path_length_mm(waypoints_6d)
     poses, err = _to_pose_list(rc, waypoints_6d, tool_transform, check_last_only=True)
     if err:
-        raise RuntimeError(f"cleanup pose conversion failed with result {err}")
+        raise RuntimeError(f"staged path pose conversion failed with result {err}")
 
     if _direct_ik_should_run(rc, waypoints_6d, total_dist_mm):
         result = _build_direct_contour_trajectory(rc, poses, seed_state=start_state)
@@ -66,13 +66,13 @@ def _build_cleanup_trajectory(
                 optimizer_name=trajectory_optimizer_name,
             )
             rc.get_logger().info(
-                f"[TIMING] staged_path_cleanup_plan method=direct_contour_ik "
+                f"[TIMING] staged_path_follow_plan method=direct_contour_ik "
                 f"waypoints={len(waypoints_6d)} optimize_s={optimize_elapsed:.3f} "
                 f"elapsed_s={perf_counter() - started:.3f}"
             )
             return optimized.joint_trajectory
         rc.get_logger().warning(
-            f"[StagedPath] Direct contour IK rejected cleanup path; falling back to Cartesian path: "
+            f"[StagedPath] Direct contour IK rejected follow path; falling back to Cartesian path: "
             f"{result.report.failure_reason} {result.report.details}"
         )
 
@@ -99,7 +99,7 @@ def _build_cleanup_trajectory(
     joint_trajectory = getattr(trajectory, "joint_trajectory", None) if trajectory is not None else None
     point_count = len(getattr(joint_trajectory, "points", []) or [])
     if fraction < config.CARTESIAN_MIN_FRACTION or point_count <= 1:
-        raise RuntimeError(f"cleanup Cartesian planning failed: fraction={fraction:.4f} points={point_count}")
+        raise RuntimeError(f"staged path Cartesian planning failed: fraction={fraction:.4f} points={point_count}")
 
     optimized, optimize_elapsed = _optimize_sync(
         rc,
@@ -109,7 +109,7 @@ def _build_cleanup_trajectory(
         optimizer_name=trajectory_optimizer_name,
     )
     rc.get_logger().info(
-        f"[TIMING] staged_path_cleanup_plan method=cartesian_path waypoints={len(waypoints_6d)} "
+        f"[TIMING] staged_path_follow_plan method=cartesian_path waypoints={len(waypoints_6d)} "
         f"fraction={fraction:.4f} points={point_count} optimize_s={optimize_elapsed:.3f} "
         f"elapsed_s={perf_counter() - started:.3f}"
     )
@@ -132,7 +132,7 @@ def execute_staged_path(
         rc.get_logger().error("[StagedPath] Invalid stage position")
         return -1
     if not command_path:
-        rc.get_logger().error("[StagedPath] Empty cleanup path")
+        rc.get_logger().error("[StagedPath] Empty follow path")
         return -1
     if getattr(rc, "current_joint_state", None) is None:
         rc.get_logger().error("[StagedPath] No current joint state available")
@@ -151,7 +151,7 @@ def execute_staged_path(
     start_cartesian = list(planning_rc.prev_cartesian[:6])
     previous_execution_suppress = bool(getattr(rc, "_suppress_post_success_unwind", False))
     executor = ThreadPoolExecutor(max_workers=1)
-    cleanup_future = None
+    follow_path_future = None
 
     try:
         stage_segment = {
@@ -171,8 +171,8 @@ def execute_staged_path(
         )
         path_vel_scaling = max(0.0, min(1.0, float(path_vel) / 100.0))
         path_acc_scaling = max(0.0, min(1.0, float(path_acc) / 100.0))
-        cleanup_future = executor.submit(
-            _build_cleanup_trajectory,
+        follow_path_future = executor.submit(
+            _build_follow_path_trajectory,
             planning_rc,
             command_path=[list(point) for point in command_path],
             start_state=stage.final_state,
@@ -205,7 +205,7 @@ def execute_staged_path(
             return stage_result
 
         wait_started = perf_counter()
-        cleanup_joint_trajectory = cleanup_future.result(
+        follow_joint_trajectory = follow_path_future.result(
             timeout=float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)) + 5.0
         )
         rc.get_logger().info(
@@ -213,24 +213,24 @@ def execute_staged_path(
         )
 
         setattr(rc, "_suppress_post_success_unwind", False)
-        cleanup_exec_started = perf_counter()
-        duration = cleanup_joint_trajectory.points[-1].time_from_start
+        follow_exec_started = perf_counter()
+        duration = follow_joint_trajectory.points[-1].time_from_start
         duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
         timeout_s = max(
             float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
             duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
         )
         rc.get_logger().info(
-            f"[StagedPath] Sending cleanup trajectory points={len(cleanup_joint_trajectory.points)} "
+            f"[StagedPath] Sending follow trajectory points={len(follow_joint_trajectory.points)} "
             f"duration_s={duration_s:.3f}"
         )
-        _send_trajectory_to_controller(rc, cleanup_joint_trajectory)
-        cleanup_result = _wait_execution_complete(rc, timeout_s=timeout_s + 2.0)
+        _send_trajectory_to_controller(rc, follow_joint_trajectory)
+        follow_result = _wait_execution_complete(rc, timeout_s=timeout_s + 2.0)
         rc.get_logger().info(
-            f"[TIMING] staged_path_cleanup_execute result={cleanup_result} "
-            f"elapsed_s={perf_counter() - cleanup_exec_started:.3f}"
+            f"[TIMING] staged_path_follow_execute result={follow_result} "
+            f"elapsed_s={perf_counter() - follow_exec_started:.3f}"
         )
-        return cleanup_result
+        return follow_result
     except Exception as exc:
         rc.get_logger().error(f"[StagedPath] Failed: {exc}")
         return -1

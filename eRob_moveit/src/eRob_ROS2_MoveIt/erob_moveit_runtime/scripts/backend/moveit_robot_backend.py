@@ -599,10 +599,10 @@ class MoveItRobotBackend(IRobotBackend):
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
-        result = self.node.trajectory_executor.request_explicit_unwind(
-            queue_if_busy=queue_if_busy,
+        result = self._unwind_joint6_with_rotational_path(
             vel=vel,
             acc=acc,
+            queue_if_busy=queue_if_busy,
         )
 
         if result < 0:
@@ -637,6 +637,228 @@ class MoveItRobotBackend(IRobotBackend):
             return self.node.last_move_result
 
         return 0
+
+    def _unwind_joint6_with_rotational_path(self, vel=None, acc=None, queue_if_busy=True):
+        joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
+        joint_name = str(getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_NAME', 'Joint_6')).strip()
+        if joint_name not in joint_names:
+            self.node.get_logger().error(f'[UNWIND_J6] Joint {joint_name!r} is not configured')
+            return -1
+
+        axis_index = int(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX', 5))
+        if axis_index < 3 or axis_index > 5:
+            self.node.get_logger().error(f'[UNWIND_J6] Invalid unwind rotation axis index: {axis_index}')
+            return -1
+
+        joint_index = joint_names.index(joint_name)
+        current_positions = self.node.trajectory_executor._get_latest_joint_state_in_trajectory_order(joint_names)
+        if current_positions is None:
+            self.node.get_logger().error('[UNWIND_J6] Latest joint state unavailable')
+            return -1
+
+        initial_value = float(current_positions[joint_index])
+        final_target = self.node.trajectory_executor._canonical_angle(initial_value)
+        min_delta = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DELTA_RAD', 0.5))
+        remaining = final_target - initial_value
+        if abs(remaining) < min_delta:
+            self.node.get_logger().info('[UNWIND_J6] Rotational-path unwind skipped - no unwind needed')
+            self.node.last_move_result = 0
+            return 0
+
+        vel_percent = self.node.trajectory_executor._clamp_percentage(vel)
+        acc_percent = self.node.trajectory_executor._clamp_percentage(acc)
+        vel_scale = vel_percent / 100.0
+        acc_scale = acc_percent / 100.0
+        sign = float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN', 1.0))
+        max_step_deg = max(1.0, abs(float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG', 180.0))))
+        total_delta_deg = math.degrees(remaining) * sign
+        segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
+        self.node.get_logger().info(
+            '[UNWIND_J6] Executing rotational-path unwind: '
+            f'{joint_name} {initial_value:.3f} -> {final_target:.3f} rad '
+            f'delta={remaining:.3f} rad cart_axis={axis_index} cart_delta={total_delta_deg:.3f}deg '
+            f'segments={segment_count} max_segment={max_step_deg:.1f}deg '
+            f'vel={vel_percent:.1f}% acc={acc_percent:.1f}%'
+        )
+
+        for segment_index in range(1, segment_count + 1):
+            current_pos_wobj = self.get_current_position()
+            if current_pos_wobj is None or len(current_pos_wobj) < 6:
+                self.node.get_logger().error('[UNWIND_J6] Current Cartesian pose unavailable')
+                return -1
+
+            current_positions = self.node.trajectory_executor._get_latest_joint_state_in_trajectory_order(joint_names)
+            if current_positions is None:
+                self.node.get_logger().error('[UNWIND_J6] Latest joint state unavailable')
+                return -1
+            current_value = float(current_positions[joint_index])
+            remaining = final_target - current_value
+            remaining_deg = math.degrees(remaining) * sign
+            if abs(remaining) < min_delta:
+                break
+
+            segment_delta_deg = math.copysign(
+                min(abs(remaining_deg), max_step_deg),
+                remaining_deg,
+            )
+            target_pos_wobj = list(current_pos_wobj[:6])
+            target_pos_wobj[axis_index] = float(target_pos_wobj[axis_index]) + segment_delta_deg
+            self.node.get_logger().info(
+                f'[UNWIND_J6] Rotational unwind segment {segment_index}/{segment_count}: '
+                f'{current_value:.3f} -> {final_target:.3f} rad, cart_delta={segment_delta_deg:.3f}deg'
+            )
+
+            result = self._send_rotational_unwind_path(
+                current_pos_wobj,
+                target_pos_wobj,
+                axis_index,
+                vel_scale,
+                acc_scale,
+            )
+            if result != 0:
+                return result
+
+            result = self._wait_for_motion_idle_result(
+                float(getattr(config, 'BLOCKING_MOVE_TIMEOUT_S', 60.0)),
+                '[UNWIND_J6]',
+            )
+            if result != 0:
+                return result
+
+        check = {
+            'joint_names': joint_names,
+            'joint_name': joint_name,
+            'joint_index': joint_index,
+            'target_value': final_target,
+        }
+        if self.node.trajectory_executor._verify_explicit_unwind_complete(check):
+            return 0
+        return -6
+
+    def _wait_for_motion_idle_result(self, timeout_s, label):
+        deadline = time.time() + float(timeout_s)
+        while time.time() < deadline:
+            if (
+                not self.node.is_executing
+                and not self.node.is_motion_active()
+                and not self.node.has_pending_motion()
+            ):
+                return int(getattr(self.node, 'last_move_result', -1))
+            time.sleep(0.01)
+        self.node.get_logger().error(
+            f'{label} Timed out waiting for motion to complete after {float(timeout_s):.2f}s'
+        )
+        return -1
+
+    def _send_rotational_unwind_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+        if bool(getattr(config, 'EXECUTOR_POST_UNWIND_USE_DIRECT_IK', False)):
+            result = self._send_rotational_unwind_direct_ik_path(
+                current_pos_wobj,
+                target_pos_wobj,
+                rotation_index,
+                vel_scale,
+                acc_scale,
+            )
+            if result == 0:
+                return 0
+            if not bool(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_FALLBACK_CARTESIAN', True)):
+                return result
+            self.node.get_logger().warning(
+                f'[UNWIND_J6] Direct IK unwind path failed with result={result}; falling back to Cartesian path'
+            )
+        return self._send_rotational_jog_path(
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            vel_scale,
+            acc_scale,
+        )
+
+    def _send_rotational_unwind_direct_ik_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+        started_at = perf_counter()
+        direct_ik_step_deg = max(0.1, float(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG', 4.0)))
+        waypoints_base = self._rotational_path_waypoints_base(
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            max_step_override_deg=direct_ik_step_deg,
+        )
+        if len(waypoints_base) < 2:
+            return -1
+
+        try:
+            from motion.execution.trajectory_executor import _send_trajectory_to_controller
+            from motion.planning.custom_sequence import _optimize_sync
+            from motion.planning.direct_contour_ik import _build_direct_contour_trajectory, _log_report
+            from motion.planning.planner_utils import _begin_execution, _to_pose_list
+        except Exception as exc:
+            self.node.get_logger().warning(f'[UNWIND_J6] Direct IK imports unavailable: {exc}')
+            return -1
+
+        planning_node = getattr(self.node, 'planner_context', self.node)
+        poses, err = _to_pose_list(
+            planning_node,
+            waypoints_base,
+            planning_node.T_tool,
+            check_last_only=True,
+        )
+        if err:
+            return err
+
+        try:
+            ik_result = _build_direct_contour_trajectory(planning_node, poses)
+        except Exception as exc:
+            self.node.get_logger().warning(f'[UNWIND_J6] Direct IK unwind exception: {exc}')
+            return -1
+
+        ik_result.report.timings['total_before_optimizer_s'] = perf_counter() - started_at
+        _log_report(planning_node, ik_result.report)
+        if not ik_result.report.ok:
+            return -6
+
+        optimizer_name = str(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER', '') or '').strip().upper() or None
+        try:
+            optimized, optimize_elapsed = _optimize_sync(
+                planning_node,
+                ik_result.trajectory,
+                vel_scale,
+                acc_scale,
+                optimizer_name=optimizer_name,
+            )
+        except Exception as exc:
+            self.node.get_logger().error(f'[UNWIND_J6] Direct IK time parameterization failed: {exc}')
+            return -7
+
+        joint_trajectory = optimized.joint_trajectory
+        generation = _begin_execution(planning_node)
+        planning_node._last_cartesian_request_kind = 'unwind_direct_ik'
+        planning_node._last_cartesian_request_waypoints = len(waypoints_base)
+        planning_node._last_cartesian_request_started_at = started_at
+        self.node.get_logger().info(
+            f'[TIMING] unwind_direct_ik waypoints={len(waypoints_base)} '
+            f'points={len(getattr(joint_trajectory, "points", []) or [])} '
+            f'optimize_s={optimize_elapsed:.3f} elapsed_s={perf_counter() - started_at:.3f} '
+            f'generation={generation}'
+        )
+        _send_trajectory_to_controller(planning_node, joint_trajectory)
+        return 0
+
+    def _rotational_path_waypoints_base(self, current_pos_wobj, target_pos_wobj, rotation_index, max_step_override_deg=None):
+        angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
+        if max_step_override_deg is None:
+            max_step = self._rotational_jog_max_step_deg()
+        else:
+            max_step = max(0.1, float(max_step_override_deg))
+        step_count = max(2, int(math.ceil(abs(angular_delta) / max_step)))
+        waypoints_base = []
+        for step_index in range(1, step_count + 1):
+            alpha = step_index / float(step_count)
+            waypoint = list(current_pos_wobj[:6])
+            waypoint[3] = float(current_pos_wobj[3]) + (float(target_pos_wobj[3]) - float(current_pos_wobj[3])) * alpha
+            waypoint[4] = float(current_pos_wobj[4]) + (float(target_pos_wobj[4]) - float(current_pos_wobj[4])) * alpha
+            waypoint[5] = float(current_pos_wobj[5]) + (float(target_pos_wobj[5]) - float(current_pos_wobj[5])) * alpha
+            waypoints_base.append(list(self.apply_workobject(waypoint)[:6]))
+        return waypoints_base
 
     def enable_safety_walls(self):
         """Enable safety walls in the ROS controller."""
@@ -877,15 +1099,11 @@ class MoveItRobotBackend(IRobotBackend):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         max_step = self._rotational_jog_max_step_deg()
         step_count = max(2, int(math.ceil(abs(angular_delta) / max_step)))
-        waypoints_base = []
-        for step_index in range(1, step_count + 1):
-            alpha = step_index / float(step_count)
-            waypoint = list(current_pos_wobj[:6])
-            waypoint[3] = float(current_pos_wobj[3]) + (float(target_pos_wobj[3]) - float(current_pos_wobj[3])) * alpha
-            waypoint[4] = float(current_pos_wobj[4]) + (float(target_pos_wobj[4]) - float(current_pos_wobj[4])) * alpha
-            waypoint[5] = float(current_pos_wobj[5]) + (float(target_pos_wobj[5]) - float(current_pos_wobj[5])) * alpha
-            waypoints_base.append(list(self.apply_workobject(waypoint)[:6]))
-
+        waypoints_base = self._rotational_path_waypoints_base(
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+        )
         target_base = waypoints_base[-1]
         self.node.get_logger().info(
             f'[JOG] Rotational jog path: axis_index={rotation_index} '

@@ -175,7 +175,7 @@ def execute_custom_sequence(rc, segments, tool_transform=None) -> int:
     start_state.joint_state = clean_joint_state
     start_state.is_diff = False
 
-    rc.get_logger().info(f"[CustomSeq] Executing custom pickup sequence with {len(segments)} segments")
+    rc.get_logger().info(f"[CustomSeq] Executing custom motion sequence with {len(segments)} segments")
     executor = ThreadPoolExecutor(max_workers=1)
     next_future = None
     planned = None
