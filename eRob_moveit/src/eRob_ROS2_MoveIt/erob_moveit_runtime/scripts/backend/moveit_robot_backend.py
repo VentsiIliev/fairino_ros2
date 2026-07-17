@@ -760,13 +760,15 @@ class MoveItRobotBackend(IRobotBackend):
                     float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
                     duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
                 )
+                execution_timeout_s = duration_s + timeout_s + 2.0
                 planning_node.get_logger().info(
                     f"[OrderedChain] Sending planned segment {index}/{total} label='{planned['label']}' "
                     f"type={segment_type} points={len(planned['trajectory'].points)} duration_s={duration_s:.3f} "
+                    f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f} "
                     f"plan_s={planned['plan_elapsed_s']:.3f}"
                 )
                 _send_trajectory_to_controller(self.node, planned["trajectory"])
-                result = _wait_execution_complete(self.node, timeout_s=timeout_s + 2.0)
+                result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
             elif segment_type == "unwind_joint6":
                 result = 0
                 for unwind_index, joint_trajectory in enumerate(planned["trajectories"], start=1):
@@ -776,12 +778,14 @@ class MoveItRobotBackend(IRobotBackend):
                         float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
                         duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
                     )
+                    execution_timeout_s = duration_s + timeout_s + 2.0
                     planning_node.get_logger().info(
                         f"[OrderedChain] Sending planned unwind {unwind_index}/{len(planned['trajectories'])} "
-                        f"points={len(joint_trajectory.points)} duration_s={duration_s:.3f}"
+                        f"points={len(joint_trajectory.points)} duration_s={duration_s:.3f} "
+                        f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f}"
                     )
                     _send_trajectory_to_controller(self.node, joint_trajectory)
-                    result = _wait_execution_complete(self.node, timeout_s=timeout_s + 2.0)
+                    result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
                     if result != 0:
                         break
                 if result == 0 and planned.get("check") is not None:

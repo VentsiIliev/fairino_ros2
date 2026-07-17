@@ -172,20 +172,20 @@ def generate_launch_description():
     )
 
     """USED FOR DEBUG TO READ MOTOR ERROR CODES"""
-    # zeroerr_error_monitor = Node(
-    #     package="zeroerr",
-    #     executable="zeroerr_error_monitor.py",
-    #     name="zeroerr_error_monitor",
-    #     output="screen",
-    #     emulate_tty=True,
-    #     prefix=low_priority_non_rt_prefix,
-    #     parameters=[{
-    #         "master_id": 0,
-    #         "slave_count": 6,
-    #         "poll_period_sec": 10.0,
-    #         "log_zero_state_once": True,
-    #     }],
-    # )
+    zeroerr_error_monitor = Node(
+        package="zeroerr",
+        executable="zeroerr_error_monitor.py",
+        name="zeroerr_error_monitor",
+        output="screen",
+        emulate_tty=True,
+        prefix=low_priority_non_rt_prefix,
+        parameters=[{
+            "master_id": 0,
+            "slave_count": 6,
+            "poll_period_sec": 10.0,
+            "log_zero_state_once": True,
+        }],
+    )
 
     drive_enable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
@@ -363,7 +363,7 @@ def generate_launch_description():
                     TimerAction(period=13.0, actions=[contour_ik_helper_node]),
                     TimerAction(period=16.0, actions=[velocity_monitor_gui]),
                     TimerAction(period=35.0, actions=[ethercat_sdo_server]),
-                    # TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
+                    TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
                 ],
             )
         )

@@ -591,6 +591,14 @@ def start_rest_server(
     def drive_operation_status():
         return jsonify(node.get_drive_operation_status())
 
+    @app.route("/motion/interlock/status", methods=["GET"])
+    def motion_interlock_status():
+        return jsonify(node.get_motion_interlock_status())
+
+    @app.route("/motion/interlock/reset", methods=["POST"])
+    def reset_motion_interlock():
+        return jsonify(node.reset_motion_interlock())
+
     # ------------------------------------------------------------------
     # Run server
     # ------------------------------------------------------------------

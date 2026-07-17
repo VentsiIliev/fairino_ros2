@@ -277,6 +277,9 @@ class RobotController(Node):
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
         self._ethercat_last_recovery_attempt_ts = 0.0
+        self._motion_interlock_lock = Lock()
+        self._motion_interlock_active = False
+        self._motion_interlock_reason = ""
         self._collision_monitor_fault_enabled = True
         self._collision_fault_lock = Lock()
         self._collision_motion_fault = False
@@ -1424,12 +1427,50 @@ class RobotController(Node):
         return result["value"]
 
     def is_hardware_ready_for_motion(self) -> bool:
+        with self._motion_interlock_lock:
+            if self._motion_interlock_active:
+                return False
         with self._ethercat_fault_lock:
             return not self._ethercat_motion_fault
 
     def get_hardware_fault_reason(self) -> str:
+        with self._motion_interlock_lock:
+            if self._motion_interlock_active:
+                return self._motion_interlock_reason or 'motion interlock active'
         with self._ethercat_fault_lock:
             return self._ethercat_fault_reason or 'EtherCAT hardware fault'
+
+    def trip_motion_interlock(self, reason: str):
+        reason = str(reason or 'motion interlock active')
+        with self._motion_interlock_lock:
+            if self._motion_interlock_active and self._motion_interlock_reason == reason:
+                return
+            self._motion_interlock_active = True
+            self._motion_interlock_reason = reason
+        with self._drive_enable_lock:
+            self._drive_operation_enabled_requested = False
+        self.get_logger().error(f'[MotionInterlock] Motion interlock active: {reason}')
+
+    def reset_motion_interlock(self) -> dict:
+        with self._motion_interlock_lock:
+            was_active = self._motion_interlock_active
+            reason = self._motion_interlock_reason
+            self._motion_interlock_active = False
+            self._motion_interlock_reason = ""
+        if was_active:
+            self.get_logger().warning(f'[MotionInterlock] Motion interlock reset by operator: {reason}')
+        return {
+            "success": True,
+            "reset": bool(was_active),
+            "previous_reason": reason,
+        }
+
+    def get_motion_interlock_status(self) -> dict:
+        with self._motion_interlock_lock:
+            return {
+                "active": bool(self._motion_interlock_active),
+                "reason": self._motion_interlock_reason,
+            }
 
     def is_motion_stack_ready(self) -> bool:
         with self._collision_fault_lock:

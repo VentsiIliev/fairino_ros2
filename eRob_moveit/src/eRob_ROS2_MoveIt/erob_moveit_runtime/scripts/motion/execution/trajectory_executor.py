@@ -20,6 +20,8 @@ class TrajectoryExecutor:
         self._last_sent_trajectory = None
         self._active_unwind_check = None
         self._unwind_diag_timers = []
+        self._active_drive_monitor_timer = None
+        self._active_trajectory_cancel_reason = None
         self._unwind_cancel_reason = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
@@ -396,6 +398,99 @@ class TrajectoryExecutor:
             'state': state,
             'bits': bits,
         }
+
+    def _get_all_drive_states(self):
+        drag_lock = getattr(self._node, '_drag_lock', None)
+        status_values = None
+        if drag_lock is not None:
+            with drag_lock:
+                statusword = getattr(self._node, '_drag_statusword', None)
+                if statusword is not None:
+                    status_values = [int(round(value)) for value in statusword.tolist()]
+        if not status_values:
+            return []
+
+        joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
+        decode_state = getattr(self._node, '_decode_statusword_state', None)
+        decode_bits = getattr(self._node, '_decode_statusword_bits', None)
+        states = []
+        for index, statusword in enumerate(status_values):
+            joint_name = joint_names[index] if index < len(joint_names) else f'joint_{index + 1}'
+            states.append({
+                'joint_name': joint_name,
+                'joint_index': index,
+                'statusword': statusword,
+                'state': decode_state(statusword) if callable(decode_state) else '',
+                'bits': decode_bits(statusword) if callable(decode_bits) else '',
+            })
+        return states
+
+    def _cancel_active_trajectory(self, reason):
+        if self._active_trajectory_cancel_reason == reason:
+            return True
+        self._active_trajectory_cancel_reason = reason
+        self._node.get_logger().error(f'[Controller] Active trajectory cancelled: {reason}')
+        self._motion.last_move_result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+
+        queue_cleared = self._queue.clear()
+        if queue_cleared > 0:
+            self._node.get_logger().error(
+                f'[Controller] Cleared {queue_cleared} queued motion(s) after active trajectory cancellation'
+            )
+
+        goal_handle = None
+        with self._motion.lock:
+            goal_handle = self._motion.active_controller_goal
+        if goal_handle is not None:
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception as exc:
+                self._node.get_logger().error(
+                    f'[Controller] Failed to cancel active trajectory: {exc}'
+                )
+        return True
+
+    def _cancel_active_trajectory_if_drive_disabled(self, label):
+        if not bool(getattr(config, 'EXECUTOR_CANCEL_ON_DRIVE_DISABLE', True)):
+            return False
+
+        for drive_state in self._get_all_drive_states():
+            if drive_state['state'] == 'operation_enabled':
+                continue
+            reason = (
+                f"{drive_state['joint_name']} left operation_enabled during active trajectory "
+                f"at {label}: statusword={drive_state['statusword']} "
+                f"state={drive_state['state']} bits={drive_state['bits']}"
+            )
+            return self._cancel_active_trajectory(reason)
+        return False
+
+    def _schedule_active_drive_monitor(self):
+        if not bool(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_ENABLED', True)):
+            return
+
+        self._cancel_active_drive_monitor()
+        period_s = max(0.02, float(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_PERIOD_S', 0.05)))
+
+        def _callback():
+            with self._motion.lock:
+                goal_active = self._motion.active_controller_goal is not None
+            if not goal_active:
+                self._cancel_active_drive_monitor()
+                return
+            self._cancel_active_trajectory_if_drive_disabled('drive_monitor')
+
+        self._active_drive_monitor_timer = self._node.create_timer(period_s, _callback)
+
+    def _cancel_active_drive_monitor(self):
+        timer = self._active_drive_monitor_timer
+        self._active_drive_monitor_timer = None
+        if timer is not None:
+            try:
+                timer.cancel()
+                self._node.destroy_timer(timer)
+            except Exception:
+                pass
 
     def _cancel_active_unwind_if_drive_disabled(self, label):
         if not bool(getattr(config, 'EXECUTOR_UNWIND_CANCEL_ON_DRIVE_DISABLE', True)):
@@ -980,20 +1075,29 @@ class TrajectoryExecutor:
             self._motion.is_executing = True
 
         goal_tolerance = []
+        path_tolerance = []
         for name in joint_trajectory.joint_names:
-            tol = JointTolerance()
-            tol.name = name
-            tol.position = config.EXECUTOR_GOAL_POS_TOL_RAD
-            tol.velocity = 0.0
-            tol.acceleration = 0.0
-            goal_tolerance.append(tol)
+            goal_tol = JointTolerance()
+            goal_tol.name = name
+            goal_tol.position = config.EXECUTOR_GOAL_POS_TOL_RAD
+            goal_tol.velocity = 0.0
+            goal_tol.acceleration = 0.0
+            goal_tolerance.append(goal_tol)
+
+            path_tol = JointTolerance()
+            path_tol.name = name
+            path_tol.position = float(getattr(config, 'EXECUTOR_PATH_POS_TOL_RAD', 0.35))
+            path_tol.velocity = 0.0
+            path_tol.acceleration = 0.0
+            path_tolerance.append(path_tol)
 
         controller_goal = FollowJointTrajectory.Goal()
         controller_goal.trajectory = joint_trajectory
-        controller_goal.path_tolerance = []
+        controller_goal.path_tolerance = path_tolerance
         controller_goal.goal_tolerance = goal_tolerance
         self._last_sent_trajectory = deepcopy(joint_trajectory)
         self._active_unwind_check = None
+        self._active_trajectory_cancel_reason = None
         self._unwind_cancel_reason = None
         if unwind_check is not None:
             copied_check = dict(unwind_check)
@@ -1026,7 +1130,8 @@ class TrajectoryExecutor:
 
         self._node.get_logger().info(
             f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
-            f'(spline interpolation, no path tolerance, goal_time_tolerance={time_tolerance_sec:.1f}s)')
+            f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
+            f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
 
         future = self._controller_client.send_goal_async(controller_goal)
         self._motion.active_execute_send_future = future
@@ -1069,6 +1174,8 @@ class TrajectoryExecutor:
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
             self._motion.active_controller_goal = goal_handle
+            self._schedule_active_drive_monitor()
+            self._cancel_active_trajectory_if_drive_disabled('accepted')
             if self._active_unwind_check is not None:
                 self._log_unwind_diagnostics('accepted')
                 self._schedule_unwind_diagnostics()
@@ -1096,7 +1203,14 @@ class TrajectoryExecutor:
             result = future.result().result
             queued_unwind = None
             active_unwind_check = self._active_unwind_check
-            if result.error_code == 0:
+            if self._active_trajectory_cancel_reason:
+                self._node.get_logger().error(
+                    f'[Controller] Trajectory result ignored after active cancellation: '
+                    f'{self._active_trajectory_cancel_reason}'
+                )
+                self._log_final_tracking_error()
+                self._motion.last_move_result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+            elif result.error_code == 0:
                 self._node.get_logger().info('[Controller] ✓ Trajectory execution succeeded!')
                 if active_unwind_check is not None:
                     if self._verify_explicit_unwind_complete(active_unwind_check):
@@ -1135,6 +1249,10 @@ class TrajectoryExecutor:
             else:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution failed with error: {result.error_code}')
+                if self._active_trajectory_cancel_reason:
+                    self._node.get_logger().error(
+                        f'[Controller] {self._active_trajectory_cancel_reason}'
+                    )
                 if active_unwind_check is not None:
                     if self._unwind_cancel_reason:
                         self._node.get_logger().error(
@@ -1142,14 +1260,23 @@ class TrajectoryExecutor:
                         )
                     self._log_unwind_diagnostics('failed_result')
                 self._log_final_tracking_error()
-                self._motion.last_move_result = result.error_code
+                controller_error = int(getattr(result, 'error_code', -1))
+                self._node.get_logger().error(
+                    f'[Controller] Mapping controller error {controller_error} to motion result '
+                    f'{config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED}'
+                )
+                self._motion.last_move_result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Result error: {e}')
             self._motion.last_move_result = -1
         finally:
+            cancelled_by_monitor = self._active_trajectory_cancel_reason is not None
             self._cancel_unwind_diagnostic_timers()
+            self._cancel_active_drive_monitor()
             self._motion.active_controller_goal = None
             self._active_unwind_check = None
+            cancel_reason = self._active_trajectory_cancel_reason
+            self._active_trajectory_cancel_reason = None
             self._unwind_cancel_reason = None
             lock_released = False
             if self._motion.execution_lock.locked():
@@ -1159,7 +1286,15 @@ class TrajectoryExecutor:
                 with self._motion.lock:
                     self._motion.is_executing = False
                 self._queue.mark_current_complete(self._motion.last_move_result)
-                self.process_next_queued_task()
+                if cancelled_by_monitor:
+                    queue_cleared = self._queue.clear()
+                    self._node.get_logger().error(
+                        '[Controller] Motion queue drain suppressed after active trajectory cancellation'
+                        + (f': {cancel_reason}' if cancel_reason else '')
+                        + (f'; cleared={queue_cleared}' if queue_cleared > 0 else '')
+                    )
+                else:
+                    self.process_next_queued_task()
 
 
 def _executor(robot_controller):
