@@ -129,11 +129,24 @@ start_ethercat_repin_monitor() {
 
 pin_irqs() {
   echo "Pinning $NIC IRQs to cores $IRQ_CORES..."
-  for irq_dir in /proc/irq/*/; do
-    irq_num=$(basename "$irq_dir")
-    if ls "$irq_dir" 2>/dev/null | grep -q "$NIC"; then
-      echo $IRQ_MASK | sudo tee "/proc/irq/${irq_num}/smp_affinity" > /dev/null 2>&1
-      echo "  IRQ $irq_num ($NIC) → mask $IRQ_MASK"
+  local irq_nums=""
+  local affinity_mask="${IRQ_MASK#0x}"
+  affinity_mask="${affinity_mask#0X}"
+  irq_nums=$(awk -v nic="$NIC" '$0 ~ nic {gsub(":", "", $1); print $1}' /proc/interrupts || true)
+
+  if [ -z "$irq_nums" ]; then
+    echo "  Warning: no IRQ found for $NIC in /proc/interrupts"
+    return 0
+  fi
+
+  local irq_num=""
+  for irq_num in $irq_nums; do
+    if echo "$affinity_mask" | sudo tee "/proc/irq/${irq_num}/smp_affinity" > /dev/null 2>&1; then
+      local effective=""
+      effective=$(cat "/proc/irq/${irq_num}/effective_affinity_list" 2>/dev/null || true)
+      echo "  IRQ $irq_num ($NIC) → mask $affinity_mask, effective CPUs ${effective:-unknown}"
+    else
+      echo "  Warning: failed to pin IRQ $irq_num ($NIC) to mask $affinity_mask"
     fi
   done
 }
@@ -228,7 +241,19 @@ pin_ros2_control() {
 pin_non_rt_away() {
   local quiet="${1:-0}"
   local non_rt_cores="$NON_RT_CORES"
-  local procs=(move_group rviz2 zeroerr_state_publisher ipp_helper "main.py" spawner static_transform)
+    local procs=(
+    move_group
+    rviz2
+    zeroerr_state_publisher
+    zeroerr_error_monitor.py
+    ethercat_sdo_srv_server
+    ipp_helper
+    ruckig_helper
+    contour_ik_helper
+    "main.py"
+    spawner
+    static_transform
+  )
   if [ "$PIN_NON_RT_AWAY" != "1" ]; then
     if [ "$quiet" != "1" ]; then
       echo "Leaving non-RT ROS2 processes unpinned."

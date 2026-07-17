@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 from dataclasses import dataclass
 from threading import Event
 import time
@@ -11,10 +9,15 @@ from time import perf_counter
 from moveit_msgs.msg import RobotState
 
 import config
-from motion.execution.trajectory_executor import _send_trajectory_to_controller
 from motion.execution.trajectory_optimizer import resolve_trajectory_optimizer
+from motion.planning.direct_contour_ik import (
+    _build_direct_contour_trajectory,
+    _direct_ik_should_run,
+    _log_report,
+)
 from motion.planning.planner_utils import _to_pose_list
 from motion.planning.single_target import _compute_max_step, _wrapped_angle_delta_deg
+from motion.planning.trajectory import _path_length_mm, _simplify_cartesian_waypoints
 from motion.planning.trajectory_planner import _build_cartesian_request
 
 
@@ -44,7 +47,7 @@ def _wait_execution_complete(rc, timeout_s: float) -> int:
         if not bool(getattr(rc, "is_executing", False)):
             return int(getattr(rc, "last_move_result", 0))
         time.sleep(0.01)
-    rc.get_logger().error(f"[CustomSeq] Timed out waiting for segment execution after {timeout_s:.1f}s")
+    rc.get_logger().error(f"[SegmentPlan] Timed out waiting for segment execution after {timeout_s:.1f}s")
     return -1
 
 
@@ -76,6 +79,86 @@ def _optimize_sync(rc, trajectory, vel_scaling: float, acc_scaling: float, optim
     if optimized is None:
         raise RuntimeError("Trajectory optimizer failed")
     return optimized, perf_counter() - started
+
+
+def _build_follow_path_trajectory(
+    rc,
+    *,
+    command_path: list[list[float]],
+    start_state: RobotState,
+    tool_transform,
+    vel_scaling: float,
+    acc_scaling: float,
+    trajectory_optimizer_name=None,
+):
+    started = perf_counter()
+    waypoints_6d = _simplify_cartesian_waypoints([list(point[:6]) for point in command_path])
+    total_dist_mm = _path_length_mm(waypoints_6d)
+    poses, err = _to_pose_list(rc, waypoints_6d, tool_transform, check_last_only=True)
+    if err:
+        raise RuntimeError(f"follow path pose conversion failed with result {err}")
+
+    if _direct_ik_should_run(rc, waypoints_6d, total_dist_mm):
+        result = _build_direct_contour_trajectory(rc, poses, seed_state=start_state)
+        result.report.timings["total_before_optimizer_s"] = perf_counter() - started
+        _log_report(rc, result.report)
+        if result.report.ok:
+            optimized, optimize_elapsed = _optimize_sync(
+                rc,
+                result.trajectory,
+                vel_scaling,
+                acc_scaling,
+                optimizer_name=trajectory_optimizer_name,
+            )
+            rc.get_logger().info(
+                f"[TIMING] follow_path_plan method=direct_contour_ik "
+                f"waypoints={len(waypoints_6d)} optimize_s={optimize_elapsed:.3f} "
+                f"elapsed_s={perf_counter() - started:.3f}"
+            )
+            return optimized.joint_trajectory
+        rc.get_logger().warning(
+            f"[FollowPath] Direct contour IK rejected follow path; falling back to Cartesian path: "
+            f"{result.report.failure_reason} {result.report.details}"
+        )
+
+    avg_spacing_mm = total_dist_mm / max(len(waypoints_6d) - 1, 1)
+    max_step_scale = float(getattr(config, "PATH_EEF_STEP_SCALE", 2.5))
+    max_step_min_m = float(getattr(config, "PATH_EEF_STEP_MIN_M", 0.005))
+    max_step_max_m = float(getattr(config, "PATH_EEF_STEP_MAX_M", 0.03))
+    max_step = min(max((avg_spacing_mm / 1000.0) * max_step_scale, max_step_min_m), max_step_max_m)
+    request = _build_cartesian_request(
+        rc,
+        poses,
+        max_step,
+        vel_scaling,
+        acc_scaling,
+        start_state=start_state,
+        avoid_collisions=config.resolve_avoid_collisions(None),
+    )
+    response = _wait_future(
+        rc.request_cartesian_path(request),
+        timeout_s=float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)),
+    )
+    fraction = float(getattr(response, "fraction", 0.0))
+    trajectory = getattr(response, "solution", None)
+    joint_trajectory = getattr(trajectory, "joint_trajectory", None) if trajectory is not None else None
+    point_count = len(getattr(joint_trajectory, "points", []) or [])
+    if fraction < config.CARTESIAN_MIN_FRACTION or point_count <= 1:
+        raise RuntimeError(f"follow path Cartesian planning failed: fraction={fraction:.4f} points={point_count}")
+
+    optimized, optimize_elapsed = _optimize_sync(
+        rc,
+        trajectory,
+        vel_scaling,
+        acc_scaling,
+        optimizer_name=trajectory_optimizer_name,
+    )
+    rc.get_logger().info(
+        f"[TIMING] follow_path_plan method=cartesian_path waypoints={len(waypoints_6d)} "
+        f"fraction={fraction:.4f} points={point_count} optimize_s={optimize_elapsed:.3f} "
+        f"elapsed_s={perf_counter() - started:.3f}"
+    )
+    return optimized.joint_trajectory
 
 
 def _plan_segment(
@@ -116,7 +199,7 @@ def _plan_segment(
     )
 
     rc.get_logger().info(
-        f"[CustomSeq] Planning segment {index + 1}: label='{label}' "
+        f"[SegmentPlan] Planning segment {index + 1}: label='{label}' "
         f"vel={float(segment['vel']):.1f}% acc={float(segment['acc']):.1f}% "
         f"delta_mm={delta_m * 1000.0:.3f} start_seed={'planned' if start_state is not None else 'live'}"
     )
@@ -131,7 +214,7 @@ def _plan_segment(
     point_count = len(getattr(joint_trajectory, "points", []) or [])
     plan_elapsed = perf_counter() - started
     rc.get_logger().info(
-        f"[TIMING] custom_sequence_plan segment={index + 1} label='{label}' "
+        f"[TIMING] segment_plan segment={index + 1} label='{label}' "
         f"fraction={fraction:.4f} points={point_count} elapsed_s={plan_elapsed:.3f}"
     )
     if fraction < config.CARTESIAN_MIN_FRACTION or point_count <= 1:
@@ -148,105 +231,3 @@ def _plan_segment(
         plan_elapsed_s=plan_elapsed,
         optimize_elapsed_s=optimize_elapsed,
     )
-
-
-def execute_custom_sequence(rc, segments, tool_transform=None) -> int:
-    if not segments:
-        rc.get_logger().error("[CustomSeq] Empty sequence")
-        return -1
-    if getattr(rc, "current_joint_state", None) is None:
-        rc.get_logger().error("[CustomSeq] No current joint state available")
-        return -4
-    if getattr(rc, "prev_cartesian", None) is None or len(rc.prev_cartesian) < 6:
-        rc.get_logger().error("[CustomSeq] No current Cartesian position available")
-        return -4
-    if not rc.is_motion_stack_ready():
-        rc.get_logger().error(f"[CustomSeq] Motion stack not ready: {rc.get_motion_stack_fault_reason()}")
-        return config.MOTION_ERROR_HARDWARE_NOT_READY
-
-    started = perf_counter()
-    T_tool = tool_transform if tool_transform is not None else rc.T_tool
-    start_cartesian = list(rc.prev_cartesian[:6])
-    start_state = RobotState()
-    clean_joint_state = deepcopy(rc.current_joint_state)
-    clean_joint_state.header.stamp = rc.get_clock().now().to_msg()
-    clean_joint_state.velocity = [0.0] * (len(clean_joint_state.name) or len(clean_joint_state.position))
-    clean_joint_state.effort = []
-    start_state.joint_state = clean_joint_state
-    start_state.is_diff = False
-
-    rc.get_logger().info(f"[CustomSeq] Executing custom motion sequence with {len(segments)} segments")
-    executor = ThreadPoolExecutor(max_workers=1)
-    next_future = None
-    planned = None
-    previous_target = start_cartesian
-    previous_state = start_state
-    previous_execution_suppress = bool(getattr(rc, "_suppress_post_success_unwind", False))
-
-    try:
-        for index, segment in enumerate(segments):
-            if planned is None:
-                planned = _plan_segment(
-                    rc,
-                    index=index,
-                    segment=segment,
-                    start_cartesian=previous_target,
-                    start_state=previous_state,
-                    tool_transform=T_tool,
-                )
-
-            if index + 1 < len(segments):
-                next_segment = segments[index + 1]
-                next_start_cartesian = planned.target_position
-                next_start_state = planned.final_state
-                next_future = executor.submit(
-                    _plan_segment,
-                    rc,
-                    index=index + 1,
-                    segment=next_segment,
-                    start_cartesian=next_start_cartesian,
-                    start_state=next_start_state,
-                    tool_transform=T_tool,
-                )
-            else:
-                next_future = None
-
-            setattr(rc, "_suppress_post_success_unwind", index + 1 < len(segments))
-            exec_started = perf_counter()
-            duration = planned.joint_trajectory.points[-1].time_from_start
-            duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
-            timeout_s = max(float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)), duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)))
-            rc.get_logger().info(
-                f"[CustomSeq] Sending segment {index + 1}/{len(segments)} label='{planned.label}' "
-                f"points={len(planned.joint_trajectory.points)} duration_s={duration_s:.3f} "
-                f"plan_s={planned.plan_elapsed_s:.3f} optimize_s={planned.optimize_elapsed_s:.3f}"
-            )
-            _send_trajectory_to_controller(rc, planned.joint_trajectory)
-            result = _wait_execution_complete(rc, timeout_s=timeout_s + 2.0)
-            exec_elapsed = perf_counter() - exec_started
-            rc.get_logger().info(
-                f"[TIMING] custom_sequence_execute segment={index + 1} label='{planned.label}' "
-                f"result={result} elapsed_s={exec_elapsed:.3f}"
-            )
-            if result != 0:
-                return result
-
-            previous_target = planned.target_position
-            previous_state = planned.final_state
-            if next_future is not None:
-                wait_started = perf_counter()
-                planned = next_future.result(timeout=float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)) + 5.0)
-                rc.get_logger().info(
-                    f"[TIMING] custom_sequence_next_ready segment={index + 2} "
-                    f"wait_after_previous_s={perf_counter() - wait_started:.3f}"
-                )
-            else:
-                planned = None
-        return 0
-    except Exception as exc:
-        rc.get_logger().error(f"[CustomSeq] Failed: {exc}")
-        return -1
-    finally:
-        setattr(rc, "_suppress_post_success_unwind", previous_execution_suppress)
-        executor.shutdown(wait=False)
-        rc.get_logger().info(f"[TIMING] custom_sequence_total elapsed_s={perf_counter() - started:.3f}")

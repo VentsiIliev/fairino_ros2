@@ -700,13 +700,13 @@ private:
         rt.getRobotTrajectoryMsg(seeded_msg);
         rt.setRobotTrajectoryMsg(*robot_state_, seeded_msg);
 
-        RCLCPP_INFO(this->get_logger(), "📊 SEEDED trajectory BEFORE Ruckig:");
-        logTrajectory(seeded_msg, this->get_logger(), true);
+//         RCLCPP_INFO(this->get_logger(), "📊 SEEDED trajectory BEFORE Ruckig:");
+//         logTrajectory(seeded_msg, this->get_logger(), true);
 
-        RCLCPP_INFO(this->get_logger(), "📊 BEFORE Ruckig:");
-        moveit_msgs::msg::RobotTrajectory before_msg;
-        rt.getRobotTrajectoryMsg(before_msg);
-        logTrajectory(before_msg, this->get_logger(), true);
+//         RCLCPP_INFO(this->get_logger(), "📊 BEFORE Ruckig:");
+//         moveit_msgs::msg::RobotTrajectory before_msg;
+//         rt.getRobotTrajectoryMsg(before_msg);
+//         logTrajectory(before_msg, this->get_logger(), true);
 
         const bool success = trajectory_processing::RuckigSmoothing::applySmoothing(
             rt,
@@ -716,10 +716,10 @@ private:
             0.001
         );
 
-        RCLCPP_INFO(this->get_logger(), "📊 AFTER Ruckig (success=%s):", success ? "true" : "false");
-        moveit_msgs::msg::RobotTrajectory after_msg;
-        rt.getRobotTrajectoryMsg(after_msg);
-        logTrajectory(after_msg, this->get_logger(), true);
+//         RCLCPP_INFO(this->get_logger(), "📊 AFTER Ruckig (success=%s):", success ? "true" : "false");
+//         moveit_msgs::msg::RobotTrajectory after_msg;
+//         rt.getRobotTrajectoryMsg(after_msg);
+//         logTrajectory(after_msg, this->get_logger(), true);
 
         if (!success)
         {
@@ -757,14 +757,14 @@ private:
             RCLCPP_ERROR(this->get_logger(), "   Falling back to seeded TOTG trajectory instead.");
 
             RCLCPP_WARN(this->get_logger(), "Dumping INVALID trajectory for debugging:");
-            logTrajectory(response->trajectory, this->get_logger(), true);
+//             logTrajectory(response->trajectory, this->get_logger(), true);
 
             response->trajectory = seeded_msg;
             return;
         }
 
         RCLCPP_INFO(this->get_logger(), "✅ Trajectory validated successfully");
-        logTrajectory(response->trajectory, this->get_logger(), false);
+//         logTrajectory(response->trajectory, this->get_logger(), false);
         RCLCPP_INFO(this->get_logger(), "📤 Returning %zu jerk-limited points", num_points);
     }
 };

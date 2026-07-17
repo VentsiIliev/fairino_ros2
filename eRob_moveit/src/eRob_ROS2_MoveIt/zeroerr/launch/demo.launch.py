@@ -87,6 +87,9 @@ def generate_launch_description():
         if terminal:
             terminal_prefix = f"{terminal} -e"
     launch_collision_gui = os.environ.get("ZEROERR_COLLISION_MONITOR_GUI", "0") == "1"
+    non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
+    non_rt_prefix = f"taskset -c {non_rt_cores}"
+    low_priority_non_rt_prefix = f"taskset -c {non_rt_cores} nice -n 19"
 
     package_path = get_package_share_directory("zeroerr")
     urdf_path = _urdf_path_from_runtime(package_path)
@@ -165,30 +168,24 @@ def generate_launch_description():
         executable="ethercat_sdo_srv_server",
         name="ethercat_sdo_srv_server",
         output="screen",
+        prefix=low_priority_non_rt_prefix,
     )
-    demo_ld.add_action(ethercat_sdo_server)
 
-    zeroerr_error_monitor = Node(
-        package="zeroerr",
-        executable="zeroerr_error_monitor.py",
-        name="zeroerr_error_monitor",
-        output="screen",
-        emulate_tty=True,
-        parameters=[{
-            "master_id": 0,
-            "slave_count": 6,
-            "poll_period_sec": 1.0,
-            "log_zero_state_once": True,
-        }],
-    )
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=2.0, actions=[zeroerr_error_monitor])],
-            )
-        )
-    )
+    """USED FOR DEBUG TO READ MOTOR ERROR CODES"""
+    # zeroerr_error_monitor = Node(
+    #     package="zeroerr",
+    #     executable="zeroerr_error_monitor.py",
+    #     name="zeroerr_error_monitor",
+    #     output="screen",
+    #     emulate_tty=True,
+    #     prefix=low_priority_non_rt_prefix,
+    #     parameters=[{
+    #         "master_id": 0,
+    #         "slave_count": 6,
+    #         "poll_period_sec": 10.0,
+    #         "log_zero_state_once": True,
+    #     }],
+    # )
 
     drive_enable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
@@ -204,7 +201,7 @@ def generate_launch_description():
                 target_action=wait_for_op_process,
                 on_exit=[
                     TimerAction(period=0.5, actions=[drive_enable_set_spawner]),
-                    TimerAction(period=1.0, actions=[drive_disable_set_spawner]),
+                    TimerAction(period=2.0, actions=[drive_disable_set_spawner]),
                 ],
             )
         )
@@ -215,6 +212,7 @@ def generate_launch_description():
         executable="ipp_helper",
         name="ipp_helper",
         output="screen",
+        prefix=non_rt_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -222,13 +220,13 @@ def generate_launch_description():
             moveit_config.joint_limits,
         ],
     )
-    demo_ld.add_action(ipp_helper_node)
 
     ruckig_helper_node = Node(
         package="erob_moveit_runtime",
         executable="ruckig_helper",
         name="ruckig_helper",
         output="screen",
+        prefix=non_rt_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -236,13 +234,13 @@ def generate_launch_description():
             moveit_config.joint_limits,
         ],
     )
-    demo_ld.add_action(ruckig_helper_node)
 
     contour_ik_helper_node = Node(
         package="erob_moveit_runtime",
         executable="contour_ik_helper",
         name="contour_ik_helper",
         output="screen",
+        prefix=non_rt_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -250,7 +248,6 @@ def generate_launch_description():
             moveit_config.joint_limits,
         ],
     )
-    demo_ld.add_action(contour_ik_helper_node)
 
     # ZeroErr-specific state publisher: TCP position via TF2 lookup (URDF-consistent)
     # (joint vel/acc + Cartesian vel/acc from shared base class)
@@ -259,11 +256,11 @@ def generate_launch_description():
         executable="zeroerr_state_publisher.py",
         name="zeroerr_state_publisher",
         output="screen",
+        prefix=non_rt_prefix,
         parameters=[{
             "cartesian_source_link": _runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
         }],
     )
-    demo_ld.add_action(zeroerr_state_publisher)
 
     collision_monitor_kwargs = {
         "package": "zeroerr",
@@ -297,13 +294,15 @@ def generate_launch_description():
     if terminal_prefix:
         collision_monitor_kwargs["prefix"] = terminal_prefix
         collision_monitor_kwargs["parameters"][0]["print_table"] = True
+    else:
+        collision_monitor_kwargs["prefix"] = non_rt_prefix
 
     zeroerr_collision_monitor = Node(**collision_monitor_kwargs)
     demo_ld.add_action(
         RegisterEventHandler(
             OnProcessExit(
                 target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=12.0, actions=[zeroerr_collision_monitor])],
+                on_exit=[TimerAction(period=24.0, actions=[zeroerr_collision_monitor])],
             )
         )
     )
@@ -319,11 +318,12 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=wait_for_op_process,
-                    on_exit=[TimerAction(period=14.0, actions=[zeroerr_collision_monitor_gui])],
+                    on_exit=[TimerAction(period=26.0, actions=[zeroerr_collision_monitor_gui])],
                 )
             )
         )
 
+    """PLOT JUGGLER IS ONLY USED FOR DEBUG"""
     # plotjuggler_node = ExecuteProcess(
     #     cmd=[
     #         "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
@@ -346,14 +346,25 @@ def generate_launch_description():
         name="velocity_monitor",
         output="screen",
         emulate_tty=True,
+        prefix=non_rt_prefix,
     )
-    # Delay runtime until EtherCAT OP is stable. If the OP wait never succeeds,
-    # runtime must not start and issue motion interlocks against a still-booting bus.
+    # Delay ZeroErr-specific processes until EtherCAT OP is stable, then bring them
+    # up in a fixed order. This avoids stacking controller spawners, MoveIt helper
+    # model loads, runtime initialization, and SDO diagnostics in the same timing
+    # window as the 1 ms EtherCAT/control loops.
     demo_ld.add_action(
         RegisterEventHandler(
             OnProcessExit(
                 target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=8.0, actions=[velocity_monitor_gui])],
+                on_exit=[
+                    TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
+                    TimerAction(period=7.0, actions=[ipp_helper_node]),
+                    TimerAction(period=10.0, actions=[ruckig_helper_node]),
+                    TimerAction(period=13.0, actions=[contour_ik_helper_node]),
+                    TimerAction(period=16.0, actions=[velocity_monitor_gui]),
+                    TimerAction(period=35.0, actions=[ethercat_sdo_server]),
+                    # TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
+                ],
             )
         )
     )

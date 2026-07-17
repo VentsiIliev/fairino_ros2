@@ -4,6 +4,7 @@ from time import perf_counter
 from threading import Event
 import math
 import time
+import traceback
 import config
 from backend.i_robot_backend import IRobotBackend
 
@@ -479,112 +480,377 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"execute_sequence error: {e}")
             return -1
 
-    def execute_custom_sequence(self, segments, tool=0, user=0, blocking=True):
+    def execute_ordered_motion_chain(self, segments, tool=0, user=0, blocking=True, trajectory_optimizer=None):
         started_at = perf_counter()
-        if self.node is None:
+        if self.node is None or not segments:
             return -1
-        if not segments:
-            return -1
-        drive_error = self._reject_if_drive_not_enabled("EXECUTE_CUSTOM_SEQUENCE")
+        drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
         if drive_error is not None:
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[EXECUTE_CUSTOM_SEQUENCE] Rejected: %s",
+                "[EXECUTE_ORDERED_MOTION_CHAIN] Rejected: %s",
                 self.node.get_hardware_fault_reason(),
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
-            tool_transform = self.node.get_tool_transform(tool)
-            custom_segments = []
-            for segment in segments:
-                position_base = self.apply_workobject(segment["position"], user_id=user)
-                custom_segments.append({
-                    "label": str(segment.get("label", "")),
-                    "position": position_base,
-                    "vel": float(segment["vel"]),
-                    "acc": float(segment["acc"]),
-                    "motion_type": str(segment.get("motion_type", "linear")),
-                })
-
-            from motion.planning.custom_sequence import execute_custom_sequence
-            result = execute_custom_sequence(
-                self.node,
-                custom_segments,
-                tool_transform=tool_transform,
-            )
             self.node.get_logger().info(
-                f"[TIMING] backend_execute_custom_sequence blocking={bool(blocking)} "
-                f"result={result} segments={len(custom_segments)} elapsed_s={perf_counter() - started_at:.3f}"
+                f"[OrderedChain] Executing ordered motion chain with {len(segments)} segments"
+            )
+            result = self._execute_ordered_motion_chain_pipelined(
+                segments,
+                tool=tool,
+                user=user,
+                trajectory_optimizer=trajectory_optimizer,
+            )
+            if result != 0:
+                return result
+            self.node.get_logger().info(
+                f"[TIMING] ordered_motion_chain_total result=0 elapsed_s={perf_counter() - started_at:.3f}"
+            )
+            return 0
+        except Exception as e:
+            details = traceback.format_exc()
+            if self.node is not None:
+                self.node.get_logger().error(f"execute_ordered_motion_chain error: {e}\n{details}")
+            else:
+                print(f"execute_ordered_motion_chain error: {e}\n{details}")
+            return -1
+
+    def _execute_ordered_motion_chain_pipelined(self, segments, tool=0, user=0, trajectory_optimizer=None):
+        from concurrent.futures import ThreadPoolExecutor
+        from copy import deepcopy
+        from moveit_msgs.msg import RobotState
+        from queue import Empty, Queue
+        from motion.execution.trajectory_executor import _send_trajectory_to_controller
+        from motion.planning.segment_planning import (
+            _build_follow_path_trajectory,
+            _optimize_sync,
+            _plan_segment,
+            _robot_state_from_trajectory_end,
+            _wait_execution_complete,
+        )
+        from motion.planning.direct_contour_ik import _build_direct_contour_trajectory, _log_report
+        from motion.planning.planner_utils import _to_pose_list
+
+        planning_node = getattr(self.node, "planner_context", self.node)
+        tool_transform = self.node.get_tool_transform(tool)
+        start_cartesian = list(planning_node.prev_cartesian[:6])
+        clean_joint_state = deepcopy(planning_node.current_joint_state)
+        clean_joint_state.header.stamp = planning_node.get_clock().now().to_msg()
+        clean_joint_state.velocity = [0.0] * (len(clean_joint_state.name) or len(clean_joint_state.position))
+        clean_joint_state.effort = []
+        start_state = RobotState()
+        start_state.joint_state = clean_joint_state
+        start_state.is_diff = False
+        selected_optimizer = trajectory_optimizer or (
+            str(getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or "").strip().upper() or None
+        )
+        previous_execution_suppress = bool(getattr(self.node, "_suppress_post_success_unwind", False))
+
+        def _joint_positions_by_name(state):
+            names = list(getattr(state.joint_state, "name", []) or [])
+            values = list(getattr(state.joint_state, "position", []) or [])
+            return {name: float(value) for name, value in zip(names, values)}
+
+        def _plan_unwind_direct_ik_trajectory(current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale, seed_state):
+            segment_started = perf_counter()
+            direct_ik_step_deg = max(0.1, float(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG", 4.0)))
+            waypoints_base = self._rotational_path_waypoints_base(
+                current_pos_wobj,
+                target_pos_wobj,
+                rotation_index,
+                max_step_override_deg=direct_ik_step_deg,
+                apply_workobject_to_waypoints=False,
+            )
+            poses, err = _to_pose_list(
+                planning_node,
+                waypoints_base,
+                tool_transform,
+                check_last_only=True,
+            )
+            if err:
+                raise RuntimeError(f"unwind pose conversion failed with result {err}")
+            ik_result = _build_direct_contour_trajectory(planning_node, poses, seed_state=seed_state)
+            ik_result.report.timings["total_before_optimizer_s"] = perf_counter() - segment_started
+            _log_report(planning_node, ik_result.report)
+            if not ik_result.report.ok:
+                raise RuntimeError(f"unwind direct IK failed: {ik_result.report.failure_reason} {ik_result.report.details}")
+            optimizer_name = str(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER", "") or "").strip().upper() or None
+            optimized, optimize_elapsed = _optimize_sync(
+                planning_node,
+                ik_result.trajectory,
+                vel_scale,
+                acc_scale,
+                optimizer_name=optimizer_name,
+            )
+            planning_node.get_logger().info(
+                f"[TIMING] ordered_chain_unwind_plan_piece waypoints={len(waypoints_base)} "
+                f"points={len(getattr(optimized.joint_trajectory, 'points', []) or [])} "
+                f"optimize_s={optimize_elapsed:.3f} elapsed_s={perf_counter() - segment_started:.3f}"
+            )
+            return optimized.joint_trajectory
+
+        def _plan_ordered_segment(index, segment, current_cartesian, current_state):
+            segment_type = str(segment.get("type") or "").strip().lower()
+            label = str(segment.get("label") or f"segment_{index + 1}")
+            plan_started = perf_counter()
+            if segment_type == "linear":
+                target_base = self.apply_workobject(list(segment["position"][:6]), user_id=user)
+                planned = _plan_segment(
+                    planning_node,
+                    index=index,
+                    segment={
+                        "label": label,
+                        "position": list(target_base[:6]),
+                        "vel": float(segment.get("vel", config.DEFAULT_VEL_PERCENT)),
+                        "acc": float(segment.get("acc", config.DEFAULT_ACC_PERCENT)),
+                        "motion_type": "linear",
+                    },
+                    start_cartesian=list(current_cartesian[:6]),
+                    start_state=current_state,
+                    tool_transform=tool_transform,
+                )
+                return {
+                    "type": segment_type,
+                    "label": label,
+                    "target_position": planned.target_position,
+                    "final_state": planned.final_state,
+                    "trajectory": planned.joint_trajectory,
+                    "plan_elapsed_s": perf_counter() - plan_started,
+                    "optimize_elapsed_s": planned.optimize_elapsed_s,
+                }
+            if segment_type == "path":
+                path_base = []
+                for waypoint in segment.get("path") or []:
+                    if len(waypoint) >= 6:
+                        wp_full = list(waypoint[:6])
+                    else:
+                        wp_full = [
+                            waypoint[0],
+                            waypoint[1],
+                            waypoint[2],
+                            current_cartesian[3],
+                            current_cartesian[4],
+                            current_cartesian[5],
+                        ]
+                    path_base.append(list(self.apply_workobject(wp_full, user_id=user)[:6]))
+                if not path_base:
+                    raise RuntimeError(f"Ordered-chain path segment {label!r} is empty")
+                planning_path = [list(current_cartesian[:6])]
+                planning_path.extend(path_base)
+                start_gap_mm = math.sqrt(
+                    (float(path_base[0][0]) - float(current_cartesian[0])) ** 2
+                    + (float(path_base[0][1]) - float(current_cartesian[1])) ** 2
+                    + (float(path_base[0][2]) - float(current_cartesian[2])) ** 2
+                )
+                planning_node.get_logger().info(
+                    f"[OrderedChain] Planning path segment '{label}' from previous target: "
+                    f"start_gap_mm={start_gap_mm:.3f} path_waypoints={len(path_base)} "
+                    f"planning_waypoints={len(planning_path)}"
+                )
+                vel_scale = max(0.0, min(1.0, float(segment.get("vel", config.DEFAULT_VEL_PERCENT)) / 100.0))
+                acc_scale = max(0.0, min(1.0, float(segment.get("acc", config.DEFAULT_ACC_PERCENT)) / 100.0))
+                joint_trajectory = _build_follow_path_trajectory(
+                    planning_node,
+                    command_path=planning_path,
+                    start_state=current_state,
+                    tool_transform=tool_transform,
+                    vel_scaling=vel_scale,
+                    acc_scaling=acc_scale,
+                    trajectory_optimizer_name=selected_optimizer,
+                )
+                return {
+                    "type": segment_type,
+                    "label": label,
+                    "target_position": list(path_base[-1][:6]),
+                    "final_state": _robot_state_from_trajectory_end(joint_trajectory),
+                    "trajectory": joint_trajectory,
+                    "plan_elapsed_s": perf_counter() - plan_started,
+                }
+            if segment_type == "unwind_joint6":
+                joint_names = list(getattr(config, "JOINT_NAMES", []) or [])
+                joint_name = str(getattr(config, "EXECUTOR_POST_UNWIND_JOINT_NAME", "Joint_6")).strip()
+                if joint_name not in joint_names:
+                    raise RuntimeError(f"Joint {joint_name!r} is not configured")
+                axis_index = int(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX", 5))
+                joint_index = joint_names.index(joint_name)
+                by_name = _joint_positions_by_name(current_state)
+                current_value = float(by_name[joint_name])
+                final_target = self.node.trajectory_executor._canonical_angle(current_value)
+                min_delta = float(getattr(config, "EXECUTOR_POST_UNWIND_MIN_DELTA_RAD", 0.5))
+                remaining = final_target - current_value
+                if abs(remaining) < min_delta:
+                    planning_node.get_logger().info("[UNWIND_J6] Ordered-chain unwind skipped - no unwind needed")
+                    return {
+                        "type": segment_type,
+                        "label": label,
+                        "target_position": list(current_cartesian[:6]),
+                        "final_state": current_state,
+                        "trajectories": [],
+                        "check": None,
+                        "plan_elapsed_s": perf_counter() - plan_started,
+                    }
+                vel_percent = self.node.trajectory_executor._clamp_percentage(segment.get("vel", config.DEFAULT_VEL_PERCENT))
+                acc_percent = self.node.trajectory_executor._clamp_percentage(segment.get("acc", config.DEFAULT_ACC_PERCENT))
+                vel_scale = vel_percent / 100.0
+                acc_scale = acc_percent / 100.0
+                sign = float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN", 1.0))
+                max_step_deg = max(1.0, abs(float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG", 180.0))))
+                total_delta_deg = math.degrees(remaining) * sign
+                segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
+                planning_node.get_logger().info(
+                    "[UNWIND_J6] Planning ordered-chain rotational unwind: "
+                    f"{joint_name} {current_value:.3f} -> {final_target:.3f} rad "
+                    f"delta={remaining:.3f} rad cart_axis={axis_index} cart_delta={total_delta_deg:.3f}deg "
+                    f"segments={segment_count} max_segment={max_step_deg:.1f}deg "
+                    f"vel={vel_percent:.1f}% acc={acc_percent:.1f}%"
+                )
+                trajectories = []
+                planning_state = current_state
+                planning_cartesian = list(current_cartesian[:6])
+                planning_value = current_value
+                for unwind_index in range(1, segment_count + 1):
+                    remaining = final_target - planning_value
+                    remaining_deg = math.degrees(remaining) * sign
+                    if abs(remaining) < min_delta:
+                        break
+                    segment_delta_deg = math.copysign(min(abs(remaining_deg), max_step_deg), remaining_deg)
+                    target_cartesian = list(planning_cartesian[:6])
+                    target_cartesian[axis_index] = float(target_cartesian[axis_index]) + segment_delta_deg
+                    planning_node.get_logger().info(
+                        f"[UNWIND_J6] Planning ordered unwind segment {unwind_index}/{segment_count}: "
+                        f"{planning_value:.3f} -> {final_target:.3f} rad, cart_delta={segment_delta_deg:.3f}deg"
+                    )
+                    joint_trajectory = _plan_unwind_direct_ik_trajectory(
+                        planning_cartesian,
+                        target_cartesian,
+                        axis_index,
+                        vel_scale,
+                        acc_scale,
+                        planning_state,
+                    )
+                    trajectories.append(joint_trajectory)
+                    planning_state = _robot_state_from_trajectory_end(joint_trajectory)
+                    planning_cartesian = target_cartesian
+                    planning_value = float(_joint_positions_by_name(planning_state).get(joint_name, planning_value))
+                return {
+                    "type": segment_type,
+                    "label": label,
+                    "target_position": list(planning_cartesian[:6]),
+                    "final_state": planning_state,
+                    "trajectories": trajectories,
+                    "check": {
+                        "joint_names": joint_names,
+                        "joint_name": joint_name,
+                        "joint_index": joint_index,
+                        "target_value": final_target,
+                    },
+                    "plan_elapsed_s": perf_counter() - plan_started,
+                }
+            raise RuntimeError(f"Unsupported ordered-chain segment type: {segment_type!r}")
+
+        def _execute_planned_segment(index, total, planned):
+            exec_started = perf_counter()
+            segment_type = planned["type"]
+            if segment_type in {"linear", "path"}:
+                duration = planned["trajectory"].points[-1].time_from_start
+                duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
+                timeout_s = max(
+                    float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
+                    duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
+                )
+                planning_node.get_logger().info(
+                    f"[OrderedChain] Sending planned segment {index}/{total} label='{planned['label']}' "
+                    f"type={segment_type} points={len(planned['trajectory'].points)} duration_s={duration_s:.3f} "
+                    f"plan_s={planned['plan_elapsed_s']:.3f}"
+                )
+                _send_trajectory_to_controller(self.node, planned["trajectory"])
+                result = _wait_execution_complete(self.node, timeout_s=timeout_s + 2.0)
+            elif segment_type == "unwind_joint6":
+                result = 0
+                for unwind_index, joint_trajectory in enumerate(planned["trajectories"], start=1):
+                    duration = joint_trajectory.points[-1].time_from_start
+                    duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
+                    timeout_s = max(
+                        float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
+                        duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
+                    )
+                    planning_node.get_logger().info(
+                        f"[OrderedChain] Sending planned unwind {unwind_index}/{len(planned['trajectories'])} "
+                        f"points={len(joint_trajectory.points)} duration_s={duration_s:.3f}"
+                    )
+                    _send_trajectory_to_controller(self.node, joint_trajectory)
+                    result = _wait_execution_complete(self.node, timeout_s=timeout_s + 2.0)
+                    if result != 0:
+                        break
+                if result == 0 and planned.get("check") is not None:
+                    result = 0 if self.node.trajectory_executor._verify_explicit_unwind_complete(planned["check"]) else -6
+            else:
+                result = -1
+            planning_node.get_logger().info(
+                f"[TIMING] ordered_motion_chain_segment index={index} label='{planned['label']}' "
+                f"type={segment_type} result={result} elapsed_s={perf_counter() - exec_started:.3f}"
             )
             return result
-        except Exception as e:
-            print(f"execute_custom_sequence error: {e}")
-            return -1
 
-    def execute_staged_path(
-        self,
-        stage_position,
-        path,
-        tool=0,
-        user=0,
-        stage_vel=0.6,
-        stage_acc=0.4,
-        path_vel=0.6,
-        path_acc=0.4,
-        blocking=True,
-        trajectory_optimizer=None,
-    ):
-        started_at = perf_counter()
-        if self.node is None or not stage_position or not path:
-            return -1
-        drive_error = self._reject_if_drive_not_enabled("EXECUTE_STAGED_PATH")
-        if drive_error is not None:
-            return drive_error
-        if not self.node.is_hardware_ready_for_motion():
-            self.node.get_logger().error(
-                "[EXECUTE_STAGED_PATH] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
-            )
-            return config.MOTION_ERROR_HARDWARE_NOT_READY
+        executor = ThreadPoolExecutor(max_workers=1)
+        planned_queue = Queue()
+        stop_planning = Event()
+        plan_timeout_s = float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)) + 30.0
+
+        def _planning_worker():
+            previous_target = start_cartesian
+            previous_state = start_state
+            try:
+                for index, segment in enumerate(segments):
+                    if stop_planning.is_set():
+                        break
+                    planned_segment = _plan_ordered_segment(index, segment, previous_target, previous_state)
+                    planned_queue.put((index, planned_segment, None))
+                    previous_target = planned_segment["target_position"]
+                    previous_state = planned_segment["final_state"]
+                planned_queue.put((None, None, None))
+            except Exception as exc:
+                planned_queue.put((None, None, exc))
+
+        planner_future = executor.submit(_planning_worker)
         try:
-            tool_transform = self.node.get_tool_transform(tool)
-            stage_position_base = self.apply_workobject(list(stage_position[:6]), user_id=user)
-            path_base = []
-            for waypoint in path:
-                if len(waypoint) >= 6:
-                    wp_full = list(waypoint[:6])
-                else:
-                    current = self.get_current_position() or [0, 0, 0, *config.DEFAULT_ORIENTATION]
-                    wp_full = [waypoint[0], waypoint[1], waypoint[2], current[3], current[4], current[5]]
-                path_base.append(list(self.apply_workobject(wp_full, user_id=user)[:6]))
+            for expected_index in range(len(segments)):
+                wait_started = perf_counter()
+                try:
+                    planned_index, planned, exc = planned_queue.get(timeout=plan_timeout_s)
+                except Empty as exc:
+                    raise TimeoutError(
+                        f"Timed out waiting for ordered-chain plan index={expected_index + 1}"
+                    ) from exc
+                if exc is not None:
+                    raise RuntimeError(f"ordered-chain planning failed: {exc}") from exc
+                if planned_index is None or planned is None:
+                    raise RuntimeError(
+                        f"ordered-chain planner ended before segment {expected_index + 1}"
+                    )
+                if planned_index != expected_index:
+                    raise RuntimeError(
+                        f"ordered-chain planner returned segment {planned_index + 1}, "
+                        f"expected {expected_index + 1}"
+                    )
+                planning_node.get_logger().info(
+                    f"[TIMING] ordered_motion_chain_plan_ready index={expected_index + 1} "
+                    f"wait_before_execute_s={perf_counter() - wait_started:.3f}"
+                )
 
-            selected_optimizer = trajectory_optimizer
-            if not selected_optimizer:
-                selected_optimizer = str(
-                    getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
-                ).strip().upper() or None
-
-            from motion.planning.staged_path import execute_staged_path
-            result = execute_staged_path(
-                self.node,
-                stage_position=list(stage_position_base[:6]),
-                command_path=path_base,
-                stage_vel=float(stage_vel),
-                stage_acc=float(stage_acc),
-                path_vel=float(path_vel),
-                path_acc=float(path_acc),
-                tool_transform=tool_transform,
-                trajectory_optimizer_name=selected_optimizer,
-            )
-            self.node.get_logger().info(
-                f"[TIMING] backend_execute_staged_path blocking={bool(blocking)} "
-                f"result={result} waypoints={len(path_base)} elapsed_s={perf_counter() - started_at:.3f}"
-            )
-            return result
-        except Exception as e:
-            print(f"execute_staged_path error: {e}")
-            return -1
+                setattr(self.node, "_suppress_post_success_unwind", expected_index + 1 < len(segments))
+                result = _execute_planned_segment(expected_index + 1, len(segments), planned)
+                if result != 0:
+                    stop_planning.set()
+                    return result
+            planner_future.result(timeout=1.0)
+            return 0
+        finally:
+            setattr(self.node, "_suppress_post_success_unwind", previous_execution_suppress)
+            stop_planning.set()
+            executor.shutdown(wait=True)
 
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
         if self.node is None:
@@ -788,7 +1054,7 @@ class MoveItRobotBackend(IRobotBackend):
 
         try:
             from motion.execution.trajectory_executor import _send_trajectory_to_controller
-            from motion.planning.custom_sequence import _optimize_sync
+            from motion.planning.segment_planning import _optimize_sync
             from motion.planning.direct_contour_ik import _build_direct_contour_trajectory, _log_report
             from motion.planning.planner_utils import _begin_execution, _to_pose_list
         except Exception as exc:
@@ -843,7 +1109,14 @@ class MoveItRobotBackend(IRobotBackend):
         _send_trajectory_to_controller(planning_node, joint_trajectory)
         return 0
 
-    def _rotational_path_waypoints_base(self, current_pos_wobj, target_pos_wobj, rotation_index, max_step_override_deg=None):
+    def _rotational_path_waypoints_base(
+        self,
+        current_pos_wobj,
+        target_pos_wobj,
+        rotation_index,
+        max_step_override_deg=None,
+        apply_workobject_to_waypoints=True,
+    ):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         if max_step_override_deg is None:
             max_step = self._rotational_jog_max_step_deg()
@@ -857,7 +1130,9 @@ class MoveItRobotBackend(IRobotBackend):
             waypoint[3] = float(current_pos_wobj[3]) + (float(target_pos_wobj[3]) - float(current_pos_wobj[3])) * alpha
             waypoint[4] = float(current_pos_wobj[4]) + (float(target_pos_wobj[4]) - float(current_pos_wobj[4])) * alpha
             waypoint[5] = float(current_pos_wobj[5]) + (float(target_pos_wobj[5]) - float(current_pos_wobj[5])) * alpha
-            waypoints_base.append(list(self.apply_workobject(waypoint)[:6]))
+            if apply_workobject_to_waypoints:
+                waypoint = self.apply_workobject(waypoint)
+            waypoints_base.append(list(waypoint[:6]))
         return waypoints_base
 
     def enable_safety_walls(self):

@@ -18,6 +18,7 @@ source "${CONFIG_FILE}"
 : "${WORKSPACE_SETUP_FILE:?WORKSPACE_SETUP_FILE is required}"
 
 BASE_UNDERLAY_SETUP_FILE="${BASE_UNDERLAY_SETUP_FILE:-}"
+USE_RVIZ="${USE_RVIZ:-true}"
 ZEROERR_ROS_PID=""
 ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
 FAIRINO_ROS_PID=""
@@ -200,6 +201,11 @@ launch_zeroerr() {
     launch_file="${minimal_launch_file}"
   fi
 
+  local launch_args=()
+  if [[ "${profile}" != "ethercat_only" ]]; then
+    launch_args+=("use_rviz:=${USE_RVIZ}")
+  fi
+
   echo "Preparing ZeroErr stack (${profile}): ${package} ${launch_file}"
   cleanup_stale_zeroerr_processes
 
@@ -221,7 +227,7 @@ launch_zeroerr() {
   ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
   ZEROERR_COLLISION_MONITOR_TERMINAL="${collision_monitor_terminal}" \
     ZEROERR_COLLISION_MONITOR_GUI="${collision_monitor_gui}" \
-    setsid ros2 launch "${package}" "${launch_file}" &
+    setsid ros2 launch "${package}" "${launch_file}" "${launch_args[@]}" &
   ZEROERR_ROS_PID=$!
   trap cleanup_zeroerr EXIT INT TERM HUP
 
@@ -250,6 +256,7 @@ launch_fairino() {
   local package="${FAIRINO_PACKAGE:?FAIRINO_PACKAGE is required}"
   local launch_file="${FAIRINO_LAUNCH_FILE:?FAIRINO_LAUNCH_FILE is required}"
   local ethercat_script="${FAIRINO_ETHERCAT_SCRIPT:-}"
+  local launch_args=("use_rviz:=${USE_RVIZ}")
 
   cleanup_stale_fairino_processes
 
@@ -261,7 +268,7 @@ launch_fairino() {
   echo "Launching Fairino stack: ${package} ${launch_file}"
   if [[ -n "${ethercat_script}" && -x "${ethercat_script}" ]]; then
     FAIRINO_ROS_PID=""
-    setsid ros2 launch "${package}" "${launch_file}" &
+    setsid ros2 launch "${package}" "${launch_file}" "${launch_args[@]}" &
     FAIRINO_ROS_PID=$!
     trap cleanup_fairino EXIT INT TERM HUP
 
@@ -270,7 +277,7 @@ launch_fairino() {
 
     wait "${FAIRINO_ROS_PID}"
   else
-    exec ros2 launch "${package}" "${launch_file}"
+    exec ros2 launch "${package}" "${launch_file}" "${launch_args[@]}"
   fi
 }
 

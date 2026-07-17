@@ -155,42 +155,54 @@ def parse_execute_sequence_request(data: dict[str, Any] | None) -> dict[str, Any
     }
 
 
-def parse_execute_custom_sequence_request(data: dict[str, Any] | None) -> dict[str, Any]:
-    payload = parse_execute_sequence_request(data)
-    raw_segments = (data or {}).get("segments") or []
-    for index, raw_segment in enumerate(raw_segments):
-        if isinstance(raw_segment, dict) and raw_segment.get("label") is not None:
-            payload["segments"][index]["label"] = str(raw_segment.get("label"))
-    return payload
-
-
-def parse_execute_staged_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
+def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
-    stage_position = payload.get("stage_position")
-    if not stage_position or len(stage_position) != 6:
-        raise ValueError("Invalid stage_position format")
-    path = payload.get("path")
-    if not path:
-        raise ValueError("No path provided")
-    if isinstance(path, list) and path and isinstance(path[0], list) and path[0] and isinstance(path[0][0], list):
-        path = path[0]
-    for index, point in enumerate(path):
-        if not isinstance(point, list) or len(point) < 3:
-            raise ValueError(f"Invalid path point {index}: expected list with at least 3 values")
+    raw_segments = payload.get("segments")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise ValueError("Missing non-empty 'segments'")
     trajectory_optimizer = payload.get("trajectory_optimizer")
     if trajectory_optimizer is not None:
         trajectory_optimizer = str(trajectory_optimizer).strip().upper()
         if trajectory_optimizer not in {"TOTG", "RUCKIG"}:
             raise ValueError("Invalid trajectory_optimizer; expected TOTG or RUCKIG")
+
+    segments = []
+    for index, raw_segment in enumerate(raw_segments):
+        if not isinstance(raw_segment, dict):
+            raise ValueError(f"Invalid segment {index}: expected object")
+        segment_type = str(raw_segment.get("type") or raw_segment.get("kind") or "").strip().lower()
+        if segment_type not in {"linear", "path", "unwind_joint6"}:
+            raise ValueError(f"Invalid segment {index}: unsupported type {segment_type!r}")
+        segment = {"type": segment_type, "label": str(raw_segment.get("label") or f"segment_{index + 1}")}
+        if segment_type == "linear":
+            position = raw_segment.get("position")
+            if not position or len(position) != 6:
+                raise ValueError(f"Invalid segment {index}: linear position must have 6 values")
+            segment.update({
+                "position": deepcopy(position),
+                "vel": float(raw_segment.get("vel", config.DEFAULT_VEL_PERCENT)),
+                "acc": float(raw_segment.get("acc", config.DEFAULT_ACC_PERCENT)),
+            })
+        elif segment_type == "path":
+            path = raw_segment.get("path")
+            if not path:
+                raise ValueError(f"Invalid segment {index}: path is required")
+            segment.update({
+                "path": deepcopy(path),
+                "vel": float(raw_segment.get("vel", config.DEFAULT_VEL_PERCENT)),
+                "acc": float(raw_segment.get("acc", config.DEFAULT_ACC_PERCENT)),
+            })
+        elif segment_type == "unwind_joint6":
+            segment.update({
+                "vel": float(raw_segment.get("vel", config.DEFAULT_VEL_PERCENT)),
+                "acc": float(raw_segment.get("acc", config.DEFAULT_ACC_PERCENT)),
+                "queue_if_busy": bool(raw_segment.get("queue_if_busy", True)),
+            })
+        segments.append(segment)
     return {
-        "stage_position": deepcopy(stage_position),
-        "path": deepcopy(path),
+        "segments": segments,
         "tool": int(payload.get("tool", 0)),
         "user": int(payload.get("user", 0)),
-        "stage_vel": float(payload.get("stage_vel", config.DEFAULT_VEL_PERCENT)),
-        "stage_acc": float(payload.get("stage_acc", config.DEFAULT_ACC_PERCENT)),
-        "path_vel": float(payload.get("path_vel", payload.get("vel", config.DEFAULT_VEL_PERCENT))),
-        "path_acc": float(payload.get("path_acc", payload.get("acc", config.DEFAULT_ACC_PERCENT))),
         "blocking": bool(payload.get("blocking", True)),
         "trajectory_optimizer": trajectory_optimizer,
     }
