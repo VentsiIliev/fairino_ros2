@@ -179,6 +179,12 @@ MARKER_PUBLISH_INTERVAL_S: 30.0
 # Enables runtime safety wall collision objects around the extracted workspace.
 SAFETY_WALLS_ENABLED: false
 
+# Enables optional drag-mode runtime publishers/subscribers, timers, and models.
+DRAG_MODE_AVAILABLE: false
+
+RUNTIME_HEADLESS: 1
+
+
 # Starts the robot in drag mode when supported by this backend.
 DRAG_MODE_ENABLED_DEFAULT: false
 
@@ -262,3 +268,20 @@ TORQUE_LOG_ENABLED: False
 
 # CSV output path for torque logging.
 TORQUE_LOG_PATH: package://zeroerr/data/torque_sensor_log.csv
+
+# REDUCE CPU LOAD
+
+# Debug-only SDO fault-code polling. Enable only while diagnosing drive errors.
+ZEROERR_ERROR_MONITOR_ENABLED: false
+
+MONITOR_UPDATE_RATE_HZ: 10.0
+COLLISION_MONITOR_PERIOD_SEC: 0.20
+COLLISION_MONITOR_INPUT_SAMPLE_PERIOD_SEC: 0.10
+
+STATE_PUBLISH_RATE_HZ: 10.0
+JOINT_DERIVATIVE_PUBLISH_RATE_HZ: 10.0
+JOINT_STATE_INPUT_RATE_HZ: 10.0
+
+RUNTIME_JOINT_STATE_INPUT_RATE_HZ: 10.0
+RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ: 10.0
+RUNTIME_COLLISION_STATE_INPUT_RATE_HZ: 10.0

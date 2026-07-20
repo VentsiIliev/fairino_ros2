@@ -361,6 +361,19 @@ def generate_launch_description():
         },
         prefix=non_rt_prefix,
     )
+    delayed_zeroerr_actions = [
+        TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
+        TimerAction(period=7.0, actions=[ipp_helper_node]),
+        TimerAction(period=10.0, actions=[ruckig_helper_node]),
+        TimerAction(period=13.0, actions=[contour_ik_helper_node]),
+        TimerAction(period=16.0, actions=[zeroerr_runtime]),
+        TimerAction(period=35.0, actions=[ethercat_sdo_server]),
+    ]
+    if bool(_runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
+        delayed_zeroerr_actions.append(
+            TimerAction(period=50.0, actions=[zeroerr_error_monitor])
+        )
+
     # Delay ZeroErr-specific processes until EtherCAT OP is stable, then bring them
     # up in a fixed order. This avoids stacking controller spawners, MoveIt helper
     # model loads, runtime initialization, and SDO diagnostics in the same timing
@@ -369,15 +382,7 @@ def generate_launch_description():
         RegisterEventHandler(
             OnProcessExit(
                 target_action=wait_for_op_process,
-                on_exit=[
-                    TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
-                    TimerAction(period=7.0, actions=[ipp_helper_node]),
-                    TimerAction(period=10.0, actions=[ruckig_helper_node]),
-                    TimerAction(period=13.0, actions=[contour_ik_helper_node]),
-                    TimerAction(period=16.0, actions=[zeroerr_runtime]),
-                    TimerAction(period=35.0, actions=[ethercat_sdo_server]),
-                    TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
-                ],
+                on_exit=delayed_zeroerr_actions,
             )
         )
     )
