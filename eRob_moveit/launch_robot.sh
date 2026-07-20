@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_FILE="${ROBOT_LAUNCH_CONFIG:-${SCRIPT_DIR}/robot_launch.conf}"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then

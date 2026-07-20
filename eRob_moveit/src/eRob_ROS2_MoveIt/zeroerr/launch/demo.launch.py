@@ -340,10 +340,10 @@ def generate_launch_description():
     #     )
     # )
 
-    velocity_monitor_gui = Node(
+    zeroerr_runtime = Node(
         package="zeroerr",
         executable="zeroerr_runtime.py",
-        name="velocity_monitor",
+        name="zeroerr_runtime",
         output="screen",
         emulate_tty=True,
         prefix=non_rt_prefix,
@@ -361,7 +361,7 @@ def generate_launch_description():
                     TimerAction(period=7.0, actions=[ipp_helper_node]),
                     TimerAction(period=10.0, actions=[ruckig_helper_node]),
                     TimerAction(period=13.0, actions=[contour_ik_helper_node]),
-                    TimerAction(period=16.0, actions=[velocity_monitor_gui]),
+                    TimerAction(period=16.0, actions=[zeroerr_runtime]),
                     TimerAction(period=35.0, actions=[ethercat_sdo_server]),
                     TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
                 ],
