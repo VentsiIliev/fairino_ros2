@@ -356,6 +356,9 @@ def generate_launch_description():
         name="zeroerr_runtime",
         output="screen",
         emulate_tty=True,
+        additional_env={
+            "EROB_RUNTIME_HEADLESS": str(_runtime_value(package_path, "RUNTIME_HEADLESS", "0")),
+        },
         prefix=non_rt_prefix,
     )
     # Delay ZeroErr-specific processes until EtherCAT OP is stable, then bring them
