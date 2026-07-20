@@ -111,6 +111,7 @@ from config import (
     ETHERCAT_RECOVERY_ENABLED,
     ETHERCAT_RECOVERY_MIN_INTERVAL_S,
     ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+    MONITOR_UPDATE_RATE_HZ,
     MOTION_ERROR_HARDWARE_NOT_READY,
     MOTION_ERROR_DRIVE_NOT_ENABLED,
     DRAG_MODE_ENABLED_DEFAULT,
@@ -729,7 +730,7 @@ class RobotController(Node):
                 self.monitor = RobotMonitor(
                     ros_node=self,
                     tcp_transform=self._get_monitor_tcp_transform(),
-                    stable_update_rate_hz=50.0,
+                    stable_update_rate_hz=MONITOR_UPDATE_RATE_HZ,
                 )
                 self.monitor.set_stable_update_callback(self._handle_monitor_update)
                 self.tcp_loaded = True

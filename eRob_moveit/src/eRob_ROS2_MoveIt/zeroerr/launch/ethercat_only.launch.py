@@ -223,7 +223,7 @@ def generate_launch_description():
         },
         "parameters": [{
             "slave_count": 6,
-            "poll_period_sec": 0.005,
+            "poll_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_PERIOD_SEC", 0.005)),
             "confirm_cycles": 3,
             "print_table": False,
             "use_inverse_dynamics": False,

@@ -37,7 +37,7 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64, Float64MultiArray
 
 
-_PUBLISH_HZ = 50
+_DEFAULT_PUBLISH_HZ = 50.0
 _CART_HISTORY = 5   # samples kept for Cartesian derivative estimation
 _STATIONARY_JOINT_VEL_NORM_RAD_S = 0.02
 _STATIONARY_CART_SPAN_M = 0.0005
@@ -185,11 +185,15 @@ class CartesianPublisherBase(Node):
         self.create_subscription(
             JointState, '/joint_states', self._joint_callback, 10)
 
-        # ── 50 Hz Cartesian publish timer ──────────────────────────────────────
-        self.create_timer(1.0 / _PUBLISH_HZ, self._cartesian_timer_cb)
+        self.declare_parameter('publish_hz', _DEFAULT_PUBLISH_HZ)
+        publish_hz = float(self.get_parameter('publish_hz').value)
+        publish_hz = max(1.0, publish_hz)
+
+        # ── Cartesian publish timer ───────────────────────────────────────────
+        self.create_timer(1.0 / publish_hz, self._cartesian_timer_cb)
 
         self.get_logger().info(
-            f'[{node_name}] Started — publishing at {_PUBLISH_HZ} Hz')
+            f'[{node_name}] Started — publishing at {publish_hz:.1f} Hz')
 
     # ── Abstract: subclasses must implement ───────────────────────────────────
 
