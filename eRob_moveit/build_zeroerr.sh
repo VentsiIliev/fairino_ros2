@@ -19,7 +19,25 @@ source_setup() {
 }
 
 source_setup /opt/ros/rolling/setup.bash
-source_setup "${ROOT_WS_DIR}/install/local_setup.bash"
+
+if [[ -n "${MOVEIT_SETUP_FILE:-}" ]]; then
+  if [[ ! -f "${MOVEIT_SETUP_FILE}" ]]; then
+    echo "MOVEIT_SETUP_FILE not found: ${MOVEIT_SETUP_FILE}" >&2
+    exit 1
+  fi
+  source_setup "${MOVEIT_SETUP_FILE}"
+fi
+
+if [[ -f "${ROOT_WS_DIR}/install/local_setup.bash" ]]; then
+  source_setup "${ROOT_WS_DIR}/install/local_setup.bash"
+fi
 
 cd "${ROOT_WS_DIR}"
-colcon build --packages-select erob_moveit_runtime zeroerr
+
+if [[ ! -f "${ROOT_WS_DIR}/install/local_setup.bash" ]]; then
+  echo "Base workspace install not found; building dependencies up to erob_moveit_runtime and zeroerr..."
+  colcon build --symlink-install --packages-up-to erob_moveit_runtime zeroerr --cmake-args -DCMAKE_BUILD_TYPE=Release
+  source_setup "${ROOT_WS_DIR}/install/local_setup.bash"
+fi
+
+colcon build --symlink-install --packages-select erob_moveit_runtime zeroerr --cmake-args -DCMAKE_BUILD_TYPE=Release
