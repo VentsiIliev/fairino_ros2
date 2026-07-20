@@ -170,6 +170,7 @@ class CartesianPublisherBase(Node):
         self._prev_velocities: Optional[np.ndarray] = None
         self._prev_accelerations: Optional[np.ndarray] = None
         self._prev_joint_time: Optional[float] = None
+        self._last_joint_publish_time: Optional[float] = None
         self._latest_joint_velocity_norm: float = 0.0
 
         # ── Cartesian history for low-noise derivative estimation ──────────────
@@ -188,12 +189,21 @@ class CartesianPublisherBase(Node):
         self.declare_parameter('publish_hz', _DEFAULT_PUBLISH_HZ)
         publish_hz = float(self.get_parameter('publish_hz').value)
         publish_hz = max(1.0, publish_hz)
+        self.declare_parameter('joint_publish_hz', 0.0)
+        joint_publish_hz = float(self.get_parameter('joint_publish_hz').value)
+        self._joint_publish_period = (
+            1.0 / joint_publish_hz if joint_publish_hz > 0.0 else 0.0
+        )
 
         # ── Cartesian publish timer ───────────────────────────────────────────
         self.create_timer(1.0 / publish_hz, self._cartesian_timer_cb)
 
         self.get_logger().info(
             f'[{node_name}] Started — publishing at {publish_hz:.1f} Hz')
+        if self._joint_publish_period > 0.0:
+            self.get_logger().info(
+                f'[{node_name}] Joint derivative topics throttled to '
+                f'{joint_publish_hz:.1f} Hz')
 
     # ── Abstract: subclasses must implement ───────────────────────────────────
 
@@ -248,9 +258,18 @@ class CartesianPublisherBase(Node):
         else:
             jerks = np.zeros(6)
 
-        self._joint_vel_pub.publish(_fa(velocities))
-        self._joint_acc_pub.publish(_fa(accelerations))
-        self._joint_jerk_pub.publish(_fa(jerks))
+        should_publish = True
+        if self._joint_publish_period > 0.0:
+            should_publish = (
+                self._last_joint_publish_time is None
+                or now - self._last_joint_publish_time >= self._joint_publish_period
+            )
+
+        if should_publish:
+            self._joint_vel_pub.publish(_fa(velocities))
+            self._joint_acc_pub.publish(_fa(accelerations))
+            self._joint_jerk_pub.publish(_fa(jerks))
+            self._last_joint_publish_time = now
         self._latest_joint_velocity_norm = float(np.linalg.norm(velocities))
 
         self._joint_positions = positions
