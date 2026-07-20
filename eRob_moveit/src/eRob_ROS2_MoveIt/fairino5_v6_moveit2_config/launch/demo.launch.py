@@ -6,6 +6,7 @@ from launch.actions import ExecuteProcess, SetEnvironmentVariable, RegisterEvent
 from launch.event_handlers import OnProcessStart, OnProcessExit
 from ament_index_python.packages import get_package_share_directory
 import os
+import shutil
 
 
 def generate_launch_description():
@@ -116,15 +117,18 @@ def generate_launch_description():
         emulate_tty=True
     )
 
-    plotjuggler_node = ExecuteProcess(
-        cmd=[
-            "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
-            "--disable_opengl",
-        ],
-        output="screen",
-    )
-
-    gui_actions = [velocity_monitor_gui, plotjuggler_node]
+    gui_actions = [velocity_monitor_gui]
+    plotjuggler_executable = shutil.which("plotjuggler")
+    if plotjuggler_executable:
+        gui_actions.append(
+            ExecuteProcess(
+                cmd=[
+                    plotjuggler_executable,
+                    "--disable_opengl",
+                ],
+                output="screen",
+            )
+        )
 
     # Launch GUI only after the state publisher node starts
     from launch.actions import RegisterEventHandler

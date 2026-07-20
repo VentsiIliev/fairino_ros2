@@ -7,10 +7,10 @@
     "sign_dq",
     "ddq"
   ],
-  "input_csv": "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/data/torque_sensor_log.csv",
+  "input_csv": "../data/torque_sensor_log.csv",
   "input_state": {
     "data_row_count": 70520808,
-    "path": "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/data/torque_sensor_log.csv"
+    "path": "../data/torque_sensor_log.csv"
   },
   "joints": {
     "Joint_1": {

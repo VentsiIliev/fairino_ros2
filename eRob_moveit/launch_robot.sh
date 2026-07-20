@@ -5,6 +5,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_FILE="${ROBOT_LAUNCH_CONFIG:-${SCRIPT_DIR}/robot_launch.conf}"
 
+resolve_ros_setup_file() {
+  if [[ -n "${ROS_SETUP_FILE:-}" ]]; then
+    printf '%s\n' "${ROS_SETUP_FILE}"
+    return
+  fi
+  if [[ -n "${ROS_DISTRO:-}" && -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
+    printf '/opt/ros/%s/setup.bash\n' "${ROS_DISTRO}"
+    return
+  fi
+  if [[ -f /opt/ros/rolling/setup.bash ]]; then
+    printf '%s\n' /opt/ros/rolling/setup.bash
+    return
+  fi
+  if [[ -f /opt/ros/jazzy/setup.bash ]]; then
+    printf '%s\n' /opt/ros/jazzy/setup.bash
+    return
+  fi
+  return 1
+}
+
+DEFAULT_ROS_SETUP_FILE="$(resolve_ros_setup_file)" || {
+  echo "No ROS setup file found. Set ROS_SETUP_FILE=/opt/ros/<distro>/setup.bash" >&2
+  exit 1
+}
+
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "Config not found: ${CONFIG_FILE}" >&2
   exit 1
@@ -15,9 +40,9 @@ source "${CONFIG_FILE}"
 
 : "${ROBOT_TYPE:?ROBOT_TYPE is required}"
 : "${WORKSPACE_DIR:?WORKSPACE_DIR is required}"
-: "${ROS_SETUP_FILE:?ROS_SETUP_FILE is required}"
 : "${WORKSPACE_SETUP_FILE:?WORKSPACE_SETUP_FILE is required}"
 
+ROS_SETUP_FILE="${ROS_SETUP_FILE:-${DEFAULT_ROS_SETUP_FILE}}"
 BASE_UNDERLAY_SETUP_FILE="${BASE_UNDERLAY_SETUP_FILE:-}"
 USE_RVIZ="${USE_RVIZ:-true}"
 ZEROERR_ROS_PID=""

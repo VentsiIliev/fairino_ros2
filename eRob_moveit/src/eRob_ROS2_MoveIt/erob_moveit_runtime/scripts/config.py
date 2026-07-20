@@ -199,7 +199,7 @@ DEFAULTS = {
     'DRAG_MODE_MODE_SETTLE_TIMEOUT_S': 2.0,
     'DRAG_MODE_DISABLE_PULSE_S': 0.10,
     'DRAG_MODE_ENABLE_PULSE_S': 0.10,
-    'DRAG_MODE_CONFIG_PATH': '/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/drag_mode_config.json',
+    'DRAG_MODE_CONFIG_PATH': '',
     'DRAG_MODE_JOINT_MODELS': ['eRob80H100T', 'eRob80H100T', 'eRob80H100T', 'eRob70H100T', 'eRob70H100T', 'eRob70H100T'],
     'DRAG_MODE_MODEL_NAMES': ['eRob70H100T', 'eRob80H100T'],
     'DRAG_MODE_MODEL_RATED_CURRENT_MA': [3500.0, 5500.0],
@@ -241,12 +241,6 @@ def _config_package() -> str:
 
 def _runtime_yaml_path() -> Path | None:
     package_name = _config_package()
-    source_candidate = Path(
-        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/{package_name}/config/runtime.yaml"
-    )
-    if source_candidate.exists():
-        return source_candidate
-
     try:
         from ament_index_python.packages import get_package_share_directory
         return Path(get_package_share_directory(package_name)) / 'config' / 'runtime.yaml'
@@ -258,12 +252,6 @@ def _runtime_yaml_path() -> Path | None:
 
 def _profile_runtime_yaml_path(profile: str) -> Path | None:
     package_name = _config_package()
-    source_candidate = Path(
-        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/{package_name}/config/{profile}/runtime.yaml"
-    )
-    if source_candidate.exists():
-        return source_candidate
-
     try:
         from ament_index_python.packages import get_package_share_directory
         candidate = Path(get_package_share_directory(package_name)) / 'config' / profile / 'runtime.yaml'
@@ -284,6 +272,30 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         else:
             result[key] = value
     return result
+
+
+def _resolve_config_path(config_yaml: Path, value: Any) -> str:
+    path = str(value or '').strip()
+    if not path:
+        return ''
+    if path.startswith('package://'):
+        package_and_rel = path[len('package://'):]
+        package_name, _, rel_path = package_and_rel.partition('/')
+        if package_name and rel_path:
+            from ament_index_python.packages import get_package_share_directory
+            return str(Path(get_package_share_directory(package_name)) / rel_path)
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((config_yaml.parent / candidate).resolve())
+
+
+PATH_KEYS = frozenset({
+    'URDF_PATH',
+    'SRDF_PATH',
+    'DRAG_MODE_CONFIG_PATH',
+    'TORQUE_LOG_PATH',
+})
 
 
 def _load_runtime_config() -> dict[str, Any]:
@@ -307,6 +319,10 @@ def _load_runtime_config() -> dict[str, Any]:
             profile_loaded = yaml.safe_load(handle) or {}
         config = _merge(config, profile_loaded)
         active_path = profile_path
+
+    for key in PATH_KEYS:
+        if key in config and config[key]:
+            config[key] = _resolve_config_path(active_path, config[key])
 
     missing = sorted(key for key in REQUIRED_KEYS if key not in config or config[key] in (None, ''))
     if missing:

@@ -12,6 +12,26 @@ WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OVERLAY_DIR="${WS_DIR}/eRob_moveit"
 OVERLAY_PACKAGES=("erob_moveit_runtime" "fairino5_v6_moveit2_config" "zeroerr")
 
+resolve_ros_setup_file() {
+    if [[ -n "${ROS_SETUP_FILE:-}" ]]; then
+        printf '%s\n' "${ROS_SETUP_FILE}"
+        return
+    fi
+    if [[ -n "${ROS_DISTRO:-}" && -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
+        printf '/opt/ros/%s/setup.bash\n' "${ROS_DISTRO}"
+        return
+    fi
+    if [[ -f /opt/ros/rolling/setup.bash ]]; then
+        printf '%s\n' /opt/ros/rolling/setup.bash
+        return
+    fi
+    if [[ -f /opt/ros/jazzy/setup.bash ]]; then
+        printf '%s\n' /opt/ros/jazzy/setup.bash
+        return
+    fi
+    return 1
+}
+
 build_base_workspace() {
     echo -e "${BLUE}Step 1/3: Building fairino_msgs...${NC}"
     colcon build --symlink-install --packages-select fairino_msgs --cmake-args -DCMAKE_BUILD_TYPE=Release --event-handlers console_cohesion+
@@ -42,15 +62,20 @@ is_overlay_package() {
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}ROS2 Workspace Quick Build${NC}"
 echo -e "${BLUE}========================================${NC}"
+ROS_SETUP="$(resolve_ros_setup_file)" || {
+    echo "No ROS setup file found. Set ROS_SETUP_FILE=/opt/ros/<distro>/setup.bash" >&2
+    exit 1
+}
+
 echo ""
 
 cd "$WS_DIR"
 
-echo -e "${YELLOW}Sourcing ROS2 Rolling...${NC}"
 unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH
 unset PYTHONPATH
 unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
-source /opt/ros/rolling/setup.bash
+echo -e "${YELLOW}Sourcing ROS2: ${ROS_SETUP}${NC}"
+source "${ROS_SETUP}"
 
 PYTHONPATH="$(
     printf '%s' "${PYTHONPATH:-}" \

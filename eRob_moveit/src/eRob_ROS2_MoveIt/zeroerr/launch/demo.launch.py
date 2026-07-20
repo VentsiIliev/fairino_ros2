@@ -6,21 +6,25 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def _runtime_yaml_path(package_path: str) -> str:
-    source_candidate = os.path.expanduser(
-        "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/runtime.yaml"
-    )
-    if os.path.isfile(source_candidate):
-        return source_candidate
     return os.path.join(package_path, "config", "runtime.yaml")
 
 
 def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
-    source_candidate = os.path.expanduser(
-        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/{profile}/runtime.yaml"
-    )
-    if os.path.isfile(source_candidate):
-        return source_candidate
     return os.path.join(package_path, "config", profile, "runtime.yaml")
+
+
+def _resolve_config_path(config_yaml: str, value: str) -> str:
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    if path.startswith("package://"):
+        package_and_rel = path[len("package://"):]
+        package_name, _, rel_path = package_and_rel.partition("/")
+        if package_name and rel_path:
+            return os.path.join(get_package_share_directory(package_name), rel_path)
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
 
 
 def _load_runtime_config(package_path: str) -> dict:
@@ -42,13 +46,15 @@ def _load_runtime_config(package_path: str) -> dict:
             profile_rt = yaml.safe_load(f) or {}
         merged = dict(rt)
         merged.update(profile_rt)
+        merged["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
         return merged
+    rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
     return rt
 
 
 def _urdf_path_from_runtime(package_path: str) -> str:
     rt = _load_runtime_config(package_path)
-    path = rt.get("URDF_PATH", "")
+    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
     if path and os.path.isfile(path):
         return path
     raise RuntimeError(
@@ -58,7 +64,7 @@ def _urdf_path_from_runtime(package_path: str) -> str:
 
 def _srdf_path_from_runtime(package_path: str) -> str | None:
     rt = _load_runtime_config(package_path)
-    path = rt.get("SRDF_PATH", "")
+    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("SRDF_PATH", ""))
     if path and os.path.isfile(path):
         return path
     return None
@@ -326,7 +332,7 @@ def generate_launch_description():
     """PLOT JUGGLER IS ONLY USED FOR DEBUG"""
     # plotjuggler_node = ExecuteProcess(
     #     cmd=[
-    #         "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
+    #         "plotjuggler",
     #         "--disable_opengl",
     #     ],
     #     output="screen",

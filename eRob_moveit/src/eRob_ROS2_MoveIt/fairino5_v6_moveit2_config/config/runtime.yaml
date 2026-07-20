@@ -37,7 +37,7 @@ WRIST_LINK: wrist3_link
 COLLISION_TIP_LINK: wrist3_link
 
 # Robot URDF used by runtime helpers and dynamics/collision tools.
-URDF_PATH: /home/ilv/ros2_ws/src/fairino_description/urdf/fairino5_v6.urdf
+URDF_PATH: package://fairino_description/urdf/fairino5_v6.urdf
 
 # Topic publishing aggregated robot status.
 TOPIC_ROBOT_STATUS: /robot_status
