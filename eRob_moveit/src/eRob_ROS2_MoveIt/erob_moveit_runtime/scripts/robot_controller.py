@@ -361,22 +361,30 @@ class RobotController(Node):
             str(model): float(value)
             for model, value in zip(DRAG_MODE_MODEL_NAMES, DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A)
         }
-        self._drag_bias_model = KDLInverseDynamicsModel(
-            urdf_path=self.urdf_path,
-            base_link=BASE_LINK,
-            tip_link=COLLISION_TIP_LINK,
-            num_joints=NUM_JOINTS,
-            logger=self.get_logger(),
-            include_gravity=True,
-        )
-        self._drag_nograv_model = KDLInverseDynamicsModel(
-            urdf_path=self.urdf_path,
-            base_link=BASE_LINK,
-            tip_link=COLLISION_TIP_LINK,
-            num_joints=NUM_JOINTS,
-            logger=self.get_logger(),
-            include_gravity=False,
-        )
+        self._drag_bias_model = None
+        self._drag_nograv_model = None
+        try:
+            self._drag_bias_model = KDLInverseDynamicsModel(
+                urdf_path=self.urdf_path,
+                base_link=BASE_LINK,
+                tip_link=COLLISION_TIP_LINK,
+                num_joints=NUM_JOINTS,
+                logger=self.get_logger(),
+                include_gravity=True,
+            )
+            self._drag_nograv_model = KDLInverseDynamicsModel(
+                urdf_path=self.urdf_path,
+                base_link=BASE_LINK,
+                tip_link=COLLISION_TIP_LINK,
+                num_joints=NUM_JOINTS,
+                logger=self.get_logger(),
+                include_gravity=False,
+            )
+        except Exception as exc:
+            self.get_logger().warning(
+                "[DragMode] Inverse-dynamics torque compensation disabled: "
+                f"{exc}"
+            )
         self._drag_mode_pub = None
         self._drag_effort_pub = None
         self._drag_torque_offset_pub = None
@@ -1699,8 +1707,12 @@ class RobotController(Node):
             else np.zeros(NUM_JOINTS, dtype=float)
         )
         friction_tau = self._compute_drag_friction_torque(velocities)
-        expected_tau = self._drag_bias_model.compute_bias_torque(positions, velocities)
-        non_gravity_tau = self._drag_nograv_model.compute_bias_torque(positions, velocities)
+        if self._drag_bias_model is not None and self._drag_nograv_model is not None:
+            expected_tau = self._drag_bias_model.compute_bias_torque(positions, velocities)
+            non_gravity_tau = self._drag_nograv_model.compute_bias_torque(positions, velocities)
+        else:
+            expected_tau = np.zeros(NUM_JOINTS, dtype=float)
+            non_gravity_tau = np.zeros(NUM_JOINTS, dtype=float)
         gravity_tau = expected_tau - non_gravity_tau
 
         with self._drag_lock:
