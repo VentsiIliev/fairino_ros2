@@ -112,6 +112,9 @@ from config import (
     ETHERCAT_RECOVERY_MIN_INTERVAL_S,
     ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
     MONITOR_UPDATE_RATE_HZ,
+    RUNTIME_JOINT_STATE_INPUT_RATE_HZ,
+    RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ,
+    RUNTIME_COLLISION_STATE_INPUT_RATE_HZ,
     MOTION_ERROR_HARDWARE_NOT_READY,
     MOTION_ERROR_DRIVE_NOT_ENABLED,
     DRAG_MODE_ENABLED_DEFAULT,
@@ -286,6 +289,25 @@ class RobotController(Node):
         self._collision_motion_fault = False
         self._collision_fault_reason = ""
         self._collision_following_error_thresholds = np.zeros(NUM_JOINTS, dtype=float)
+        self._runtime_joint_input_period = (
+            1.0 / float(RUNTIME_JOINT_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_JOINT_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._runtime_dynamic_input_period = (
+            1.0 / float(RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._runtime_collision_input_period = (
+            1.0 / float(RUNTIME_COLLISION_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_COLLISION_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._last_runtime_joint_input_ts = 0.0
+        self._last_runtime_dynamic_input_ts = 0.0
+        self._last_runtime_collision_input_ts = 0.0
+        self._last_runtime_drag_monitor_input_ts = 0.0
         self._ethercat_watchdog_enabled = bool(ETHERCAT_WATCHDOG_ENABLED)
         self._ethercat_watchdog_running = False
         self._ethercat_watchdog_thread = None
@@ -814,6 +836,11 @@ class RobotController(Node):
     def _collision_monitor_state_callback(self, msg: DynamicJointState):
         if not self._collision_monitor_fault_enabled:
             return
+        if self._runtime_collision_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_collision_input_ts < self._runtime_collision_input_period:
+                return
+            self._last_runtime_collision_input_ts = now
 
         joint_index = {name: idx for idx, name in enumerate(JOINT_NAMES)}
 
@@ -899,6 +926,12 @@ class RobotController(Node):
 
     def joint_state_callback(self, msg):
         """Process joint states and store for trajectory planning."""
+        if self._runtime_joint_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_joint_input_ts < self._runtime_joint_input_period:
+                return
+            self._last_runtime_joint_input_ts = now
+
         if len(msg.effort) >= NUM_JOINTS:
             with self._drag_lock:
                 self._drive_effort_actual = np.array(msg.effort[:NUM_JOINTS], dtype=float)
@@ -1543,6 +1576,12 @@ class RobotController(Node):
         return super().destroy_node()
 
     def _drag_monitor_callback(self, msg: DynamicJointState):
+        if self._runtime_collision_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_drag_monitor_input_ts < self._runtime_collision_input_period:
+                return
+            self._last_runtime_drag_monitor_input_ts = now
+
         joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
         external_tau = np.zeros(NUM_JOINTS, dtype=float)
         mode_display = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
@@ -1581,6 +1620,12 @@ class RobotController(Node):
             self._drag_friction_viscous_nm_per_rad_s = viscous_np
 
     def _drag_drive_state_callback(self, msg: DynamicJointState):
+        if self._runtime_dynamic_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_dynamic_input_ts < self._runtime_dynamic_input_period:
+                return
+            self._last_runtime_dynamic_input_ts = now
+
         joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
         statusword = np.zeros(NUM_JOINTS, dtype=float)
         error_code = np.zeros(NUM_JOINTS, dtype=float)
