@@ -246,6 +246,8 @@ pin_non_rt_away() {
     local procs=(
     move_group
     rviz2
+    zeroerr_runtime.py
+    zeroerr_collision_monitor.py
     zeroerr_state_publisher
     zeroerr_error_monitor.py
     ethercat_sdo_srv_server
