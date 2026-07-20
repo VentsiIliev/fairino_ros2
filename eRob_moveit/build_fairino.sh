@@ -18,6 +18,12 @@ source_setup() {
   fi
 }
 
+# Prevent a terminal that previously sourced Jazzy/another overlay from leaking
+# paths into this Rolling build.
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH
+unset PYTHONPATH
+unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
+
 source_setup /opt/ros/rolling/setup.bash
 if [[ -f "${ROOT_WS_DIR}/install/local_setup.bash" ]]; then
   source_setup "${ROOT_WS_DIR}/install/local_setup.bash"

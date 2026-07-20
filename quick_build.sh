@@ -47,6 +47,9 @@ echo ""
 cd "$WS_DIR"
 
 echo -e "${YELLOW}Sourcing ROS2 Rolling...${NC}"
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH
+unset PYTHONPATH
+unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
 source /opt/ros/rolling/setup.bash
 
 PYTHONPATH="$(
