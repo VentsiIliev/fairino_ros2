@@ -267,6 +267,7 @@ def generate_launch_description():
             "cartesian_source_link": _runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
             "publish_hz": float(_runtime_value(package_path, "STATE_PUBLISH_RATE_HZ", 50.0)),
             "joint_publish_hz": float(_runtime_value(package_path, "JOINT_DERIVATIVE_PUBLISH_RATE_HZ", 0.0)),
+            "joint_input_hz": float(_runtime_value(package_path, "JOINT_STATE_INPUT_RATE_HZ", 0.0)),
         }],
     )
 
@@ -281,6 +282,7 @@ def generate_launch_description():
         "parameters": [{
             "slave_count": 6,
             "poll_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_PERIOD_SEC", 0.005)),
+            "input_sample_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_INPUT_SAMPLE_PERIOD_SEC", 0.0)),
             "confirm_cycles": 3,
             "print_table": False,
             "use_inverse_dynamics": False,

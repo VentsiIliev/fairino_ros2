@@ -59,6 +59,7 @@ class ZeroErrCollisionMonitor(Node):
 
         self.declare_parameter("slave_count", 6)
         self.declare_parameter("poll_period_sec", 2.0)
+        self.declare_parameter("input_sample_period_sec", 0.0)
         self.declare_parameter("print_table", False)
         self.declare_parameter("confirm_cycles", 3)
         self.declare_parameter("effort_thresholds", DEFAULT_EFFORT_THRESHOLDS)
@@ -107,6 +108,12 @@ class ZeroErrCollisionMonitor(Node):
             self.get_parameter("friction_velocity_deadband_rad_s").value
         )
         period = float(self.get_parameter("poll_period_sec").value)
+        self._input_sample_period_sec = max(
+            0.0,
+            float(self.get_parameter("input_sample_period_sec").value),
+        )
+        self._last_joint_sample_time: Optional[float] = None
+        self._last_dynamic_sample_time: Optional[float] = None
         effort_thresholds = list(self.get_parameter("effort_thresholds").value)
         following_error_thresholds = list(
             self.get_parameter("following_error_thresholds").value
@@ -262,8 +269,21 @@ class ZeroErrCollisionMonitor(Node):
             self.get_logger().info(
                 f"[ZeroErrCollisionMonitor] Learned torque model loaded from {self._torque_model_path}"
             )
+        if self._input_sample_period_sec > 0.0:
+            self.get_logger().info(
+                "[ZeroErrCollisionMonitor] Input state processing throttled to "
+                f"{1.0 / self._input_sample_period_sec:.1f} Hz"
+            )
 
     def _on_joint_states(self, msg: JointState) -> None:
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if (
+            self._input_sample_period_sec > 0.0
+            and self._last_joint_sample_time is not None
+            and now - self._last_joint_sample_time < self._input_sample_period_sec
+        ):
+            return
+        self._last_joint_sample_time = now
         self._joint_state_seen = True
         for index, joint_name in enumerate(msg.name):
             if joint_name not in self._latest_payload:
@@ -278,6 +298,14 @@ class ZeroErrCollisionMonitor(Node):
                 state["effort"] = msg.effort[index]
 
     def _on_dynamic_joint_states(self, msg: DynamicJointState) -> None:
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if (
+            self._input_sample_period_sec > 0.0
+            and self._last_dynamic_sample_time is not None
+            and now - self._last_dynamic_sample_time < self._input_sample_period_sec
+        ):
+            return
+        self._last_dynamic_sample_time = now
         self._dynamic_state_seen = True
         for index, joint_name in enumerate(msg.joint_names):
             if joint_name not in self._latest_payload or index >= len(msg.interface_values):
