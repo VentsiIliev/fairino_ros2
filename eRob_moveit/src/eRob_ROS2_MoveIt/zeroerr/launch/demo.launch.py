@@ -308,14 +308,15 @@ def generate_launch_description():
         collision_monitor_kwargs["prefix"] = non_rt_prefix
 
     zeroerr_collision_monitor = Node(**collision_monitor_kwargs)
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=24.0, actions=[zeroerr_collision_monitor])],
+    if bool(_runtime_value(package_path, "ZEROERR_COLLISION_MONITOR_ENABLED", True)):
+        demo_ld.add_action(
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=wait_for_op_process,
+                    on_exit=[TimerAction(period=24.0, actions=[zeroerr_collision_monitor])],
+                )
             )
         )
-    )
 
     if launch_collision_gui:
         zeroerr_collision_monitor_gui = Node(
