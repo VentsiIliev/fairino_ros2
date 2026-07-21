@@ -6,21 +6,25 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def _runtime_yaml_path(package_path: str) -> str:
-    source_candidate = os.path.expanduser(
-        "/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/runtime.yaml"
-    )
-    if os.path.isfile(source_candidate):
-        return source_candidate
     return os.path.join(package_path, "config", "runtime.yaml")
 
 
 def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
-    source_candidate = os.path.expanduser(
-        f"/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/{profile}/runtime.yaml"
-    )
-    if os.path.isfile(source_candidate):
-        return source_candidate
     return os.path.join(package_path, "config", profile, "runtime.yaml")
+
+
+def _resolve_config_path(config_yaml: str, value: str) -> str:
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    if path.startswith("package://"):
+        package_and_rel = path[len("package://"):]
+        package_name, _, rel_path = package_and_rel.partition("/")
+        if package_name and rel_path:
+            return os.path.join(get_package_share_directory(package_name), rel_path)
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
 
 
 def _load_runtime_config(package_path: str) -> dict:
@@ -42,13 +46,15 @@ def _load_runtime_config(package_path: str) -> dict:
             profile_rt = yaml.safe_load(f) or {}
         merged = dict(rt)
         merged.update(profile_rt)
+        merged["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
         return merged
+    rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
     return rt
 
 
 def _urdf_path_from_runtime(package_path: str) -> str:
     rt = _load_runtime_config(package_path)
-    path = rt.get("URDF_PATH", "")
+    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
     if path and os.path.isfile(path):
         return path
     raise RuntimeError(
@@ -58,7 +64,7 @@ def _urdf_path_from_runtime(package_path: str) -> str:
 
 def _srdf_path_from_runtime(package_path: str) -> str | None:
     rt = _load_runtime_config(package_path)
-    path = rt.get("SRDF_PATH", "")
+    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("SRDF_PATH", ""))
     if path and os.path.isfile(path):
         return path
     return None
@@ -259,6 +265,9 @@ def generate_launch_description():
         prefix=non_rt_prefix,
         parameters=[{
             "cartesian_source_link": _runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
+            "publish_hz": float(_runtime_value(package_path, "STATE_PUBLISH_RATE_HZ", 50.0)),
+            "joint_publish_hz": float(_runtime_value(package_path, "JOINT_DERIVATIVE_PUBLISH_RATE_HZ", 0.0)),
+            "joint_input_hz": float(_runtime_value(package_path, "JOINT_STATE_INPUT_RATE_HZ", 0.0)),
         }],
     )
 
@@ -272,7 +281,8 @@ def generate_launch_description():
         },
         "parameters": [{
             "slave_count": 6,
-            "poll_period_sec": 0.005,
+            "poll_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_PERIOD_SEC", 0.005)),
+            "input_sample_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_INPUT_SAMPLE_PERIOD_SEC", 0.0)),
             "confirm_cycles": 3,
             "print_table": False,
             "use_inverse_dynamics": False,
@@ -298,14 +308,15 @@ def generate_launch_description():
         collision_monitor_kwargs["prefix"] = non_rt_prefix
 
     zeroerr_collision_monitor = Node(**collision_monitor_kwargs)
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=24.0, actions=[zeroerr_collision_monitor])],
+    if bool(_runtime_value(package_path, "ZEROERR_COLLISION_MONITOR_ENABLED", True)):
+        demo_ld.add_action(
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=wait_for_op_process,
+                    on_exit=[TimerAction(period=24.0, actions=[zeroerr_collision_monitor])],
+                )
             )
         )
-    )
 
     if launch_collision_gui:
         zeroerr_collision_monitor_gui = Node(
@@ -326,7 +337,7 @@ def generate_launch_description():
     """PLOT JUGGLER IS ONLY USED FOR DEBUG"""
     # plotjuggler_node = ExecuteProcess(
     #     cmd=[
-    #         "/opt/ros/rolling/lib/plotjuggler/plotjuggler",
+    #         "plotjuggler",
     #         "--disable_opengl",
     #     ],
     #     output="screen",
@@ -340,14 +351,30 @@ def generate_launch_description():
     #     )
     # )
 
-    velocity_monitor_gui = Node(
+    zeroerr_runtime = Node(
         package="zeroerr",
         executable="zeroerr_runtime.py",
-        name="velocity_monitor",
+        name="zeroerr_runtime",
         output="screen",
         emulate_tty=True,
+        additional_env={
+            "EROB_RUNTIME_HEADLESS": str(_runtime_value(package_path, "RUNTIME_HEADLESS", "0")),
+        },
         prefix=non_rt_prefix,
     )
+    delayed_zeroerr_actions = [
+        TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
+        TimerAction(period=7.0, actions=[ipp_helper_node]),
+        TimerAction(period=10.0, actions=[ruckig_helper_node]),
+        TimerAction(period=13.0, actions=[contour_ik_helper_node]),
+        TimerAction(period=16.0, actions=[zeroerr_runtime]),
+        TimerAction(period=35.0, actions=[ethercat_sdo_server]),
+    ]
+    if bool(_runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
+        delayed_zeroerr_actions.append(
+            TimerAction(period=50.0, actions=[zeroerr_error_monitor])
+        )
+
     # Delay ZeroErr-specific processes until EtherCAT OP is stable, then bring them
     # up in a fixed order. This avoids stacking controller spawners, MoveIt helper
     # model loads, runtime initialization, and SDO diagnostics in the same timing
@@ -356,15 +383,7 @@ def generate_launch_description():
         RegisterEventHandler(
             OnProcessExit(
                 target_action=wait_for_op_process,
-                on_exit=[
-                    TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
-                    TimerAction(period=7.0, actions=[ipp_helper_node]),
-                    TimerAction(period=10.0, actions=[ruckig_helper_node]),
-                    TimerAction(period=13.0, actions=[contour_ik_helper_node]),
-                    TimerAction(period=16.0, actions=[velocity_monitor_gui]),
-                    TimerAction(period=35.0, actions=[ethercat_sdo_server]),
-                    TimerAction(period=50.0, actions=[zeroerr_error_monitor]),
-                ],
+                on_exit=delayed_zeroerr_actions,
             )
         )
     )

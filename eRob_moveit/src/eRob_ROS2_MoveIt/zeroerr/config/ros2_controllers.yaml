@@ -1,7 +1,7 @@
 # This config file is used by ros2_control
 controller_manager:
   ros__parameters:
-    update_rate: 200           # Hz — keep EtherCAT hardware loop at 1000Hz, give JTC/controller_manager more headroom
+    update_rate: 100           # Hz — keep EtherCAT hardware loop separate while reducing controller-manager CPU load
     realtime_priority: 80     # FIFO priority for controller_manager RT thread
     use_sim_time: false
     manipulator_controller:
@@ -22,6 +22,11 @@ controller_manager:
       type: forward_command_controller/ForwardCommandController
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
+
+joint_state_broadcaster:
+  ros__parameters:
+    publish_rate: 25.0
+
 manipulator_controller:
   ros__parameters:
     joints:
@@ -42,8 +47,8 @@ manipulator_controller:
     allow_partial_joints_goal: false
     open_loop_control: false
     set_last_command_interface_value_as_state_on_activation: false
-    state_publish_rate: 100.0
-    action_monitor_rate: 200.0
+    state_publish_rate: 25.0
+    action_monitor_rate: 25.0
     # Enable trajectory point velocities for continuous motion
     command_joint_names:
       - Joint_1

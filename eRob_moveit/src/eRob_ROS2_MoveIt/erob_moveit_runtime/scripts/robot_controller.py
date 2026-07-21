@@ -112,8 +112,13 @@ from config import (
     ETHERCAT_RECOVERY_ENABLED,
     ETHERCAT_RECOVERY_MIN_INTERVAL_S,
     ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+    MONITOR_UPDATE_RATE_HZ,
+    RUNTIME_JOINT_STATE_INPUT_RATE_HZ,
+    RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ,
+    RUNTIME_COLLISION_STATE_INPUT_RATE_HZ,
     MOTION_ERROR_HARDWARE_NOT_READY,
     MOTION_ERROR_DRIVE_NOT_ENABLED,
+    DRAG_MODE_AVAILABLE,
     DRAG_MODE_ENABLED_DEFAULT,
     DRAG_MODE_UPDATE_RATE_HZ,
     DRAG_MODE_MODE_COMMAND_TOPIC,
@@ -292,6 +297,25 @@ class RobotController(Node):
         self._collision_motion_fault = False
         self._collision_fault_reason = ""
         self._collision_following_error_thresholds = np.zeros(NUM_JOINTS, dtype=float)
+        self._runtime_joint_input_period = (
+            1.0 / float(RUNTIME_JOINT_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_JOINT_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._runtime_dynamic_input_period = (
+            1.0 / float(RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._runtime_collision_input_period = (
+            1.0 / float(RUNTIME_COLLISION_STATE_INPUT_RATE_HZ)
+            if float(RUNTIME_COLLISION_STATE_INPUT_RATE_HZ) > 0.0
+            else 0.0
+        )
+        self._last_runtime_joint_input_ts = 0.0
+        self._last_runtime_dynamic_input_ts = 0.0
+        self._last_runtime_collision_input_ts = 0.0
+        self._last_runtime_drag_monitor_input_ts = 0.0
         self._ethercat_watchdog_enabled = bool(ETHERCAT_WATCHDOG_ENABLED)
         self._ethercat_watchdog_running = False
         self._ethercat_watchdog_thread = None
@@ -310,6 +334,7 @@ class RobotController(Node):
         self._drag_lock = Lock()
         self._drive_enable_lock = Lock()
         self._drive_operation_enabled_requested = False
+        self._drag_mode_available = bool(DRAG_MODE_AVAILABLE)
         self._drag_enabled = bool(DRAG_MODE_ENABLED_DEFAULT)
         self._drag_update_dt = 1.0 / max(float(DRAG_MODE_UPDATE_RATE_HZ), 1.0)
         self._drag_mode_csp = float(DRAG_MODE_CSP_VALUE)
@@ -368,22 +393,8 @@ class RobotController(Node):
             str(model): float(value)
             for model, value in zip(DRAG_MODE_MODEL_NAMES, DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A)
         }
-        self._drag_bias_model = KDLInverseDynamicsModel(
-            urdf_path=self.urdf_path,
-            base_link=BASE_LINK,
-            tip_link=COLLISION_TIP_LINK,
-            num_joints=NUM_JOINTS,
-            logger=self.get_logger(),
-            include_gravity=True,
-        )
-        self._drag_nograv_model = KDLInverseDynamicsModel(
-            urdf_path=self.urdf_path,
-            base_link=BASE_LINK,
-            tip_link=COLLISION_TIP_LINK,
-            num_joints=NUM_JOINTS,
-            logger=self.get_logger(),
-            include_gravity=False,
-        )
+        self._drag_bias_model = None
+        self._drag_nograv_model = None
         self._drag_mode_pub = None
         self._drag_effort_pub = None
         self._drag_torque_offset_pub = None
@@ -393,6 +404,39 @@ class RobotController(Node):
         self._drive_disable_set_pub = None
         self._drag_timer = None
         if self.runtime_adapter.supports_drag_mode:
+            self._drive_enable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRIVE_ENABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self._drive_disable_set_pub = self.create_publisher(
+                Float64MultiArray,
+                DRIVE_DISABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+        if self.runtime_adapter.supports_drag_mode and self._drag_mode_available:
+            try:
+                self._drag_bias_model = KDLInverseDynamicsModel(
+                    urdf_path=self.urdf_path,
+                    base_link=BASE_LINK,
+                    tip_link=COLLISION_TIP_LINK,
+                    num_joints=NUM_JOINTS,
+                    logger=self.get_logger(),
+                    include_gravity=True,
+                )
+                self._drag_nograv_model = KDLInverseDynamicsModel(
+                    urdf_path=self.urdf_path,
+                    base_link=BASE_LINK,
+                    tip_link=COLLISION_TIP_LINK,
+                    num_joints=NUM_JOINTS,
+                    logger=self.get_logger(),
+                    include_gravity=False,
+                )
+            except Exception as exc:
+                self.get_logger().warning(
+                    "[DragMode] Inverse-dynamics torque compensation disabled: "
+                    f"{exc}"
+                )
             self._drag_mode_pub = self.create_publisher(
                 Float64MultiArray,
                 DRAG_MODE_MODE_COMMAND_TOPIC,
@@ -416,16 +460,6 @@ class RobotController(Node):
             self._drag_disable_set_pub = self.create_publisher(
                 Float64MultiArray,
                 DRAG_MODE_DISABLE_SET_COMMAND_TOPIC,
-                10,
-            )
-            self._drive_enable_set_pub = self.create_publisher(
-                Float64MultiArray,
-                DRIVE_ENABLE_SET_COMMAND_TOPIC,
-                10,
-            )
-            self._drive_disable_set_pub = self.create_publisher(
-                Float64MultiArray,
-                DRIVE_DISABLE_SET_COMMAND_TOPIC,
                 10,
             )
             self.create_subscription(
@@ -463,6 +497,8 @@ class RobotController(Node):
             self.get_logger().info(
                 f"[DragMode] Initialized real CST path (enabled={self._drag_enabled}, dt={self._drag_update_dt:.3f}s)"
             )
+        elif self.runtime_adapter.supports_drag_mode:
+            self.get_logger().info("[DragMode] Runtime drag path disabled by DRAG_MODE_AVAILABLE=false")
         else:
             self.get_logger().info("[DragMode] Disabled for this robot backend")
 
@@ -830,7 +866,7 @@ class RobotController(Node):
                 self.monitor = RobotMonitor(
                     ros_node=self,
                     tcp_transform=self._get_monitor_tcp_transform(),
-                    stable_update_rate_hz=50.0,
+                    stable_update_rate_hz=MONITOR_UPDATE_RATE_HZ,
                 )
                 self.monitor.set_stable_update_callback(self._handle_monitor_update)
                 self.tcp_loaded = True
@@ -915,6 +951,11 @@ class RobotController(Node):
     def _collision_monitor_state_callback(self, msg: DynamicJointState):
         if not self._collision_monitor_fault_enabled:
             return
+        if self._runtime_collision_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_collision_input_ts < self._runtime_collision_input_period:
+                return
+            self._last_runtime_collision_input_ts = now
 
         joint_index = {name: idx for idx, name in enumerate(JOINT_NAMES)}
 
@@ -1000,6 +1041,12 @@ class RobotController(Node):
 
     def joint_state_callback(self, msg):
         """Process joint states and store for trajectory planning."""
+        if self._runtime_joint_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_joint_input_ts < self._runtime_joint_input_period:
+                return
+            self._last_runtime_joint_input_ts = now
+
         if len(msg.effort) >= NUM_JOINTS:
             with self._drag_lock:
                 self._drive_effort_actual = np.array(msg.effort[:NUM_JOINTS], dtype=float)
@@ -1122,12 +1169,12 @@ class RobotController(Node):
         }
 
     def disable_drag_mode(self) -> dict:
-        if not self.runtime_adapter.supports_drag_mode:
+        if not self.runtime_adapter.supports_drag_mode or not self._drag_mode_available:
             return {
                 "enabled": False,
                 "stopped": False,
-                "mode": "unsupported",
-                "state": "UNSUPPORTED",
+                "mode": "unavailable",
+                "state": "UNAVAILABLE",
                 "controller_switch_ok": False,
             }
         with self._drag_lock:
@@ -1277,11 +1324,11 @@ class RobotController(Node):
         }
 
     def get_drag_mode_status(self) -> dict:
-        if not self.runtime_adapter.supports_drag_mode:
+        if not self.runtime_adapter.supports_drag_mode or not self._drag_mode_available:
             return {
                 "enabled": False,
-                "active_mode": "unsupported",
-                "state": "UNSUPPORTED",
+                "active_mode": "unavailable",
+                "state": "UNAVAILABLE",
             }
         with self._drag_lock:
             enabled = self._drag_enabled
@@ -1328,8 +1375,8 @@ class RobotController(Node):
             }
 
     def get_drag_mode_config(self) -> dict:
-        if not self.runtime_adapter.supports_drag_mode:
-            return {"supported": False}
+        if not self.runtime_adapter.supports_drag_mode or not self._drag_mode_available:
+            return {"supported": False, "available": False}
         with self._drag_lock:
             return {
                 "compensation_scale": float(self._drag_compensation_scale),
@@ -1348,8 +1395,8 @@ class RobotController(Node):
             }
 
     def update_drag_mode_config(self, payload: dict) -> dict:
-        if not self.runtime_adapter.supports_drag_mode:
-            raise ValueError("Drag mode is not supported for this robot backend")
+        if not self.runtime_adapter.supports_drag_mode or not self._drag_mode_available:
+            raise ValueError("Drag mode is not available for this robot runtime")
         if not isinstance(payload, dict):
             raise ValueError("Drag config payload must be an object")
 
@@ -1644,6 +1691,12 @@ class RobotController(Node):
         return super().destroy_node()
 
     def _drag_monitor_callback(self, msg: DynamicJointState):
+        if self._runtime_collision_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_drag_monitor_input_ts < self._runtime_collision_input_period:
+                return
+            self._last_runtime_drag_monitor_input_ts = now
+
         joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
         external_tau = np.zeros(NUM_JOINTS, dtype=float)
         mode_display = np.full(NUM_JOINTS, self._drag_mode_csp, dtype=float)
@@ -1682,6 +1735,12 @@ class RobotController(Node):
             self._drag_friction_viscous_nm_per_rad_s = viscous_np
 
     def _drag_drive_state_callback(self, msg: DynamicJointState):
+        if self._runtime_dynamic_input_period > 0.0:
+            now = time.monotonic()
+            if now - self._last_runtime_dynamic_input_ts < self._runtime_dynamic_input_period:
+                return
+            self._last_runtime_dynamic_input_ts = now
+
         joint_index = {name: idx for idx, name in enumerate(self._drag_joint_order)}
         statusword = np.zeros(NUM_JOINTS, dtype=float)
         error_code = np.zeros(NUM_JOINTS, dtype=float)
@@ -1809,8 +1868,12 @@ class RobotController(Node):
             else np.zeros(NUM_JOINTS, dtype=float)
         )
         friction_tau = self._compute_drag_friction_torque(velocities)
-        expected_tau = self._drag_bias_model.compute_bias_torque(positions, velocities)
-        non_gravity_tau = self._drag_nograv_model.compute_bias_torque(positions, velocities)
+        if self._drag_bias_model is not None and self._drag_nograv_model is not None:
+            expected_tau = self._drag_bias_model.compute_bias_torque(positions, velocities)
+            non_gravity_tau = self._drag_nograv_model.compute_bias_torque(positions, velocities)
+        else:
+            expected_tau = np.zeros(NUM_JOINTS, dtype=float)
+            non_gravity_tau = np.zeros(NUM_JOINTS, dtype=float)
         gravity_tau = expected_tau - non_gravity_tau
 
         with self._drag_lock:

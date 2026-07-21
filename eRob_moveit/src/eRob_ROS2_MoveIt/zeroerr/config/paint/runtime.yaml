@@ -1,5 +1,5 @@
-URDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/paint/erob_arm_small.urdf
-SRDF_PATH: /home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/paint/eRobo3.srdf
+URDF_PATH: erob_arm_small.urdf
+SRDF_PATH: eRobo3.srdf
 CARTESIAN_SOURCE_LINK: ee_link
 COLLISION_TIP_LINK: tool0
 DEFAULT_WORKOBJECT:

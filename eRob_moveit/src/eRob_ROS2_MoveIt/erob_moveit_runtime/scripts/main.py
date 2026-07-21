@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import sys
+import time
+import os
 
 from threading import Thread
 
 import rclpy
-from PyQt6.QtWidgets import QApplication
 import subprocess
 
 from rclpy.node import Node
@@ -31,7 +32,16 @@ def open_rest_logs_terminal():
 
 def main():
     rclpy.init()
-    app = QApplication(sys.argv)
+    headless = os.environ.get("EROB_RUNTIME_HEADLESS", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    app = None
+    if not headless:
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication(sys.argv)
 
     ros_node = RobotController()
 
@@ -70,7 +80,17 @@ def main():
     # ros_node.ui_callback = win.ros_update
 
     # win.show()
-    sys.exit(app.exec())
+    if app is not None:
+        sys.exit(app.exec())
+
+    try:
+        while rclpy.ok():
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ros_node.destroy_node()
+        rclpy.try_shutdown()
 
 if __name__ == '__main__':
     main()

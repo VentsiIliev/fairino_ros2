@@ -8,9 +8,29 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-WS_DIR="/home/ilv/ros2_ws"
-OVERLAY_DIR="/home/ilv/ros2_ws/eRob_moveit"
+WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OVERLAY_DIR="${WS_DIR}/eRob_moveit"
 OVERLAY_PACKAGES=("erob_moveit_runtime" "fairino5_v6_moveit2_config" "zeroerr")
+
+resolve_ros_setup_file() {
+    if [[ -n "${ROS_SETUP_FILE:-}" ]]; then
+        printf '%s\n' "${ROS_SETUP_FILE}"
+        return
+    fi
+    if [[ -n "${ROS_DISTRO:-}" && -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
+        printf '/opt/ros/%s/setup.bash\n' "${ROS_DISTRO}"
+        return
+    fi
+    if [[ -f /opt/ros/rolling/setup.bash ]]; then
+        printf '%s\n' /opt/ros/rolling/setup.bash
+        return
+    fi
+    if [[ -f /opt/ros/jazzy/setup.bash ]]; then
+        printf '%s\n' /opt/ros/jazzy/setup.bash
+        return
+    fi
+    return 1
+}
 
 build_base_workspace() {
     echo -e "${BLUE}Step 1/3: Building fairino_msgs...${NC}"
@@ -42,14 +62,30 @@ is_overlay_package() {
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}ROS2 Workspace Quick Build${NC}"
 echo -e "${BLUE}========================================${NC}"
+ROS_SETUP="$(resolve_ros_setup_file)" || {
+    echo "No ROS setup file found. Set ROS_SETUP_FILE=/opt/ros/<distro>/setup.bash" >&2
+    exit 1
+}
+
 echo ""
 
 cd "$WS_DIR"
 
-echo -e "${YELLOW}Sourcing ROS2 Rolling...${NC}"
-source /opt/ros/rolling/setup.bash
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH
+unset PYTHONPATH
+unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
+echo -e "${YELLOW}Sourcing ROS2: ${ROS_SETUP}${NC}"
+source "${ROS_SETUP}"
 
-export PYTHONPATH=$(echo $PYTHONPATH | tr ':' '\n' | grep -v 'ws_moveit2' | tr '\n' ':' | sed 's/:$//')
+PYTHONPATH="$(
+    printf '%s' "${PYTHONPATH:-}" \
+        | tr ':' '\n' \
+        | grep -v 'ws_moveit2' \
+        | tr '\n' ':' \
+        | sed 's/:$//' \
+        || true
+)"
+export PYTHONPATH
 
 if [ $# -eq 0 ]; then
     echo -e "${YELLOW}Building all packages...${NC}"
