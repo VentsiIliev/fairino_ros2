@@ -13,12 +13,13 @@ from controller_manager_msgs.srv import ListControllers, SwitchController
 from control_msgs.msg import DynamicJointState
 from erob_moveit_runtime.srv import ApplyIPP
 from geometry_msgs.msg import Point, Pose, TransformStamped
-from moveit_msgs.msg import MotionSequenceItem, MotionSequenceRequest
+from moveit_msgs.msg import AttachedCollisionObject, CollisionObject, MotionSequenceItem, MotionSequenceRequest, PlanningScene
 from moveit_msgs.srv import GetCartesianPath, GetMotionSequence
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import Float64MultiArray, Header, String
 import tf2_ros
 from action_msgs.msg import GoalStatus
@@ -169,6 +170,11 @@ class RobotController(Node):
             TOPIC_ACTIVE_TOOL_MARKERS,
             10,
         )
+        self.active_tool_collision_pub = self.create_publisher(
+            PlanningScene,
+            config.TOPIC_PLANNING_SCENE,
+            10,
+        )
         self.active_tool_marker_timer = self.create_timer(
             0.1,
             self._publish_active_tool_visualization,
@@ -194,6 +200,7 @@ class RobotController(Node):
         self.T_tool = np.eye(4)
         self.T_monitor_tool = np.eye(4)
         self.active_tool_name = "TOOL_0"
+        self._active_tool_collision_timer = None
         self.runtime_adapter = create_runtime_adapter()
         # Reduced frequency - TCP transform typically available quickly
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
@@ -469,11 +476,74 @@ class RobotController(Node):
         """Publish safety walls after a short delay to speed up startup."""
         self.safety_manager.force_update()
         self.get_logger().info('[Init] Safety walls published')
+        self._publish_active_tool_collision()
 
         # Cancel this timer after first execution (one-shot behavior)
         if hasattr(self, '_safety_init_timer'):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
+
+    def _active_tool_collision_enabled(self) -> bool:
+        return bool(getattr(config, "ACTIVE_TOOL_COLLISION_ENABLED", False))
+
+    def _publish_active_tool_collision(self):
+        if not self._active_tool_collision_enabled():
+            return
+
+        try:
+            attached = AttachedCollisionObject()
+            attached.link_name = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+            attached.touch_links = [
+                str(link)
+                for link in getattr(config, "ACTIVE_TOOL_COLLISION_TOUCH_LINKS", []) or []
+            ]
+
+            obj = CollisionObject()
+            obj.id = str(getattr(config, "ACTIVE_TOOL_COLLISION_ID", "active_tool_collision"))
+            obj.header.frame_id = attached.link_name
+            obj.header.stamp = self.get_clock().now().to_msg()
+
+            primitive = SolidPrimitive()
+            primitive.type = SolidPrimitive.CYLINDER
+            primitive.dimensions = [
+                float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17)),
+                float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012)),
+            ]
+
+            origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
+            if len(origin_values) != 6:
+                origin_values = [0, 0, 0, 0, 0, 0]
+            T_collision = TransformationUtils.pose_to_transform(origin_values)
+            if bool(getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)):
+                T_collision = self.T_tool @ T_collision
+
+            quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
+            pose = Pose()
+            pose.position.x = float(T_collision[0, 3])
+            pose.position.y = float(T_collision[1, 3])
+            pose.position.z = float(T_collision[2, 3])
+            pose.orientation.x = float(quat[0])
+            pose.orientation.y = float(quat[1])
+            pose.orientation.z = float(quat[2])
+            pose.orientation.w = float(quat[3])
+
+            obj.primitives.append(primitive)
+            obj.primitive_poses.append(pose)
+            obj.operation = CollisionObject.ADD
+            attached.object = obj
+
+            scene = PlanningScene()
+            scene.is_diff = True
+            scene.robot_state.is_diff = True
+            scene.robot_state.attached_collision_objects.append(attached)
+            self.active_tool_collision_pub.publish(scene)
+            self.get_logger().info(
+                f"[ActiveToolCollision] Attached cylinder id={obj.id} link={attached.link_name} "
+                f"tool={self.active_tool_name} length={primitive.dimensions[0]:.3f}m "
+                f"radius={primitive.dimensions[1]:.3f}m"
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"[ActiveToolCollision] Failed to publish attached cylinder: {exc}")
 
     def _publish_active_tool_visualization(self):
         """Publish the current active TCP as a TF frame and RViz marker."""
@@ -522,6 +592,9 @@ class RobotController(Node):
             marker_array.markers.append(self._make_source_to_tcp_marker(stamp, source_origin, origin))
         marker_array.markers.append(self._make_tcp_sphere_marker(stamp, origin, quaternion))
         marker_array.markers.extend(self._make_tcp_axis_markers(stamp, origin, rotation))
+        collision_marker = self._make_active_tool_collision_marker(stamp, T_tcp, T_source)
+        if collision_marker is not None:
+            marker_array.markers.append(collision_marker)
         marker_array.markers.append(self._make_tcp_text_marker(stamp, origin, source_origin))
         self.active_tool_marker_pub.publish(marker_array)
 
@@ -602,6 +675,41 @@ class RobotController(Node):
             marker.color.a = 1.0
             markers.append(marker)
         return markers
+
+    def _make_active_tool_collision_marker(self, stamp, T_tcp, T_source=None):
+        if not self._active_tool_collision_enabled():
+            return None
+
+        origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
+        if len(origin_values) != 6:
+            origin_values = [0, 0, 0, 0, 0, 0]
+        T_offset = TransformationUtils.pose_to_transform(origin_values)
+        if bool(getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)):
+            if T_source is not None:
+                T_marker = T_source @ self.T_tool @ T_offset
+            else:
+                T_marker = T_tcp @ T_offset
+        else:
+            T_marker = (T_source if T_source is not None else T_tcp) @ T_offset
+
+        quat = TransformationUtils.matrix_to_quaternion(T_marker[:3, :3])
+        marker = self._base_marker(stamp, 7, Marker.CYLINDER)
+        marker.pose.position.x = float(T_marker[0, 3])
+        marker.pose.position.y = float(T_marker[1, 3])
+        marker.pose.position.z = float(T_marker[2, 3])
+        marker.pose.orientation.x = float(quat[0])
+        marker.pose.orientation.y = float(quat[1])
+        marker.pose.orientation.z = float(quat[2])
+        marker.pose.orientation.w = float(quat[3])
+        radius = float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
+        marker.scale.x = radius * 2.0
+        marker.scale.y = radius * 2.0
+        marker.scale.z = float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17))
+        marker.color.r = 0.0
+        marker.color.g = 0.75
+        marker.color.b = 1.0
+        marker.color.a = 0.45
+        return marker
 
     def _make_tcp_text_marker(self, stamp, origin, source_origin=None) -> Marker:
         marker = self._base_marker(stamp, 4, Marker.TEXT_VIEW_FACING)
@@ -699,6 +807,7 @@ class RobotController(Node):
             self.get_logger().info(f"Switched active tool to {tool_name}")
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")
+        self._publish_active_tool_collision()
 
     def load_tcp_transform(self):
         if self.tcp_loaded:
@@ -727,6 +836,7 @@ class RobotController(Node):
                 self.tcp_loaded = True
 
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")
+                self._publish_active_tool_collision()
 
                 # Destroy timer to prevent further callbacks
                 if hasattr(self, 'tcp_load_timer'):

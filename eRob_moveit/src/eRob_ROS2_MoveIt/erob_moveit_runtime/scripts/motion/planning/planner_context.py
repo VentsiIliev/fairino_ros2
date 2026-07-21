@@ -45,6 +45,12 @@ class PlannerContext:
     def create_client(self, *args, **kwargs):
         return self._node.create_client(*args, **kwargs)
 
+    def create_timer(self, *args, **kwargs):
+        return self._node.create_timer(*args, **kwargs)
+
+    def destroy_timer(self, *args, **kwargs):
+        return self._node.destroy_timer(*args, **kwargs)
+
     def request_cartesian_path(self, request):
         return self.cart_path_client.call_async(request)
 

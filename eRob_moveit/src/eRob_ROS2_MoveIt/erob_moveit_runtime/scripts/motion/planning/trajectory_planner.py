@@ -37,12 +37,229 @@ from .jacobian_move import _jacobian_fallback_move
 from ..execution.trajectory_executor import _send_trajectory_to_controller
 from ..execution.trajectory_optimizer import resolve_trajectory_optimizer
 from geometry_msgs.msg import Pose
-from moveit_msgs.srv import GetCartesianPath
+from moveit_msgs.msg import RobotState
+from moveit_msgs.srv import GetCartesianPath, GetStateValidity
+from sensor_msgs.msg import JointState
 from scipy.spatial.transform import Rotation, Slerp
 import config
 
 
 # ─── Main path-planning response handler ─────────────────────────────────────
+
+def _validate_cartesian_trajectory_state_validity_async(
+    robot_controller,
+    trajectory,
+    generation,
+    on_success,
+) -> bool:
+    if not bool(getattr(config, "CARTESIAN_STATE_VALIDITY_ENABLED", True)):
+        on_success()
+        return True
+    if not config.resolve_avoid_collisions(True):
+        on_success()
+        return True
+
+    joint_trajectory = getattr(trajectory, "joint_trajectory", None)
+    joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+    points = list(getattr(joint_trajectory, "points", []) or [])
+    if not joint_names or not points:
+        on_success()
+        return True
+
+    client = robot_controller.get_state_validity_client()
+    if client is None or not client.wait_for_service(timeout_sec=1.0):
+        robot_controller.get_logger().error(
+            "[Cartesian Path] /check_state_validity unavailable — aborting collision-checked trajectory"
+        )
+        _set_result(robot_controller, -10)
+        return False
+
+    stride = max(1, int(getattr(config, "CARTESIAN_STATE_VALIDITY_STRIDE", 1)))
+    indexes = set(range(0, len(points), stride))
+    indexes.add(0)
+    indexes.add(len(points) - 1)
+    indexes = sorted(indexes)
+
+    validation = {
+        "indexes": indexes,
+        "next_offset": 0,
+        "responses": {},
+        "future": None,
+        "done": False,
+        "timer": None,
+    }
+    robot_controller._pending_cartesian_state_validation = validation
+
+    def _clear_validation():
+        validation["done"] = True
+        timer = validation.get("timer")
+        if timer is not None:
+            try:
+                timer.cancel()
+                robot_controller.destroy_timer(timer)
+            except Exception:
+                pass
+        if getattr(robot_controller, "_pending_cartesian_state_validation", None) is validation:
+            robot_controller._pending_cartesian_state_validation = None
+
+    def _fail(message):
+        if validation["done"]:
+            return
+        _clear_validation()
+        robot_controller.get_logger().error(message)
+        _set_result(robot_controller, -10)
+
+    def _finish_if_ready():
+        if validation["done"] or len(validation["responses"]) != len(indexes):
+            return
+        _clear_validation()
+        if _is_stale(robot_controller, generation):
+            robot_controller.get_logger().info(
+                "[Cartesian Path] Stale collision validation response discarded"
+            )
+            return
+        if _evaluate_cartesian_validity_responses(robot_controller, indexes, validation["responses"]):
+            on_success()
+
+    def _send_next_request():
+        if validation["done"]:
+            return
+        if validation["next_offset"] >= len(indexes):
+            _finish_if_ready()
+            return
+        index = indexes[validation["next_offset"]]
+        validation["next_offset"] += 1
+        req = _make_state_validity_request(joint_names, points[index].positions)
+        future = client.call_async(req)
+        validation["future"] = future
+
+        def _on_done(done_future):
+            if validation["done"]:
+                return
+            try:
+                validation["responses"][index] = done_future.result()
+            except Exception as exc:
+                _fail(f"[Cartesian Path] State validity request failed at sample {index}: {exc}")
+                return
+            _send_next_request()
+
+        future.add_done_callback(_on_done)
+
+    def _on_timeout():
+        if validation["done"]:
+            return
+        missing = indexes[validation["next_offset"]:]
+        current = indexes[max(0, validation["next_offset"] - 1)] if indexes else None
+        _fail(
+            "[Cartesian Path] State validity validation timed out "
+            f"after {float(getattr(config, 'CARTESIAN_STATE_VALIDITY_TIMEOUT_S', 5.0)):.1f}s "
+            f"(current_sample={current}, remaining={missing})"
+        )
+
+    robot_controller.get_logger().info(
+        f"[Cartesian Path] Collision validation requested ({len(indexes)} state checks)"
+    )
+    timeout_s = max(0.5, float(getattr(config, "CARTESIAN_STATE_VALIDITY_TIMEOUT_S", 5.0)))
+    validation["timer"] = robot_controller.create_timer(timeout_s, _on_timeout)
+    _send_next_request()
+    return True
+
+
+def _make_state_validity_request(joint_names, positions):
+    js = JointState()
+    js.name = list(joint_names)
+    js.position = [float(value) for value in positions]
+    state = RobotState()
+    state.joint_state = js
+    state.is_diff = True
+
+    req = GetStateValidity.Request()
+    req.robot_state = state
+    req.group_name = config.PLANNING_GROUP
+    return req
+
+
+def _evaluate_cartesian_validity_responses(robot_controller, indexes, responses) -> bool:
+    allow_escape = bool(getattr(config, "CARTESIAN_ALLOW_START_COLLISION_ESCAPE", True))
+    escape_depth_tol_m = float(getattr(config, "CARTESIAN_START_COLLISION_ESCAPE_DEPTH_TOL_M", 0.001))
+    initial_contact_pairs = None
+    initial_max_depth = 0.0
+    saw_valid_after_start_collision = False
+    allowed_escape_samples = 0
+
+    for index in indexes:
+        response = responses[index]
+        valid = bool(getattr(response, "valid", False))
+        contacts = list(getattr(response, "contacts", []) or [])
+        contact_pairs = {
+            tuple(sorted((str(c.contact_body_1), str(c.contact_body_2))))
+            for c in contacts
+        }
+        max_depth = max((abs(float(getattr(c, "depth", 0.0))) for c in contacts), default=0.0)
+
+        if valid:
+            if initial_contact_pairs is not None:
+                saw_valid_after_start_collision = True
+            continue
+
+        if allow_escape and index == 0 and contact_pairs:
+            initial_contact_pairs = set(contact_pairs)
+            initial_max_depth = max_depth
+            allowed_escape_samples += 1
+            robot_controller.get_logger().warning(
+                "[Cartesian Path] Start state is already in collision; allowing escape only "
+                f"for existing contacts={_format_contact_pairs(initial_contact_pairs)} "
+                f"initial_penetration={initial_max_depth * 1000.0:.2f}mm"
+            )
+            continue
+
+        if allow_escape and initial_contact_pairs is not None and contact_pairs:
+            has_only_initial_contacts = contact_pairs.issubset(initial_contact_pairs)
+            depth_ok = max_depth <= initial_max_depth + escape_depth_tol_m
+            if has_only_initial_contacts and depth_ok:
+                allowed_escape_samples += 1
+                robot_controller.get_logger().warning(
+                    f"[Cartesian Path] Allowing collision-escape sample {index}: "
+                    f"contacts={_format_contact_pairs(contact_pairs)} "
+                    f"penetration={max_depth * 1000.0:.2f}mm"
+                )
+                continue
+
+        if contacts:
+            pairs = sorted({f"{c.contact_body_1}<->{c.contact_body_2}" for c in contacts})
+            robot_controller.get_logger().error(
+                f"[Cartesian Path] Collision validation failed at sample {index}: {pairs}"
+            )
+        else:
+            robot_controller.get_logger().error(
+                f"[Cartesian Path] Collision validation failed at sample {index}: invalid state"
+            )
+        _set_result(robot_controller, -10)
+        return False
+
+    if initial_contact_pairs is not None:
+        if saw_valid_after_start_collision:
+            robot_controller.get_logger().warning(
+                f"[Cartesian Path] Collision escape accepted; cleared after "
+                f"{allowed_escape_samples} colliding sample(s)"
+            )
+        else:
+            robot_controller.get_logger().warning(
+                f"[Cartesian Path] Collision escape accepted but final sampled state is still in "
+                f"the original contact set={_format_contact_pairs(initial_contact_pairs)}"
+            )
+
+    robot_controller.get_logger().info(
+        f"[Cartesian Path] Collision validation passed ({len(indexes)} state checks)"
+    )
+    return True
+
+
+def _format_contact_pairs(contact_pairs) -> list[str]:
+    return [
+        f"{a}<->{b}"
+        for a, b in sorted(contact_pairs)
+    ]
 
 def _nearest_equivalent_angle(reference: float, value: float) -> float:
     """Shift `value` by ±2π so it stays closest to `reference`."""
@@ -1233,9 +1450,17 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         # ── Normal multi-point trajectory: apply time parameterization ────────
         # TOTG or Ruckig adds velocity/acceleration/jerk profiles to the raw
         # joint-space waypoints returned by MoveIt (which have no timing).
-        _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
-                          generation, log_prefix='[Cartesian Path]',
-                          trajectory_optimizer_name=trajectory_optimizer_name)
+        def _on_validated():
+            _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
+                              generation, log_prefix='[Cartesian Path]',
+                              trajectory_optimizer_name=trajectory_optimizer_name)
+
+        _validate_cartesian_trajectory_state_validity_async(
+            robot_controller,
+            trajectory,
+            generation,
+            _on_validated,
+        )
 
     except Exception as e:
         robot_controller.get_logger().error(f'[Cartesian Path] Service call failed: {e}')

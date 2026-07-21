@@ -230,7 +230,15 @@ def _execute_path(
         return 0
 
     # Normal flow: robot is close to first waypoint, plan from current state
-    request = _build_cartesian_request(robot_controller, waypoints, max_step, vel_scaling, acc_scaling)
+    avoid_collisions = config.resolve_avoid_collisions(True)
+    request = _build_cartesian_request(
+        robot_controller,
+        waypoints,
+        max_step,
+        vel_scaling,
+        acc_scaling,
+        avoid_collisions=avoid_collisions,
+    )
     robot_controller.get_logger().info(
         '[Cartesian Path] '
         f'max_step={max_step * 1000:.1f}mm '
@@ -268,8 +276,9 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
     Phase 3 — Execute:  time-parameterize and execute the combined trajectory
     """
 
+    avoid_collisions = config.resolve_avoid_collisions(True)
     ik_request = _build_cartesian_request(robot_controller, [waypoints[0]], 0.1, 1.0, 1.0,
-                                          avoid_collisions=False)
+                                          avoid_collisions=avoid_collisions)
 
     robot_controller.get_logger().info('[EXECUTE_PATH] Phase 1: IK query for first waypoint...')
     gen = _begin_execution(robot_controller)
@@ -364,7 +373,8 @@ def _plan_then_approach(robot_controller, waypoints, first_wp_mm, rx, ry, rz,
 
         plan_request = _build_cartesian_request(robot_controller, waypoints, max_step,
                                                 vel_scaling, acc_scaling,
-                                                start_state=virtual_start)
+                                                start_state=virtual_start,
+                                                avoid_collisions=avoid_collisions)
 
         robot_controller.get_logger().info(
             f'[EXECUTE_PATH] Phase 2: Planning {len(waypoints)}-waypoint path from wp[0] '

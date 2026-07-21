@@ -11,8 +11,32 @@ DEFAULT_WORKOBJECT:
 - 16.2
 
 
-# Painting: disable collision checking (tool contacts workpiece)
-ENABLE_COLLISION_CHECKING: false
+# Painting: keep MoveIt collision checks enabled for planned paint motion.
+ENABLE_COLLISION_CHECKING: true
+CONTOUR_STATE_VALIDITY_ENABLED: true
+CONTOUR_STATE_VALIDITY_STRIDE: 1
+
+# Dynamic MoveIt collision body for the selected paint tool. The platform
+# switches to TOOL_1 at startup; this attaches a cylinder at that active tool
+# origin so collision checks include the physical pointer/sprayer.
+ACTIVE_TOOL_COLLISION_ENABLED: true
+ACTIVE_TOOL_COLLISION_ID: active_paint_tool
+ACTIVE_TOOL_COLLISION_LINK: ee_link
+ACTIVE_TOOL_COLLISION_RADIUS_M: 0.0325
+ACTIVE_TOOL_COLLISION_LENGTH_M: 0.17
+ACTIVE_TOOL_COLLISION_ORIGIN:
+- 0
+- 0
+- -85
+- 0
+- 0
+- 0
+ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM: true
+ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
+- ee_link
+- tool0
+- tcp
+- Link_6
 
 # Dense paint contours use direct IK plus TOTG timing. Ruckig can introduce
 # implausible local timing gaps on these long wrapped Joint_6 paths.

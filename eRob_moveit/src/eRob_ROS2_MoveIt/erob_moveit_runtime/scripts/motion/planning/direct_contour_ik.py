@@ -289,7 +289,7 @@ def _request_ik(robot_controller, pose, seed_state, timeout_s: float):
     req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
     req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
-    req.ik_request.avoid_collisions = False
+    req.ik_request.avoid_collisions = config.resolve_avoid_collisions(True)
     req.ik_request.timeout.sec = int(timeout_s)
     req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1_000_000_000)
     req.ik_request.robot_state.joint_state = deepcopy(seed_state)
@@ -403,7 +403,7 @@ def _validate_sampled_state_validity(robot_controller, joint_names, solved_point
     for index in sorted(indexes):
         req = GetStateValidity.Request()
         req.robot_state.joint_state = _joint_state(robot_controller, joint_names, solved_points[index])
-        req.robot_state.is_diff = False
+        req.robot_state.is_diff = True
         req.group_name = config.PLANNING_GROUP
         response = _wait_future(
             client.call_async(req),

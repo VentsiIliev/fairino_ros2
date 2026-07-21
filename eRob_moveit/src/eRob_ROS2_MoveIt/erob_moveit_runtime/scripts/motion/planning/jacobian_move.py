@@ -328,6 +328,7 @@ def _jacobian_check_and_execute(
         js.position = q
         rs = RobotState()
         rs.joint_state = js
+        rs.is_diff = True
         req = GetStateValidity.Request()
         req.robot_state = rs
         req.group_name = config.PLANNING_GROUP

@@ -217,7 +217,7 @@ def _wait_future(future, timeout_s: float = 10.0):
     raise TimeoutError(f"Timed out waiting for MoveIt service response after {timeout_s:.1f}s")
 
 
-def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=None):
+def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=None, avoid_collisions=True):
     ik_client = node.get_ik_client()
     if ik_client is None or not ik_client.wait_for_service(timeout_sec=1.0):
         raise TimeoutError("IK service unavailable")
@@ -230,7 +230,7 @@ def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=No
     req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
     req.ik_request.pose_stamped.header.stamp = node.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
-    req.ik_request.avoid_collisions = True
+    req.ik_request.avoid_collisions = bool(avoid_collisions)
     req.ik_request.timeout.sec = int(timeout_s)
     req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1_000_000_000)
 
@@ -238,12 +238,12 @@ def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=No
         state = deepcopy(seed_joint_state)
         state.header.stamp = node.get_clock().now().to_msg()
         req.ik_request.robot_state.joint_state = state
-        req.ik_request.robot_state.is_diff = False
+        req.ik_request.robot_state.is_diff = True
     elif node.current_joint_state is not None:
         state = deepcopy(node.current_joint_state)
         state.header.stamp = node.get_clock().now().to_msg()
         req.ik_request.robot_state.joint_state = state
-        req.ik_request.robot_state.is_diff = False
+        req.ik_request.robot_state.is_diff = True
 
     future = ik_client.call_async(req)
     return _wait_future(future, timeout_s=timeout_s + 1.0)
@@ -262,10 +262,32 @@ def _check_state_validity(node, joint_names, joint_positions, timeout_s: float =
     js.name = list(joint_names)
     js.position = list(joint_positions)
     req.robot_state.joint_state = js
+    req.robot_state.is_diff = True
     req.group_name = config.PLANNING_GROUP
 
     future = state_validity_client.call_async(req)
     return _wait_future(future, timeout_s=timeout_s + 1.0)
+
+
+def _state_validity_contact_pairs(validity_resp) -> list[str]:
+    pairs = []
+    for contact in list(getattr(validity_resp, "contacts", []) or []):
+        body_1 = str(getattr(contact, "contact_body_1", "") or getattr(contact, "body_name_1", ""))
+        body_2 = str(getattr(contact, "contact_body_2", "") or getattr(contact, "body_name_2", ""))
+        if body_1 or body_2:
+            pair = f"{body_1}<->{body_2}" if body_1 and body_2 else body_1 or body_2
+            if pair not in pairs:
+                pairs.append(pair)
+    return pairs
+
+
+def _coerce_pose6(value, label: str) -> list[float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 6:
+        raise ValueError(f"Invalid {label}; expected [x,y,z,rx,ry,rz]")
+    try:
+        return [float(v) for v in value]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {label}; all values must be numeric") from exc
 
 
 def validate_pose_from_start(node, robot, start_position, target_position, tool=0, user=0, start_joint_state_payload=None):
