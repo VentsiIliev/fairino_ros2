@@ -45,6 +45,8 @@ PATH_TRAJECTORY_OPTIMIZER: TOTG
 # Paint contour execution: enable the dense direct-IK path only for this
 # profile. The detailed IK tolerances live in erob_moveit_runtime/scripts/config.py.
 CONTOUR_DIRECT_IK_ENABLED: true
+CONTOUR_BATCH_IK_SERVICE_TIMEOUT_S: 30.0
+CONTOUR_IK_RETRY_TIMEOUT_S: 0.05
 
 # Cartesian fallback tuning for dense paint paths. Larger EEF steps and waypoint
 # simplification reduce MoveIt fallback planning time; direct IK remains the
@@ -55,6 +57,10 @@ PATH_EEF_STEP_MAX_M: 0.050
 PATH_WAYPOINT_SIMPLIFY_ENABLED: false
 PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 30.0
 PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 1.0
+FOLLOW_PATH_CARTESIAN_TIMEOUT_S: 30.0
+FOLLOW_PATH_CARTESIAN_FALLBACK_ENABLED: false
+FOLLOW_PATH_DENSIFY_MAX_TRANSLATION_MM: 1.0
+FOLLOW_PATH_DENSIFY_MAX_ORIENTATION_DEG: 2.0
 
 # Paint unwind is intentional because the hose/camera cable can wrap around
 # Joint_6 unwind uses rotational direct IK to avoid MoveIt Cartesian planning.

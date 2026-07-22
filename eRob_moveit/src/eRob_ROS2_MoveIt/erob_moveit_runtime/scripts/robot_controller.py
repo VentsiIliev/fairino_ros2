@@ -402,6 +402,7 @@ class RobotController(Node):
         self._drag_disable_set_pub = None
         self._drive_enable_set_pub = None
         self._drive_disable_set_pub = None
+        self._drive_state_sub = None
         self._drag_timer = None
         if self.runtime_adapter.supports_drag_mode:
             self._drive_enable_set_pub = self.create_publisher(
@@ -412,6 +413,12 @@ class RobotController(Node):
             self._drive_disable_set_pub = self.create_publisher(
                 Float64MultiArray,
                 DRIVE_DISABLE_SET_COMMAND_TOPIC,
+                10,
+            )
+            self._drive_state_sub = self.create_subscription(
+                DynamicJointState,
+                '/dynamic_joint_states',
+                self._drag_drive_state_callback,
                 10,
             )
         if self.runtime_adapter.supports_drag_mode and self._drag_mode_available:
@@ -466,12 +473,6 @@ class RobotController(Node):
                 DynamicJointState,
                 '/zeroerr/collision_monitor/state',
                 self._drag_monitor_callback,
-                10,
-            )
-            self.create_subscription(
-                DynamicJointState,
-                '/dynamic_joint_states',
-                self._drag_drive_state_callback,
                 10,
             )
             self.create_subscription(
@@ -1235,7 +1236,10 @@ class RobotController(Node):
             }
 
         if enabled:
-            self._send_hold_position_trajectory(reason='drive enable')
+            self._send_hold_position_trajectory(
+                reason='drive enable',
+                suppress_drive_disable_cancel=True,
+            )
             time.sleep(0.25)
 
         pulse = np.ones(NUM_JOINTS, dtype=float)
@@ -2008,7 +2012,11 @@ class RobotController(Node):
             raw[index] = torque_nm[index] * raw_per_nm
         return raw
 
-    def _send_hold_position_trajectory(self, reason: str = 'hold position') -> bool:
+    def _send_hold_position_trajectory(
+        self,
+        reason: str = 'hold position',
+        suppress_drive_disable_cancel: bool = False,
+    ) -> bool:
         joint_state = self.current_joint_state
         if joint_state is None:
             self.get_logger().warning(f'[HoldPosition] Cannot send hold trajectory for {reason}: no joint state yet')
@@ -2053,7 +2061,10 @@ class RobotController(Node):
             f'[HoldPosition] Sending hold trajectory for {reason}: '
             f'positions={[round(value, 6) for value in positions]}'
         )
-        self.trajectory_executor.send_trajectory_to_controller(traj)
+        self.trajectory_executor.send_trajectory_to_controller(
+            traj,
+            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
+        )
         return True
 
     def _ethercat_watchdog_loop(self):

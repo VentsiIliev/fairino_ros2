@@ -45,6 +45,9 @@ source "${CONFIG_FILE}"
 ROS_SETUP_FILE="${ROS_SETUP_FILE:-${DEFAULT_ROS_SETUP_FILE}}"
 BASE_UNDERLAY_SETUP_FILE="${BASE_UNDERLAY_SETUP_FILE:-}"
 USE_RVIZ="${USE_RVIZ:-true}"
+ROBOT_ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID:-42}"
+ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
+ROBOT_ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY:-1}"
 ZEROERR_ROS_PID=""
 ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
 FAIRINO_ROS_PID=""
@@ -63,6 +66,11 @@ cleanup_stale_zeroerr_processes() {
     "/lib/erob_moveit_runtime/main.py"
     "ipp_helper"
     "ruckig_helper"
+    "contour_ik_helper"
+    "zeroerr_collision_monitor.py"
+    "ethercat_sdo_srv_server"
+    "ethercat slaves"
+    "ros2cli.daemon.daemonize"
   )
   local pattern=""
 
@@ -101,6 +109,11 @@ cleanup_stale_fairino_processes() {
     "fairino_state_publisher.py"
     "ipp_helper"
     "ruckig_helper"
+    "contour_ik_helper"
+    "zeroerr_collision_monitor.py"
+    "ethercat_sdo_srv_server"
+    "ethercat slaves"
+    "ros2cli.daemon.daemonize"
     "spawner"
     "ros2 launch fairino5_v6_moveit2_config"
     "ros2 launch zeroerr"
@@ -211,7 +224,12 @@ if [[ ! -f "${WORKSPACE_SETUP_FILE}" ]]; then
 fi
 source_setup "${WORKSPACE_SETUP_FILE}"
 
+export ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID}"
+export ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE}"
+export ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY}"
+
 echo "Using AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-}"
+echo "Using ROS_DOMAIN_ID=${ROS_DOMAIN_ID} ROS_AUTOMATIC_DISCOVERY_RANGE=${ROS_AUTOMATIC_DISCOVERY_RANGE} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
 
 launch_zeroerr() {
   local package="${ZEROERR_PACKAGE:?ZEROERR_PACKAGE is required}"

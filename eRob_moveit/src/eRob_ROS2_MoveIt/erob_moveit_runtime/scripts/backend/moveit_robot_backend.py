@@ -553,7 +553,45 @@ class MoveItRobotBackend(IRobotBackend):
             values = list(getattr(state.joint_state, "position", []) or [])
             return {name: float(value) for name, value in zip(names, values)}
 
-        def _plan_unwind_direct_ik_trajectory(current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale, seed_state):
+        def _force_unwind_joint_branch(joint_trajectory, joint_name, start_value, target_value):
+            if joint_trajectory is None or not getattr(joint_trajectory, "points", None):
+                return
+            joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+            if joint_name not in joint_names:
+                return
+            joint_index = joint_names.index(joint_name)
+            points = list(joint_trajectory.points)
+            if len(points) < 2:
+                return
+
+            start_value = float(start_value)
+            target_value = float(target_value)
+            delta = target_value - start_value
+            for point_index, point in enumerate(points):
+                positions = list(point.positions)
+                if joint_index >= len(positions):
+                    continue
+                fraction = point_index / max(1, len(points) - 1)
+                positions[joint_index] = start_value + delta * fraction
+                point.positions = positions
+
+            planning_node.get_logger().info(
+                "[UNWIND_J6] Forced ordered unwind joint branch before optimization: "
+                f"{joint_name} {start_value:.3f} -> {target_value:.3f} rad "
+                f"points={len(points)}"
+            )
+
+        def _plan_unwind_direct_ik_trajectory(
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            vel_scale,
+            acc_scale,
+            seed_state,
+            joint_name=None,
+            joint_start=None,
+            joint_target=None,
+        ):
             segment_started = perf_counter()
             direct_ik_step_deg = max(0.1, float(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG", 4.0)))
             waypoints_base = self._rotational_path_waypoints_base(
@@ -576,6 +614,13 @@ class MoveItRobotBackend(IRobotBackend):
             _log_report(planning_node, ik_result.report)
             if not ik_result.report.ok:
                 raise RuntimeError(f"unwind direct IK failed: {ik_result.report.failure_reason} {ik_result.report.details}")
+            if joint_name is not None and joint_start is not None and joint_target is not None:
+                _force_unwind_joint_branch(
+                    ik_result.trajectory.joint_trajectory,
+                    str(joint_name),
+                    float(joint_start),
+                    float(joint_target),
+                )
             optimizer_name = str(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER", "") or "").strip().upper() or None
             optimized, optimize_elapsed = _optimize_sync(
                 planning_node,
@@ -673,6 +718,26 @@ class MoveItRobotBackend(IRobotBackend):
                 joint_name = str(getattr(config, "EXECUTOR_POST_UNWIND_JOINT_NAME", "Joint_6")).strip()
                 if joint_name not in joint_names:
                     raise RuntimeError(f"Joint {joint_name!r} is not configured")
+                if (
+                    index == len(segments) - 1
+                    and bool(getattr(config, "EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION", True))
+                ):
+                    planning_node.get_logger().info(
+                        "[UNWIND_J6] Ordered final unwind will be planned live during execution"
+                    )
+                    return {
+                        "type": segment_type,
+                        "label": label,
+                        "target_position": list(current_cartesian[:6]),
+                        "final_state": current_state,
+                        "runtime_unwind": True,
+                        "vel": segment.get("vel", config.DEFAULT_VEL_PERCENT),
+                        "acc": segment.get("acc", config.DEFAULT_ACC_PERCENT),
+                        "trajectories": [],
+                        "trajectory_checks": [],
+                        "check": None,
+                        "plan_elapsed_s": perf_counter() - plan_started,
+                    }
                 axis_index = int(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX", 5))
                 joint_index = joint_names.index(joint_name)
                 by_name = _joint_positions_by_name(current_state)
@@ -688,6 +753,7 @@ class MoveItRobotBackend(IRobotBackend):
                         "target_position": list(current_cartesian[:6]),
                         "final_state": current_state,
                         "trajectories": [],
+                        "trajectory_checks": [],
                         "check": None,
                         "plan_elapsed_s": perf_counter() - plan_started,
                     }
@@ -696,6 +762,8 @@ class MoveItRobotBackend(IRobotBackend):
                 vel_scale = vel_percent / 100.0
                 acc_scale = acc_percent / 100.0
                 sign = float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN", 1.0))
+                if abs(sign) < 1e-9:
+                    sign = 1.0
                 max_step_deg = max(1.0, abs(float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG", 180.0))))
                 total_delta_deg = math.degrees(remaining) * sign
                 segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
@@ -707,6 +775,7 @@ class MoveItRobotBackend(IRobotBackend):
                     f"vel={vel_percent:.1f}% acc={acc_percent:.1f}%"
                 )
                 trajectories = []
+                trajectory_checks = []
                 planning_state = current_state
                 planning_cartesian = list(current_cartesian[:6])
                 planning_value = current_value
@@ -716,11 +785,13 @@ class MoveItRobotBackend(IRobotBackend):
                     if abs(remaining) < min_delta:
                         break
                     segment_delta_deg = math.copysign(min(abs(remaining_deg), max_step_deg), remaining_deg)
+                    segment_joint_target = planning_value + math.radians(segment_delta_deg) / sign
                     target_cartesian = list(planning_cartesian[:6])
                     target_cartesian[axis_index] = float(target_cartesian[axis_index]) + segment_delta_deg
                     planning_node.get_logger().info(
                         f"[UNWIND_J6] Planning ordered unwind segment {unwind_index}/{segment_count}: "
-                        f"{planning_value:.3f} -> {final_target:.3f} rad, cart_delta={segment_delta_deg:.3f}deg"
+                        f"{planning_value:.3f} -> {segment_joint_target:.3f} rad "
+                        f"(final={final_target:.3f}), cart_delta={segment_delta_deg:.3f}deg"
                     )
                     joint_trajectory = _plan_unwind_direct_ik_trajectory(
                         planning_cartesian,
@@ -729,8 +800,17 @@ class MoveItRobotBackend(IRobotBackend):
                         vel_scale,
                         acc_scale,
                         planning_state,
+                        joint_name=joint_name,
+                        joint_start=planning_value,
+                        joint_target=segment_joint_target,
                     )
                     trajectories.append(joint_trajectory)
+                    trajectory_checks.append({
+                        "joint_names": joint_names,
+                        "joint_name": joint_name,
+                        "joint_index": joint_index,
+                        "target_value": segment_joint_target,
+                    })
                     planning_state = _robot_state_from_trajectory_end(joint_trajectory)
                     planning_cartesian = target_cartesian
                     planning_value = float(_joint_positions_by_name(planning_state).get(joint_name, planning_value))
@@ -740,6 +820,7 @@ class MoveItRobotBackend(IRobotBackend):
                     "target_position": list(planning_cartesian[:6]),
                     "final_state": planning_state,
                     "trajectories": trajectories,
+                    "trajectory_checks": trajectory_checks,
                     "check": {
                         "joint_names": joint_names,
                         "joint_name": joint_name,
@@ -770,7 +851,19 @@ class MoveItRobotBackend(IRobotBackend):
                 _send_trajectory_to_controller(self.node, planned["trajectory"])
                 result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
             elif segment_type == "unwind_joint6":
-                result = 0
+                if bool(planned.get("runtime_unwind", False)):
+                    planning_node.get_logger().info(
+                        f"[OrderedChain] Executing live final unwind label='{planned['label']}' "
+                        f"plan_s={planned['plan_elapsed_s']:.3f}"
+                    )
+                    result = self._unwind_joint6_with_rotational_path(
+                        vel=planned.get("vel", config.DEFAULT_VEL_PERCENT),
+                        acc=planned.get("acc", config.DEFAULT_ACC_PERCENT),
+                        queue_if_busy=False,
+                    )
+                else:
+                    result = 0
+                trajectory_checks = list(planned.get("trajectory_checks") or [])
                 for unwind_index, joint_trajectory in enumerate(planned["trajectories"], start=1):
                     duration = joint_trajectory.points[-1].time_from_start
                     duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
@@ -784,12 +877,22 @@ class MoveItRobotBackend(IRobotBackend):
                         f"points={len(joint_trajectory.points)} duration_s={duration_s:.3f} "
                         f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f}"
                     )
-                    _send_trajectory_to_controller(self.node, joint_trajectory)
+                    _send_trajectory_to_controller(
+                        self.node,
+                        joint_trajectory,
+                        preserve_explicit_wrap=True,
+                        unwind_check=trajectory_checks[unwind_index - 1]
+                        if unwind_index - 1 < len(trajectory_checks)
+                        else planned.get("check"),
+                    )
                     result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
                     if result != 0:
                         break
                 if result == 0 and planned.get("check") is not None:
                     result = 0 if self.node.trajectory_executor._verify_explicit_unwind_complete(planned["check"]) else -6
+                if result != 0:
+                    setattr(self.node, "_last_ordered_unwind_failure_time", time.time())
+                    setattr(self.node, "_last_ordered_unwind_failure_result", int(result))
             else:
                 result = -1
             planning_node.get_logger().info(
@@ -859,6 +962,22 @@ class MoveItRobotBackend(IRobotBackend):
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
         if self.node is None:
             return -1
+        last_ordered_unwind_failure = getattr(self.node, "_last_ordered_unwind_failure_time", None)
+        if last_ordered_unwind_failure is not None:
+            suppress_s = max(
+                0.0,
+                float(getattr(config, "EXECUTOR_SUPPRESS_UNWIND_AFTER_ORDERED_FAILURE_S", 10.0)),
+            )
+            elapsed_s = time.time() - float(last_ordered_unwind_failure)
+            if elapsed_s <= suppress_s:
+                result = int(getattr(self.node, "_last_ordered_unwind_failure_result", -6))
+                self.node.get_logger().error(
+                    "[UNWIND_J6] Standalone unwind suppressed after ordered unwind failure "
+                    f"{elapsed_s:.3f}s ago; refusing automatic duplicate unwind result={result}"
+                )
+                return result
+            setattr(self.node, "_last_ordered_unwind_failure_time", None)
+            setattr(self.node, "_last_ordered_unwind_failure_result", None)
         drive_error = self._reject_if_drive_not_enabled("UNWIND_J6")
         if drive_error is not None:
             return drive_error
@@ -895,7 +1014,6 @@ class MoveItRobotBackend(IRobotBackend):
             return result
 
         if blocking:
-            import time
             deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
             while self.node.is_executing and time.time() < deadline:
                 time.sleep(0.05)
@@ -940,6 +1058,8 @@ class MoveItRobotBackend(IRobotBackend):
         vel_scale = vel_percent / 100.0
         acc_scale = acc_percent / 100.0
         sign = float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN', 1.0))
+        if abs(sign) < 1e-9:
+            sign = 1.0
         max_step_deg = max(1.0, abs(float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG', 180.0))))
         total_delta_deg = math.degrees(remaining) * sign
         segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
@@ -984,6 +1104,9 @@ class MoveItRobotBackend(IRobotBackend):
                 axis_index,
                 vel_scale,
                 acc_scale,
+                joint_name=joint_name,
+                joint_start=current_value,
+                joint_target=current_value + math.radians(segment_delta_deg) / sign,
             )
             if result != 0:
                 return result
@@ -1020,7 +1143,47 @@ class MoveItRobotBackend(IRobotBackend):
         )
         return -1
 
-    def _send_rotational_unwind_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+    @staticmethod
+    def _force_joint_branch_on_trajectory(joint_trajectory, joint_name, start_value, target_value, logger=None):
+        if joint_trajectory is None or not getattr(joint_trajectory, 'points', None):
+            return
+        joint_names = list(getattr(joint_trajectory, 'joint_names', []) or [])
+        if joint_name not in joint_names:
+            return
+        joint_index = joint_names.index(joint_name)
+        points = list(joint_trajectory.points)
+        if len(points) < 2:
+            return
+
+        start_value = float(start_value)
+        target_value = float(target_value)
+        delta = target_value - start_value
+        for point_index, point in enumerate(points):
+            positions = list(point.positions)
+            if joint_index >= len(positions):
+                continue
+            fraction = point_index / max(1, len(points) - 1)
+            positions[joint_index] = start_value + delta * fraction
+            point.positions = positions
+
+        if logger is not None:
+            logger.info(
+                '[UNWIND_J6] Forced unwind joint branch before optimization: '
+                f'{joint_name} {start_value:.3f} -> {target_value:.3f} rad '
+                f'points={len(points)}'
+            )
+
+    def _send_rotational_unwind_path(
+        self,
+        current_pos_wobj,
+        target_pos_wobj,
+        rotation_index,
+        vel_scale,
+        acc_scale,
+        joint_name=None,
+        joint_start=None,
+        joint_target=None,
+    ):
         if bool(getattr(config, 'EXECUTOR_POST_UNWIND_USE_DIRECT_IK', False)):
             result = self._send_rotational_unwind_direct_ik_path(
                 current_pos_wobj,
@@ -1028,6 +1191,9 @@ class MoveItRobotBackend(IRobotBackend):
                 rotation_index,
                 vel_scale,
                 acc_scale,
+                joint_name=joint_name,
+                joint_start=joint_start,
+                joint_target=joint_target,
             )
             if result == 0:
                 return 0
@@ -1044,7 +1210,17 @@ class MoveItRobotBackend(IRobotBackend):
             acc_scale,
         )
 
-    def _send_rotational_unwind_direct_ik_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+    def _send_rotational_unwind_direct_ik_path(
+        self,
+        current_pos_wobj,
+        target_pos_wobj,
+        rotation_index,
+        vel_scale,
+        acc_scale,
+        joint_name=None,
+        joint_start=None,
+        joint_target=None,
+    ):
         started_at = perf_counter()
         direct_ik_step_deg = max(0.1, float(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG', 4.0)))
         waypoints_base = self._rotational_path_waypoints_base(
@@ -1085,6 +1261,15 @@ class MoveItRobotBackend(IRobotBackend):
         _log_report(planning_node, ik_result.report)
         if not ik_result.report.ok:
             return -6
+
+        if joint_name is not None and joint_start is not None and joint_target is not None:
+            self._force_joint_branch_on_trajectory(
+                ik_result.trajectory.joint_trajectory,
+                str(joint_name),
+                float(joint_start),
+                float(joint_target),
+                logger=self.node.get_logger(),
+            )
 
         optimizer_name = str(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER', '') or '').strip().upper() or None
         try:

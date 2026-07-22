@@ -22,6 +22,10 @@ class TrajectoryExecutor:
         self._unwind_diag_timers = []
         self._active_drive_monitor_timer = None
         self._active_trajectory_cancel_reason = None
+        self._active_drive_cancel_suppressed = False
+        self._active_drive_disabled_since = None
+        self._active_drive_disabled_samples = 0
+        self._active_drive_disabled_reason = None
         self._unwind_cancel_reason = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
@@ -454,16 +458,52 @@ class TrajectoryExecutor:
         if not bool(getattr(config, 'EXECUTOR_CANCEL_ON_DRIVE_DISABLE', True)):
             return False
 
+        disabled_reason = None
         for drive_state in self._get_all_drive_states():
             if drive_state['state'] == 'operation_enabled':
                 continue
-            reason = (
+            disabled_reason = (
                 f"{drive_state['joint_name']} left operation_enabled during active trajectory "
                 f"at {label}: statusword={drive_state['statusword']} "
                 f"state={drive_state['state']} bits={drive_state['bits']}"
             )
-            return self._cancel_active_trajectory(reason)
-        return False
+            break
+
+        if disabled_reason is None:
+            self._active_drive_disabled_since = None
+            self._active_drive_disabled_samples = 0
+            self._active_drive_disabled_reason = None
+            return False
+
+        now = time.monotonic()
+        if self._active_drive_disabled_reason != disabled_reason:
+            self._active_drive_disabled_reason = disabled_reason
+            self._active_drive_disabled_since = now
+            self._active_drive_disabled_samples = 1
+            self._node.get_logger().warning(
+                f'[Controller] Active drive monitor observed non-enabled drive; '
+                f'waiting for persistence before cancel: {disabled_reason}'
+            )
+            return False
+
+        self._active_drive_disabled_samples += 1
+        grace_s = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_GRACE_S', 0.25)),
+        )
+        required_samples = max(
+            1,
+            int(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_BAD_SAMPLES', 3)),
+        )
+        elapsed_s = now - float(self._active_drive_disabled_since or now)
+        if elapsed_s < grace_s or self._active_drive_disabled_samples < required_samples:
+            return False
+
+        reason = (
+            f'{disabled_reason} '
+            f'(persisted {elapsed_s:.3f}s, samples={self._active_drive_disabled_samples})'
+        )
+        return self._cancel_active_trajectory(reason)
 
     def _schedule_active_drive_monitor(self):
         if not bool(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_ENABLED', True)):
@@ -491,6 +531,85 @@ class TrajectoryExecutor:
                 self._node.destroy_timer(timer)
             except Exception:
                 pass
+
+    def _ensure_drive_enabled_before_trajectory(self, suppress_drive_disable_cancel=False):
+        if suppress_drive_disable_cancel:
+            return True
+        if not bool(getattr(config, 'EXECUTOR_DRIVE_ENABLE_BEFORE_TRAJECTORY', True)):
+            return True
+
+        is_enabled = getattr(self._node, 'is_drive_operation_enabled_for_motion', None)
+        if not callable(is_enabled):
+            return True
+
+        fault_reason = getattr(self._node, 'get_drive_enable_fault_reason', None)
+        enable = getattr(self._node, 'set_drive_operation_enabled', None)
+        timeout_s = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_WAIT_TIMEOUT_S', 2.0)),
+        )
+        stable_s = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S', 0.15)),
+        )
+        poll_s = min(
+            0.05,
+            max(0.01, float(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_PERIOD_S', 0.05))),
+        )
+        started = time.monotonic()
+        deadline = time.monotonic() + timeout_s
+        stable_since = None
+        enable_requested = False
+        warned_unstable = False
+        while time.monotonic() <= deadline:
+            now = time.monotonic()
+            if is_enabled():
+                if stable_since is None:
+                    stable_since = now
+                if now - stable_since >= stable_s:
+                    waited_s = now - started
+                    if waited_s > poll_s * 1.5 or enable_requested:
+                        self._node.get_logger().info(
+                            f'[Controller] Drive operation_enabled stable before trajectory '
+                            f'(stable_s={stable_s:.3f}, waited_s={waited_s:.3f})'
+                        )
+                    return True
+            else:
+                stable_since = None
+                if not enable_requested:
+                    reason = fault_reason() if callable(fault_reason) else 'drive is not operation_enabled'
+                    self._node.get_logger().warning(
+                        f'[Controller] Drive not operation_enabled before trajectory; '
+                        f're-requesting enable: {reason}'
+                    )
+                    if not callable(enable):
+                        return False
+                    try:
+                        result = enable(True)
+                    except Exception as exc:
+                        self._node.get_logger().error(
+                            f'[Controller] Drive enable request failed before trajectory: {exc}'
+                        )
+                        return False
+                    if isinstance(result, dict) and result.get('success') is False:
+                        self._node.get_logger().error(
+                            f'[Controller] Drive enable request rejected before trajectory: {result}'
+                        )
+                        return False
+                    enable_requested = True
+                elif not warned_unstable:
+                    reason = fault_reason() if callable(fault_reason) else 'drive is not operation_enabled'
+                    self._node.get_logger().warning(
+                        f'[Controller] Waiting for drive operation_enabled to become stable before trajectory: {reason}'
+                    )
+                    warned_unstable = True
+            time.sleep(poll_s)
+
+        reason = fault_reason() if callable(fault_reason) else 'drive did not reach operation_enabled'
+        self._node.get_logger().error(
+            f'[Controller] Drive did not stay operation_enabled before trajectory after {timeout_s:.2f}s: {reason}'
+        )
+        return False
 
     def _cancel_active_unwind_if_drive_disabled(self, label):
         if not bool(getattr(config, 'EXECUTOR_UNWIND_CANCEL_ON_DRIVE_DISABLE', True)):
@@ -1027,8 +1146,17 @@ class TrajectoryExecutor:
         joint_trajectory,
         preserve_explicit_wrap=False,
         unwind_check=None,
+        suppress_drive_disable_cancel=False,
     ):
         """Send trajectory directly to the low-level controller for smooth execution."""
+        if not self._ensure_drive_enabled_before_trajectory(
+            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
+        ):
+            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
+            with self._motion.lock:
+                self._motion.is_executing = False
+            return
+
         if not self._motion.execution_lock.acquire(blocking=False):
             self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
             self._motion.last_move_result = -1
@@ -1067,6 +1195,7 @@ class TrajectoryExecutor:
         self._overwrite_first_point_with_live_state(joint_trajectory)
         if not preserve_explicit_wrap:
             self._unwrap_joint6_continuity(joint_trajectory)
+        self._soften_trajectory_start(joint_trajectory)
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):
             log_drive_state()
@@ -1098,6 +1227,10 @@ class TrajectoryExecutor:
         self._last_sent_trajectory = deepcopy(joint_trajectory)
         self._active_unwind_check = None
         self._active_trajectory_cancel_reason = None
+        self._active_drive_cancel_suppressed = bool(suppress_drive_disable_cancel)
+        self._active_drive_disabled_since = None
+        self._active_drive_disabled_samples = 0
+        self._active_drive_disabled_reason = None
         self._unwind_cancel_reason = None
         if unwind_check is not None:
             copied_check = dict(unwind_check)
@@ -1174,8 +1307,17 @@ class TrajectoryExecutor:
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
             self._motion.active_controller_goal = goal_handle
-            self._schedule_active_drive_monitor()
-            self._cancel_active_trajectory_if_drive_disabled('accepted')
+            if self._active_drive_cancel_suppressed:
+                self._node.get_logger().info(
+                    '[Controller] Active drive-disable cancellation suppressed for this trajectory'
+                )
+            elif self._active_unwind_check is not None:
+                self._node.get_logger().info(
+                    '[Controller] Using explicit unwind drive monitor for this trajectory'
+                )
+            else:
+                self._schedule_active_drive_monitor()
+                self._cancel_active_trajectory_if_drive_disabled('accepted')
             if self._active_unwind_check is not None:
                 self._log_unwind_diagnostics('accepted')
                 self._schedule_unwind_diagnostics()
@@ -1277,6 +1419,10 @@ class TrajectoryExecutor:
             self._active_unwind_check = None
             cancel_reason = self._active_trajectory_cancel_reason
             self._active_trajectory_cancel_reason = None
+            self._active_drive_cancel_suppressed = False
+            self._active_drive_disabled_since = None
+            self._active_drive_disabled_samples = 0
+            self._active_drive_disabled_reason = None
             self._unwind_cancel_reason = None
             lock_released = False
             if self._motion.execution_lock.locked():
@@ -1301,8 +1447,8 @@ def _executor(robot_controller):
     return robot_controller.trajectory_executor
 
 
-def _send_trajectory_to_controller(robot_controller, joint_trajectory):
-    return _executor(robot_controller).send_trajectory_to_controller(joint_trajectory)
+def _send_trajectory_to_controller(robot_controller, joint_trajectory, **kwargs):
+    return _executor(robot_controller).send_trajectory_to_controller(joint_trajectory, **kwargs)
 
 
 def _process_next_queued_task(robot_controller):

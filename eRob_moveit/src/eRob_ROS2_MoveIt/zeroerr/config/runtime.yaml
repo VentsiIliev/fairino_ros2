@@ -27,7 +27,6 @@ JOINT_NAMES:
 - Joint_1
 - Joint_2
 - Joint_3
-- Joint_3
 - Joint_4
 - Joint_5
 - Joint_6
@@ -58,6 +57,10 @@ URDF_PATH: erob_arm_small.urdf
 
 # FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
+
+# Real ZeroErr drives can briefly transition around adjacent controller goals.
+# Require a short stable enabled window before sending the next trajectory.
+EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S: 0.05
 
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
@@ -101,7 +104,7 @@ CONTOUR_VALIDATE_REDUCED_MOVEIT_ENABLED: false
 CONTOUR_VALIDATE_REDUCED_POSITION_TOL_MM: 0.35
 CONTOUR_VALIDATE_REDUCED_ORIENTATION_TOL_DEG: 0.35
 CONTOUR_VALIDATE_REDUCED_MAX_TRANSLATION_MM: 10.0
-CONTOUR_STATE_VALIDITY_ENABLED: false
+CONTOUR_STATE_VALIDITY_ENABLED: true
 CONTOUR_STATE_VALIDITY_STRIDE: 10
 
 # Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
