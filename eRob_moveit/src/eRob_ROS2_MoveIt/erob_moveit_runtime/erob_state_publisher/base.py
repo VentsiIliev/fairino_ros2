@@ -135,34 +135,51 @@ class CartesianPublisherBase(Node):
         super().__init__(node_name)
 
         # ── Publishers ────────────────────────────────────────────────────────
-        self._cart_pos_pub = self.create_publisher(
-            PoseStamped, '/cartesian_position', 10)
-        self._cart_vel_pub = self.create_publisher(
-            TwistStamped, '/cartesian_velocity', 10)
-        self._cart_acc_pub = self.create_publisher(
-            TwistStamped, '/cartesian_acceleration', 10)
-        self._cart_jerk_pub = self.create_publisher(
-            TwistStamped, '/cartesian_jerk', 10)
-        self._cart_pos_norm_mm_pub = self.create_publisher(
-            Float64, '/cartesian_position_norm_mm', 10)
-        self._cart_vel_norm_mps_pub = self.create_publisher(
-            Float64, '/cartesian_velocity_norm_mps', 10)
-        self._cart_vel_norm_mmps_pub = self.create_publisher(
-            Float64, '/cartesian_velocity_norm_mmps', 10)
-        self._cart_acc_norm_mps2_pub = self.create_publisher(
-            Float64, '/cartesian_acceleration_norm_mps2', 10)
-        self._cart_acc_norm_mmps2_pub = self.create_publisher(
-            Float64, '/cartesian_acceleration_norm_mmps2', 10)
-        self._cart_jerk_norm_mps3_pub = self.create_publisher(
-            Float64, '/cartesian_jerk_norm_mps3', 10)
-        self._cart_jerk_norm_mmps3_pub = self.create_publisher(
-            Float64, '/cartesian_jerk_norm_mmps3', 10)
-        self._joint_vel_pub = self.create_publisher(
-            Float64MultiArray, '/joint_velocity', 10)
-        self._joint_acc_pub = self.create_publisher(
-            Float64MultiArray, '/joint_acceleration', 10)
-        self._joint_jerk_pub = self.create_publisher(
-            Float64MultiArray, '/joint_jerk', 10)
+        self._cart_pos_pub = self._create_topic_publisher(
+            'cartesian_position', PoseStamped, '/cartesian_position')
+        self._cart_vel_pub = self._create_topic_publisher(
+            'cartesian_velocity', TwistStamped, '/cartesian_velocity')
+        self._cart_acc_pub = self._create_topic_publisher(
+            'cartesian_acceleration', TwistStamped, '/cartesian_acceleration')
+        self._cart_jerk_pub = self._create_topic_publisher(
+            'cartesian_jerk', TwistStamped, '/cartesian_jerk')
+        self._cart_pos_norm_mm_pub = self._create_topic_publisher(
+            'cartesian_position_norm_mm', Float64, '/cartesian_position_norm_mm')
+        self._cart_vel_norm_mps_pub = self._create_topic_publisher(
+            'cartesian_velocity_norm_mps', Float64, '/cartesian_velocity_norm_mps')
+        self._cart_vel_norm_mmps_pub = self._create_topic_publisher(
+            'cartesian_velocity_norm_mmps', Float64, '/cartesian_velocity_norm_mmps')
+        self._cart_acc_norm_mps2_pub = self._create_topic_publisher(
+            'cartesian_acceleration_norm_mps2', Float64, '/cartesian_acceleration_norm_mps2')
+        self._cart_acc_norm_mmps2_pub = self._create_topic_publisher(
+            'cartesian_acceleration_norm_mmps2', Float64, '/cartesian_acceleration_norm_mmps2')
+        self._cart_jerk_norm_mps3_pub = self._create_topic_publisher(
+            'cartesian_jerk_norm_mps3', Float64, '/cartesian_jerk_norm_mps3')
+        self._cart_jerk_norm_mmps3_pub = self._create_topic_publisher(
+            'cartesian_jerk_norm_mmps3', Float64, '/cartesian_jerk_norm_mmps3')
+        self._joint_vel_pub = self._create_topic_publisher(
+            'joint_velocity', Float64MultiArray, '/joint_velocity')
+        self._joint_acc_pub = self._create_topic_publisher(
+            'joint_acceleration', Float64MultiArray, '/joint_acceleration')
+        self._joint_jerk_pub = self._create_topic_publisher(
+            'joint_jerk', Float64MultiArray, '/joint_jerk')
+        self._cartesian_velocity_enabled = (
+            self._cart_vel_pub is not None
+            or self._cart_vel_norm_mps_pub is not None
+            or self._cart_vel_norm_mmps_pub is not None
+        )
+        self._cartesian_acceleration_enabled = (
+            self._cart_acc_pub is not None
+            or self._cart_acc_norm_mps2_pub is not None
+            or self._cart_acc_norm_mmps2_pub is not None
+        )
+        self._cartesian_jerk_enabled = (
+            self._cart_jerk_pub is not None
+            or self._cart_jerk_norm_mps3_pub is not None
+            or self._cart_jerk_norm_mmps3_pub is not None
+        )
+        self._joint_acceleration_enabled = self._joint_acc_pub is not None
+        self._joint_jerk_enabled = self._joint_jerk_pub is not None
 
         # ── Joint-state tracking ──────────────────────────────────────────────
         self._joint_positions: Optional[np.ndarray] = None
@@ -221,6 +238,22 @@ class CartesianPublisherBase(Node):
         """Return current EE pose in base_link frame, or None if unavailable."""
         raise NotImplementedError
 
+    def _create_topic_publisher(self, key: str, msg_type, topic: str):
+        parameter_name = f'state_topics.{key}'
+        self.declare_parameter(parameter_name, True)
+        if not bool(self.get_parameter(parameter_name).value):
+            self.get_logger().info(f'[StatePublisher] Disabled topic {topic}')
+            return None
+        return self.create_publisher(msg_type, topic, 10)
+
+    def _publish_array_if_subscribed(self, publisher, data: np.ndarray) -> None:
+        if publisher is not None:
+            publisher.publish(_fa(data))
+
+    def _publish_float_if_subscribed(self, publisher, value: float) -> None:
+        if publisher is not None:
+            publisher.publish(_f64(value))
+
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _joint_callback(self, msg: JointState) -> None:
@@ -256,7 +289,8 @@ class CartesianPublisherBase(Node):
             velocities = np.zeros(6)
 
         # Acceleration by differentiating velocity
-        if (self._prev_velocities is not None
+        if (self._joint_acceleration_enabled or self._joint_jerk_enabled) and (
+                self._prev_velocities is not None
                 and self._prev_joint_time is not None):
             dt = now - self._prev_joint_time
             accelerations = (
@@ -266,7 +300,8 @@ class CartesianPublisherBase(Node):
         else:
             accelerations = np.zeros(6)
 
-        if (self._prev_accelerations is not None
+        if self._joint_jerk_enabled and (
+                self._prev_accelerations is not None
                 and self._prev_joint_time is not None):
             dt = now - self._prev_joint_time
             jerks = (
@@ -284,9 +319,9 @@ class CartesianPublisherBase(Node):
             )
 
         if should_publish:
-            self._joint_vel_pub.publish(_fa(velocities))
-            self._joint_acc_pub.publish(_fa(accelerations))
-            self._joint_jerk_pub.publish(_fa(jerks))
+            self._publish_array_if_subscribed(self._joint_vel_pub, velocities)
+            self._publish_array_if_subscribed(self._joint_acc_pub, accelerations)
+            self._publish_array_if_subscribed(self._joint_jerk_pub, jerks)
             self._last_joint_publish_time = now
         self._latest_joint_velocity_norm = float(np.linalg.norm(velocities))
 
@@ -301,7 +336,8 @@ class CartesianPublisherBase(Node):
         if pose is None:
             return
 
-        self._cart_pos_pub.publish(pose)
+        if self._cart_pos_pub is not None:
+            self._cart_pos_pub.publish(pose)
 
         now = self.get_clock().now().nanoseconds * 1e-9
         pos = np.array([
@@ -309,19 +345,30 @@ class CartesianPublisherBase(Node):
             pose.pose.position.y,
             pose.pose.position.z,
         ])
-        pos_norm = np.linalg.norm(pos)
-        self._cart_pos_norm_mm_pub.publish(_f64(pos_norm * 1000.0))
+        if self._cart_pos_norm_mm_pub is not None:
+            self._cart_pos_norm_mm_pub.publish(_f64(np.linalg.norm(pos) * 1000.0))
 
-        self._cart_history.append((pos, now))
-        vel = _estimate_first_derivative(self._cart_history)
-        acc = _estimate_second_derivative(self._cart_history)
-        self._cart_acc_history.append((acc, now))
-        jerk = _estimate_first_derivative(self._cart_acc_history)
+        derivatives_enabled = (
+            self._cartesian_velocity_enabled
+            or self._cartesian_acceleration_enabled
+            or self._cartesian_jerk_enabled
+        )
+        vel = np.zeros(3)
+        acc = np.zeros(3)
+        jerk = np.zeros(3)
+        if derivatives_enabled:
+            self._cart_history.append((pos, now))
+            vel = _estimate_first_derivative(self._cart_history)
+            if self._cartesian_acceleration_enabled or self._cartesian_jerk_enabled:
+                acc = _estimate_second_derivative(self._cart_history)
+            if self._cartesian_jerk_enabled:
+                self._cart_acc_history.append((acc, now))
+                jerk = _estimate_first_derivative(self._cart_acc_history)
 
         # Native Cartesian pose can jitter slightly at rest. When joint-space
         # motion is effectively zero and the recent Cartesian sample spread is
         # tiny, clamp derivatives to zero instead of publishing numerical noise.
-        if self._cart_history:
+        if derivatives_enabled and self._cart_history:
             positions = np.stack([entry[0] for entry in self._cart_history], axis=0)
             cart_span = float(np.linalg.norm(np.ptp(positions, axis=0)))
             if (self._latest_joint_velocity_norm < _STATIONARY_JOINT_VEL_NORM_RAD_S
@@ -329,41 +376,48 @@ class CartesianPublisherBase(Node):
                 vel = np.zeros(3)
                 acc = np.zeros(3)
                 jerk = np.zeros(3)
-                self._cart_acc_history.clear()
-                self._cart_acc_history.append((acc, now))
+                if self._cartesian_jerk_enabled:
+                    self._cart_acc_history.clear()
+                    self._cart_acc_history.append((acc, now))
 
         stamp = pose.header.stamp
         frame = pose.header.frame_id
 
-        vel_msg = TwistStamped()
-        vel_msg.header.stamp = stamp
-        vel_msg.header.frame_id = frame
-        vel_msg.twist.linear.x = float(vel[0])
-        vel_msg.twist.linear.y = float(vel[1])
-        vel_msg.twist.linear.z = float(vel[2])
-        self._cart_vel_pub.publish(vel_msg)
-        vel_norm = np.linalg.norm(vel)
-        self._cart_vel_norm_mps_pub.publish(_f64(vel_norm))
-        self._cart_vel_norm_mmps_pub.publish(_f64(vel_norm * 1000.0))
+        if self._cart_vel_pub is not None:
+            vel_msg = TwistStamped()
+            vel_msg.header.stamp = stamp
+            vel_msg.header.frame_id = frame
+            vel_msg.twist.linear.x = float(vel[0])
+            vel_msg.twist.linear.y = float(vel[1])
+            vel_msg.twist.linear.z = float(vel[2])
+            self._cart_vel_pub.publish(vel_msg)
+        if self._cart_vel_norm_mps_pub is not None or self._cart_vel_norm_mmps_pub is not None:
+            vel_norm = np.linalg.norm(vel)
+            self._publish_float_if_subscribed(self._cart_vel_norm_mps_pub, vel_norm)
+            self._publish_float_if_subscribed(self._cart_vel_norm_mmps_pub, vel_norm * 1000.0)
 
-        acc_msg = TwistStamped()
-        acc_msg.header.stamp = stamp
-        acc_msg.header.frame_id = frame
-        acc_msg.twist.linear.x = float(acc[0])
-        acc_msg.twist.linear.y = float(acc[1])
-        acc_msg.twist.linear.z = float(acc[2])
-        self._cart_acc_pub.publish(acc_msg)
-        acc_norm = np.linalg.norm(acc)
-        self._cart_acc_norm_mps2_pub.publish(_f64(acc_norm))
-        self._cart_acc_norm_mmps2_pub.publish(_f64(acc_norm * 1000.0))
+        if self._cart_acc_pub is not None:
+            acc_msg = TwistStamped()
+            acc_msg.header.stamp = stamp
+            acc_msg.header.frame_id = frame
+            acc_msg.twist.linear.x = float(acc[0])
+            acc_msg.twist.linear.y = float(acc[1])
+            acc_msg.twist.linear.z = float(acc[2])
+            self._cart_acc_pub.publish(acc_msg)
+        if self._cart_acc_norm_mps2_pub is not None or self._cart_acc_norm_mmps2_pub is not None:
+            acc_norm = np.linalg.norm(acc)
+            self._publish_float_if_subscribed(self._cart_acc_norm_mps2_pub, acc_norm)
+            self._publish_float_if_subscribed(self._cart_acc_norm_mmps2_pub, acc_norm * 1000.0)
 
-        jerk_msg = TwistStamped()
-        jerk_msg.header.stamp = stamp
-        jerk_msg.header.frame_id = frame
-        jerk_msg.twist.linear.x = float(jerk[0])
-        jerk_msg.twist.linear.y = float(jerk[1])
-        jerk_msg.twist.linear.z = float(jerk[2])
-        self._cart_jerk_pub.publish(jerk_msg)
-        jerk_norm = np.linalg.norm(jerk)
-        self._cart_jerk_norm_mps3_pub.publish(_f64(jerk_norm))
-        self._cart_jerk_norm_mmps3_pub.publish(_f64(jerk_norm * 1000.0))
+        if self._cart_jerk_pub is not None:
+            jerk_msg = TwistStamped()
+            jerk_msg.header.stamp = stamp
+            jerk_msg.header.frame_id = frame
+            jerk_msg.twist.linear.x = float(jerk[0])
+            jerk_msg.twist.linear.y = float(jerk[1])
+            jerk_msg.twist.linear.z = float(jerk[2])
+            self._cart_jerk_pub.publish(jerk_msg)
+        if self._cart_jerk_norm_mps3_pub is not None or self._cart_jerk_norm_mmps3_pub is not None:
+            jerk_norm = np.linalg.norm(jerk)
+            self._publish_float_if_subscribed(self._cart_jerk_norm_mps3_pub, jerk_norm)
+            self._publish_float_if_subscribed(self._cart_jerk_norm_mmps3_pub, jerk_norm * 1000.0)

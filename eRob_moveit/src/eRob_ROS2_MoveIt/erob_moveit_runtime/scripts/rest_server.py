@@ -106,26 +106,6 @@ def start_rest_server(
     def health():
         return jsonify({"status": "ok", "ros2_active": robot is not None})
 
-    @app.route("/drag/config", methods=["GET"])
-    def get_drag_config():
-        return jsonify(node.get_drag_mode_config())
-
-    @app.route("/drag/config", methods=["POST"])
-    def update_drag_config():
-        try:
-            payload = request.json or {}
-            updated = node.update_drag_mode_config(payload)
-            return jsonify({"success": True, **updated})
-        except ValueError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
-        except Exception as exc:
-            traceback_text = traceback.format_exc()
-            node.get_logger().error(
-                "REST /drag/config exception: "
-                f"{exc}\n{traceback_text}"
-            )
-            return jsonify({"success": False, "error": str(exc)}), 500
-
     @app.route("/move/linear", methods=["POST"])
     def move_linear():
         try:
@@ -557,39 +537,36 @@ def start_rest_server(
             robot.node.get_logger().error(f"Digital output endpoint error: {exc}")
             return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
 
-    @app.route("/drag/enable", methods=["POST"])
-    def enable_drag():
-        result = node.enable_drag_mode()
-        return jsonify({
-            "success": False,
-            "error": "Drag mode is disabled because it is not fully implemented and tested",
-            **result,
-        }), 423
-
-    @app.route("/drag/disable", methods=["POST"])
-    def disable_drag():
-        result = node.disable_drag_mode()
-        return jsonify({"success": True, **result})
-
-    @app.route("/drag/status", methods=["GET"])
-    def drag_status():
-        return jsonify(node.get_drag_mode_status())
-
     @app.route("/drive/enable", methods=["POST"])
     def enable_drive_operation():
-        result = node.set_drive_operation_enabled(True)
-        status = 200 if result.get("success", False) else 500
-        return jsonify(result), status
+        try:
+            result = _to_jsonable(node.set_drive_operation_enabled(True))
+            status = 200 if result.get("success", False) else 500
+            return jsonify(result), status
+        except Exception as exc:
+            node.get_logger().error(f"Drive enable endpoint error: {exc}")
+            logger.exception("Drive enable endpoint error")
+            return jsonify({"success": False, "error": str(exc)}), 500
 
     @app.route("/drive/disable", methods=["POST"])
     def disable_drive_operation():
-        result = node.set_drive_operation_enabled(False)
-        status = 200 if result.get("success", False) else 500
-        return jsonify(result), status
+        try:
+            result = _to_jsonable(node.set_drive_operation_enabled(False))
+            status = 200 if result.get("success", False) else 500
+            return jsonify(result), status
+        except Exception as exc:
+            node.get_logger().error(f"Drive disable endpoint error: {exc}")
+            logger.exception("Drive disable endpoint error")
+            return jsonify({"success": False, "error": str(exc)}), 500
 
     @app.route("/drive/status", methods=["GET"])
     def drive_operation_status():
-        return jsonify(node.get_drive_operation_status())
+        try:
+            return jsonify(_to_jsonable(node.get_drive_operation_status()))
+        except Exception as exc:
+            node.get_logger().error(f"Drive status endpoint error: {exc}")
+            logger.exception("Drive status endpoint error")
+            return jsonify({"success": False, "error": str(exc)}), 500
 
     @app.route("/motion/interlock/status", methods=["GET"])
     def motion_interlock_status():

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="eRobo3">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import eRobo3 urdf file - launch sets ZEROERR_ROBOT_URDF from runtime.yaml. -->
+    <xacro:arg name="robot_urdf" default="$(optenv ZEROERR_ROBOT_URDF /__runtime_yaml_must_set_robot_urdf__.urdf)"/>
+    <xacro:include filename="$(arg robot_urdf)" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="eRobo3.ros2_control.xacro" />
+
+
+    <xacro:eRobo3_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

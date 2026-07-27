@@ -12,6 +12,5 @@ try:
         SustainedTorqueStrategy,
     )
 except RuntimeError:
-    # EROB_CONFIG_PACKAGE not set — package is being imported as a library
-    # (e.g. from zeroerr_collision_monitor). Submodules are still importable.
+    # EROB_CONFIG_PACKAGE not set; submodules are still importable.
     pass

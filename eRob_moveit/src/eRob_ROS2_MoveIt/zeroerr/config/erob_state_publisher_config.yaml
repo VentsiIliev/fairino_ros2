@@ -1,0 +1,20 @@
+# Global defaults for zeroerr_state_publisher.
+# Profile-specific overrides can be placed at:
+# config/<ACTIVE_PROFILE>/erob_state_publisher_config.yaml
+zeroerr_state_publisher:
+  ros__parameters:
+    state_topics:
+      cartesian_position: true
+      cartesian_velocity: true
+      cartesian_acceleration: true
+      cartesian_jerk: false
+      cartesian_position_norm_mm: false
+      cartesian_velocity_norm_mps: false
+      cartesian_velocity_norm_mmps: false
+      cartesian_acceleration_norm_mps2: false
+      cartesian_acceleration_norm_mmps2: false
+      cartesian_jerk_norm_mps3: false
+      cartesian_jerk_norm_mmps3: false
+      joint_velocity: true
+      joint_acceleration: true
+      joint_jerk: false

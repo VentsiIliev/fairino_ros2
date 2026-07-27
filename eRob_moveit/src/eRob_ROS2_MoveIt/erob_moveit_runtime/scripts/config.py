@@ -24,6 +24,7 @@ DEFAULTS = {
     'TOPIC_PLANNING_SCENE': '/planning_scene',
     'TOPIC_SAFETY_WALLS': '/safety_walls',
     'TOPIC_ACTIVE_TOOL_MARKERS': '/active_tool_markers',
+    'ROBOT_STATUS_PUBLISH_ENABLED': True,
     'ACTIVE_TOOL_COLLISION_ENABLED': False,
     'ACTIVE_TOOL_COLLISION_ID': 'active_tool_collision',
     'ACTIVE_TOOL_COLLISION_LINK': 'ee_link',
@@ -187,7 +188,6 @@ DEFAULTS = {
     'MONITOR_UPDATE_RATE_HZ': 50.0,
     'RUNTIME_JOINT_STATE_INPUT_RATE_HZ': 0.0,
     'RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ': 0.0,
-    'RUNTIME_COLLISION_STATE_INPUT_RATE_HZ': 0.0,
     'MONITOR_VELOCITY_WINDOW': 5,
     'MONITOR_ACCELERATION_WINDOW': 5,
     'MARKER_PUBLISH_INTERVAL_S': 2.0,
@@ -207,31 +207,8 @@ DEFAULTS = {
     'MOTION_ERROR_HARDWARE_NOT_READY': -12,
     'MOTION_ERROR_DRIVE_NOT_ENABLED': -13,
     'MOTION_ERROR_CONTROLLER_EXECUTION_FAILED': -14,
-    'DRAG_MODE_AVAILABLE': True,
-    'DRAG_MODE_ENABLED_DEFAULT': False,
-    'DRAG_MODE_UPDATE_RATE_HZ': 50.0,
-    'DRAG_MODE_MODE_COMMAND_TOPIC': '/drag_mode_controller/commands',
-    'DRAG_MODE_EFFORT_COMMAND_TOPIC': '/drag_effort_controller/commands',
-    'DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC': '/drag_torque_offset_controller/commands',
-    'DRAG_MODE_ENABLE_SET_COMMAND_TOPIC': '/drag_enable_set_controller/commands',
-    'DRAG_MODE_DISABLE_SET_COMMAND_TOPIC': '/drag_disable_set_controller/commands',
     'DRIVE_ENABLE_SET_COMMAND_TOPIC': '/drive_enable_set_controller/commands',
     'DRIVE_DISABLE_SET_COMMAND_TOPIC': '/drive_disable_set_controller/commands',
-    'DRAG_MODE_CSP_VALUE': 8.0,
-    'DRAG_MODE_CST_VALUE': 10.0,
-    'DRAG_MODE_COMPENSATION_SCALE': 1.0,
-    'DRAG_MODE_JOINT_COMPENSATION_SCALE': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    'DRAG_MODE_DAMPING_NM_PER_RAD_S': [1.5, 1.5, 1.2, 0.8, 0.5, 0.3],
-    'DRAG_MODE_MAX_EFFORT_NM': [10.0, 10.0, 8.0, 5.0, 3.0, 2.0],
-    'DRAG_MODE_MAX_TORQUE_OFFSET_NM': [60.0, 60.0, 45.0, 25.0, 12.0, 8.0],
-    'DRAG_MODE_MODE_SETTLE_TIMEOUT_S': 2.0,
-    'DRAG_MODE_DISABLE_PULSE_S': 0.10,
-    'DRAG_MODE_ENABLE_PULSE_S': 0.10,
-    'DRAG_MODE_CONFIG_PATH': '',
-    'DRAG_MODE_JOINT_MODELS': ['eRob80H100T', 'eRob80H100T', 'eRob80H100T', 'eRob70H100T', 'eRob70H100T', 'eRob70H100T'],
-    'DRAG_MODE_MODEL_NAMES': ['eRob70H100T', 'eRob80H100T'],
-    'DRAG_MODE_MODEL_RATED_CURRENT_MA': [3500.0, 5500.0],
-    'DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A': [4.76, 8.475],
     'DEFAULT_WORKOBJECT': [0, 0, 0, 0, 0, 0],
     'REST_HOST': '0.0.0.0',
     'REST_PORT': 5000,
@@ -290,6 +267,35 @@ def _profile_runtime_yaml_path(profile: str) -> Path | None:
         return candidate if candidate.exists() else None
 
 
+def _config_yaml_path(filename: str) -> Path | None:
+    package_name = _config_package()
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidate = Path(get_package_share_directory(package_name)) / 'config' / filename
+        return candidate if candidate.exists() else None
+    except Exception:
+        source_root = Path(__file__).resolve().parents[2]
+        candidate = source_root / package_name / 'config' / filename
+        return candidate if candidate.exists() else None
+
+
+def _profile_config_yaml_path(profile: str, filename: str) -> Path | None:
+    package_name = _config_package()
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidate = Path(get_package_share_directory(package_name)) / 'config' / profile / filename
+        return candidate if candidate.exists() else None
+    except Exception:
+        source_root = Path(__file__).resolve().parents[2]
+        candidate = source_root / package_name / 'config' / profile / filename
+        return candidate if candidate.exists() else None
+
+
+def _load_yaml_file(path: Path) -> dict[str, Any]:
+    with path.open('r', encoding='utf-8') as handle:
+        return yaml.safe_load(handle) or {}
+
+
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = dict(base)
     for key, value in override.items():
@@ -321,8 +327,6 @@ def _resolve_config_path(config_yaml: Path, value: Any) -> str:
 PATH_KEYS = frozenset({
     'URDF_PATH',
     'SRDF_PATH',
-    'DRAG_MODE_CONFIG_PATH',
-    'TORQUE_LOG_PATH',
 })
 
 
@@ -331,9 +335,13 @@ def _load_runtime_config() -> dict[str, Any]:
     if not path or not path.exists():
         return dict(DEFAULTS)
     active_path = path
-    with path.open('r', encoding='utf-8') as handle:
-        loaded = yaml.safe_load(handle) or {}
+    loaded = _load_yaml_file(path)
     config = _merge(DEFAULTS, loaded)
+
+    for filename in ('contour_ik_config.yaml', 'ptp_config.yaml', 'jacobian_config.yaml'):
+        config_path = _config_yaml_path(filename)
+        if config_path and config_path.exists():
+            config = _merge(config, _load_yaml_file(config_path))
 
     profile = str(config.get('ACTIVE_PROFILE', '')).strip()
     if profile:
@@ -343,10 +351,12 @@ def _load_runtime_config() -> dict[str, Any]:
                 f"Runtime config {path} requested ACTIVE_PROFILE '{profile}', "
                 "but no profile runtime.yaml was found"
             )
-        with profile_path.open('r', encoding='utf-8') as handle:
-            profile_loaded = yaml.safe_load(handle) or {}
-        config = _merge(config, profile_loaded)
+        config = _merge(config, _load_yaml_file(profile_path))
         active_path = profile_path
+        for filename in ('contour_ik_config.yaml', 'ptp_config.yaml', 'jacobian_config.yaml'):
+            profile_config_path = _profile_config_yaml_path(profile, filename)
+            if profile_config_path and profile_config_path.exists():
+                config = _merge(config, _load_yaml_file(profile_config_path))
 
     for key in PATH_KEYS:
         if key in config and config[key]:

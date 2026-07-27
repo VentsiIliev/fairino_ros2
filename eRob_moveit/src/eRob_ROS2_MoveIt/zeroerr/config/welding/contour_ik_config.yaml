@@ -1,0 +1,2 @@
+# Welding profile overrides for dense contour IK.
+# Add only keys that should differ from ../contour_ik_config.yaml.

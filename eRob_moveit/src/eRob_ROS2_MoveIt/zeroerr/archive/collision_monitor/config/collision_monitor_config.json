@@ -1,0 +1,46 @@
+{
+  "confirm_cycles": 1,
+  "dynamics_estimator_mode": "momentum_observer",
+  "use_inverse_dynamics": false,
+  "effort_thresholds": [
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN
+  ],
+  "external_torque_thresholds": [
+    2.237277507758439,
+    6.791947713610442,
+    29.690414634222773,
+    23.758778357753936,
+    30.93009375666994,
+    26.553504603679762
+  ],
+  "following_error_thresholds": [
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN
+  ],
+  "friction_coulomb_nm": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "friction_velocity_deadband_rad_s": 1.0,
+  "friction_viscous_nm_per_rad_s": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
+}

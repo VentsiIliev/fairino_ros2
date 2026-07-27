@@ -52,8 +52,8 @@ CARTESIAN_SOURCE_LINK: ee_link
 COLLISION_TIP_LINK: tool0
 
 # Robot URDF used by runtime helpers and dynamics/collision tools.
-#URDF_PATH: erob_arm_family_motor_masses.urdf
-URDF_PATH: erob_arm_small.urdf
+#URDF_PATH: urdfs/erob_arm_family_motor_masses.urdf
+URDF_PATH: urdfs/erob_arm_small.urdf
 
 # FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
@@ -76,81 +76,16 @@ PATH_WAYPOINT_SIMPLIFY_ORIENTATION_TOL_DEG: 0.35
 PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 12.0
 PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 4.0
 
-# Shared dense-contour IK defaults. The solver stays disabled here; process
-# profiles opt in after validating their motion and fallback behavior.
-CONTOUR_DIRECT_IK_ENABLED: false
-CONTOUR_BATCH_IK_ENABLED: true
-CONTOUR_BATCH_IK_SERVICE_TIMEOUT_S: 10.0
-CONTOUR_DIRECT_IK_MIN_POINTS: 50
-CONTOUR_DIRECT_IK_MIN_TOTAL_LENGTH_MM: 20.0
-CONTOUR_IK_TIMEOUT_S: 0.0015
-CONTOUR_IK_ATTEMPTS: 1
-CONTOUR_IK_RETRY_TIMEOUT_S: 0.02
-CONTOUR_IK_RETRY_ATTEMPTS: 3
-CONTOUR_IK_FK_POSITION_TOL_MM: 0.15
-CONTOUR_IK_FK_ORIENTATION_TOL_DEG: 0.25
-CONTOUR_IK_MAX_JOINT_STEP_RAD: 0.08
-CONTOUR_IK_MAX_JOINT_SPAN_RAD: 3.141592653589793
-CONTOUR_IK_MAX_ENDPOINT_DELTA_RAD: 3.141592653589793
-CONTOUR_IK_FULL_TURN_JOINT_NAMES: [Joint_6]
-CONTOUR_IK_FULL_TURN_MAX_JOINT_SPAN_RAD: 6.6
-CONTOUR_IK_FULL_TURN_MAX_ENDPOINT_DELTA_RAD: 6.6
-CONTOUR_IK_SMOOTHING_ENABLED: true
-CONTOUR_IK_SMOOTHING_ITERATIONS: 2
-CONTOUR_IK_SMOOTHING_ALPHA: 0.35
-CONTOUR_IK_SMOOTHING_FK_POSITION_TOL_MM: 0.05
-CONTOUR_IK_SMOOTHING_FK_ORIENTATION_TOL_DEG: 0.10
-CONTOUR_VALIDATE_REDUCED_MOVEIT_ENABLED: false
-CONTOUR_VALIDATE_REDUCED_POSITION_TOL_MM: 0.35
-CONTOUR_VALIDATE_REDUCED_ORIENTATION_TOL_DEG: 0.35
-CONTOUR_VALIDATE_REDUCED_MAX_TRANSLATION_MM: 10.0
-CONTOUR_STATE_VALIDITY_ENABLED: true
-CONTOUR_STATE_VALIDITY_STRIDE: 10
+# Dense contour IK settings live in contour_ik_config.yaml.
+# Profiles can override them in config/<ACTIVE_PROFILE>/contour_ik_config.yaml.
 
 # Enables heavy Cartesian partial-failure diagnostics. When true, failed linear
 # moves probe failed poses with IK/collision/branch variants. Keep false during
 # normal operation because it adds extra MoveIt service calls and noisy logs.
 CARTESIAN_FAILURE_DIAGNOSTICS_ENABLED: false
 
-# PTP: current-vs-target TCP orientation angular tolerance. If the orientations
-# differ by at most this many degrees, PTP treats the move as same-orientation
-# and applies stricter wrist/path discipline while still reaching the requested
-# final pose.
-PTP_LOCK_ORIENTATION_TOL_DEG: 2.0
-
-# PTP: max allowed TCP orientation drift along a same-orientation move.
-# Lower values keep the tool attitude tighter but may reject more IK paths.
-PTP_LOCKED_PATH_MAX_DRIFT_DEG: 2.0
-
-# PTP: max allowed TCP orientation deviation from the expected start-to-target
-# orientation progression when the target intentionally requests reorientation.
-PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 5.0
-
-# PTP: wrist motion below this threshold is treated as normal joint motion.
-# Wrist motion above it receives extra cost during equivalent-branch selection.
-PTP_WRIST_PENALTY_START_DEG: 45.0
-
-# PTP: hard max wrist-joint motion for moves that intentionally reorient TCP.
-# If any wrist joint exceeds this, the PTP target is rejected.
-PTP_MAX_WRIST_DELTA_DEG: 160.0
-
-# PTP: stricter hard max wrist-joint motion for same-orientation moves.
-# This prevents solving an equivalent final attitude by flipping the wrist.
-PTP_LOCKED_MAX_WRIST_DELTA_DEG: 120.0
-
-# PTP: if the selected target joint state is within this max joint delta from
-# the live joint state, treat the command as already reached and skip execution.
-PTP_NOOP_JOINT_DELTA_RAD: 0.001
-
-# PTP: max joint interpolation step used for pre-execution validity/FK checks.
-# Smaller values sample more densely; larger values plan faster but check less.
-PTP_JOINT_INTERPOLATION_STEP_RAD: 0.08
-
-# PTP: minimum number of joint interpolation segments checked before execution.
-PTP_MIN_INTERPOLATION_SEGMENTS: 8
-
-# PTP: maximum number of joint interpolation segments checked before execution.
-PTP_MAX_INTERPOLATION_SEGMENTS: 80
+# PTP target selection and pre-execution check settings live in ptp_config.yaml.
+# Profiles can override them in config/<ACTIVE_PROFILE>/ptp_config.yaml.
 
 # Defaults for optional explicit/post-success Joint_6 unwind moves.
 EXECUTOR_POST_UNWIND_SPEED_RAD_S: 1.8
@@ -177,101 +112,19 @@ TOOL_ID_MAP:
 # REST server log file path.
 REST_LOG: /tmp/zeroerr_rest_server.log
 
+# Publish /robot_status from the runtime controller.
+ROBOT_STATUS_PUBLISH_ENABLED: false
+
 # Publish interval for RViz/planning-scene marker updates.
 MARKER_PUBLISH_INTERVAL_S: 30.0
 
 # Enables runtime safety wall collision objects around the extracted workspace.
 SAFETY_WALLS_ENABLED: false
 
-# Enables optional drag-mode runtime publishers/subscribers, timers, and models.
-DRAG_MODE_AVAILABLE: false
-
 RUNTIME_HEADLESS: 1
 
-
-# Starts the robot in drag mode when supported by this backend.
-DRAG_MODE_ENABLED_DEFAULT: false
-
-# Drag-mode command/update loop frequency.
-DRAG_MODE_UPDATE_RATE_HZ: 50.0
-
-# Controller topic for drag-mode mode commands.
-DRAG_MODE_MODE_COMMAND_TOPIC: /drag_mode_controller/commands
-
-# Controller topic for drag-mode effort commands.
-DRAG_MODE_EFFORT_COMMAND_TOPIC: /drag_effort_controller/commands
-
-# Controller topic for drag-mode torque-offset commands.
-DRAG_MODE_TORQUE_OFFSET_COMMAND_TOPIC: /drag_torque_offset_controller/commands
-
-# Controller topic used to enable drag mode.
-DRAG_MODE_ENABLE_SET_COMMAND_TOPIC: /drag_enable_set_controller/commands
-
-# Controller topic used to disable drag mode.
-DRAG_MODE_DISABLE_SET_COMMAND_TOPIC: /drag_disable_set_controller/commands
-
-# Drive mode value used for cyclic synchronous position.
-DRAG_MODE_CSP_VALUE: 8.0
-
-# Drive mode value used for cyclic synchronous torque.
-DRAG_MODE_CST_VALUE: 10.0
-
-# Global multiplier for drag-mode gravity/friction compensation.
-DRAG_MODE_COMPENSATION_SCALE: 1.0
-
-# Per-joint multiplier for drag-mode compensation.
-DRAG_MODE_JOINT_COMPENSATION_SCALE: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-
-# Per-joint viscous damping used by drag mode.
-DRAG_MODE_DAMPING_NM_PER_RAD_S: [1.5, 1.5, 1.2, 0.8, 0.5, 0.3]
-
-# Per-joint effort command clamp for drag mode.
-DRAG_MODE_MAX_EFFORT_NM: [10.0, 10.0, 8.0, 5.0, 3.0, 2.0]
-
-# Per-joint torque-offset command clamp for drag mode.
-DRAG_MODE_MAX_TORQUE_OFFSET_NM: [60.0, 60.0, 45.0, 25.0, 12.0, 8.0]
-
-# Timeout allowed for drives to settle after drag-mode switching.
-DRAG_MODE_MODE_SETTLE_TIMEOUT_S: 2.0
-
-# Pulse duration for the drag-mode disable command.
-DRAG_MODE_DISABLE_PULSE_S: 0.10
-
-# Pulse duration for the drag-mode enable command.
-DRAG_MODE_ENABLE_PULSE_S: 0.10
-
-# JSON file storing calibrated drag-mode parameters.
-DRAG_MODE_CONFIG_PATH: package://zeroerr/config/drag_mode_config.json
-
-# Motor model assigned to each joint for drag-mode torque conversion.
-DRAG_MODE_JOINT_MODELS: [eRob80H100T, eRob80H100T, eRob80H100T, eRob70H100T, eRob70H100T, eRob70H100T]
-
-# Motor model names used by the rated-current/torque-constant tables.
-DRAG_MODE_MODEL_NAMES: [eRob70H100T, eRob80H100T]
-
-# Rated motor current for each listed motor model, in mA.
-DRAG_MODE_MODEL_RATED_CURRENT_MA: [3500.0, 5500.0]
-
-# Output torque constant for each listed motor model, in Nm/A.
-DRAG_MODE_MODEL_OUTPUT_TORQUE_CONSTANT_NM_PER_A: [4.76, 8.475]
-
-# Minimum duration assigned to Jacobian fallback trajectories.
-JACOBIAN_MIN_DURATION_S: 0.25
-
-# Minimum duration assigned to very short Jacobian fallback moves.
-JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
-
-# Per-joint torque bias (Nm) subtracted from measured torque before the momentum
-# observer integrates it. Use the drive_output_torque value seen at rest for
-# each joint to cancel gravity-model mismatch between the URDF and firmware.
-# Example: J3 reads about 3.68 Nm at the home pose, so set index 2 to 3.68.
-STATIC_TORQUE_BIAS_NM: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-# Enables CSV torque logging.
-TORQUE_LOG_ENABLED: False
-
-# CSV output path for torque logging.
-TORQUE_LOG_PATH: package://zeroerr/data/torque_sensor_log.csv
+# Jacobian Cartesian fallback settings live in jacobian_config.yaml.
+# Profiles can override them in config/<ACTIVE_PROFILE>/jacobian_config.yaml.
 
 # REDUCE CPU LOAD
 
@@ -279,8 +132,6 @@ TORQUE_LOG_PATH: package://zeroerr/data/torque_sensor_log.csv
 ZEROERR_ERROR_MONITOR_ENABLED: false
 
 MONITOR_UPDATE_RATE_HZ: 10.0
-COLLISION_MONITOR_PERIOD_SEC: 0.20
-COLLISION_MONITOR_INPUT_SAMPLE_PERIOD_SEC: 0.10
 
 STATE_PUBLISH_RATE_HZ: 10.0
 JOINT_DERIVATIVE_PUBLISH_RATE_HZ: 10.0
@@ -288,4 +139,3 @@ JOINT_STATE_INPUT_RATE_HZ: 10.0
 
 RUNTIME_JOINT_STATE_INPUT_RATE_HZ: 10.0
 RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ: 10.0
-RUNTIME_COLLISION_STATE_INPUT_RATE_HZ: 10.0

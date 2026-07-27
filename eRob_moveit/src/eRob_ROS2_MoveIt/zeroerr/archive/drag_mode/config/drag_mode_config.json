@@ -1,0 +1,43 @@
+{
+  "compensation_scale": 1.0,
+  "damping_nm_per_rad_s": [
+    1.5,
+    1.0,
+    1.0,
+    0.8,
+    0.5,
+    0.3
+  ],
+  "disable_pulse_s": 0.1,
+  "drive_command_objects": {
+    "target_torque": "0x6071",
+    "torque_offset": "0x60B2"
+  },
+  "drive_command_unit": "per_thousand_of_rated_current",
+  "enable_pulse_s": 0.1,
+  "joint_compensation_scale": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "max_effort_nm": [
+    10.0,
+    10.0,
+    8.0,
+    5.0,
+    3.0,
+    2.0
+  ],
+  "max_torque_offset_nm": [
+    60.0,
+    60.0,
+    45.0,
+    25.0,
+    12.0,
+    8.0
+  ],
+  "settle_timeout_s": 1.0
+}

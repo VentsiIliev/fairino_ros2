@@ -1,0 +1,30 @@
+# Global defaults for Jacobian Cartesian fallback moves.
+# Profile-specific overrides can be placed at:
+# config/<ACTIVE_PROFILE>/jacobian_config.yaml
+
+# Translation threshold for Jacobian fallback use, in mm.
+JACOBIAN_FALLBACK_MM: 0.1
+
+# Minimum accepted path fraction for Jacobian fallback.
+JACOBIAN_FALLBACK_MIN_FRACTION: 1
+
+# Minimum Cartesian delta before Jacobian fallback is considered meaningful, in mm.
+JACOBIAN_FALLBACK_MIN_DELTA_MM: 0.1
+
+# Max Cartesian delta for short-move Jacobian fallback, in mm.
+SHORT_CARTESIAN_JACOBIAN_FALLBACK_MAX_DELTA_MM: 2.0
+
+# Max joint step per Jacobian fallback sample, in radians.
+JACOBIAN_MAX_JOINT_STEP: 0.05
+
+# Minimum duration assigned to Jacobian fallback trajectories.
+JACOBIAN_MIN_DURATION_S: 0.25
+
+# Minimum duration assigned to very short Jacobian fallback moves.
+JACOBIAN_SHORT_MOVE_MIN_DURATION_S: 0.50
+
+# Damping term for Jacobian pseudo-inverse calculations.
+JACOBIAN_DAMPING: 1.0e-05
+
+# Numerical differentiation epsilon for Jacobian estimation.
+JACOBIAN_NUM_DIFF_EPS: 1.0e-07

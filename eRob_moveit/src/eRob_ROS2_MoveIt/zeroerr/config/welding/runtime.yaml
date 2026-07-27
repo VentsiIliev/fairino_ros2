@@ -1,4 +1,4 @@
-URDF_PATH: erob_arm_family_motor_masses.urdf
+URDF_PATH: urdfs/erob_arm_family_motor_masses.urdf
 SRDF_PATH: eRobo3.srdf
 COLLISION_TIP_LINK: disk_link
 DEFAULT_WORKOBJECT:

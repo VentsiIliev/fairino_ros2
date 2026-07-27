@@ -1,4 +1,4 @@
-URDF_PATH: erob_arm_small.urdf
+URDF_PATH: urdfs/erob_arm_small.urdf
 SRDF_PATH: eRobo3.srdf
 CARTESIAN_SOURCE_LINK: ee_link
 COLLISION_TIP_LINK: tool0
@@ -13,8 +13,6 @@ DEFAULT_WORKOBJECT:
 
 # Painting: keep MoveIt collision checks enabled for planned paint motion.
 ENABLE_COLLISION_CHECKING: true
-CONTOUR_STATE_VALIDITY_ENABLED: true
-CONTOUR_STATE_VALIDITY_STRIDE: 1
 
 # Dynamic MoveIt collision body for the selected paint tool. The platform
 # switches to TOOL_1 at startup; this attaches a cylinder at that active tool
@@ -41,12 +39,6 @@ ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
 # Dense paint contours use direct IK plus TOTG timing. Ruckig can introduce
 # implausible local timing gaps on these long wrapped Joint_6 paths.
 PATH_TRAJECTORY_OPTIMIZER: TOTG
-
-# Paint contour execution: enable the dense direct-IK path only for this
-# profile. The detailed IK tolerances live in erob_moveit_runtime/scripts/config.py.
-CONTOUR_DIRECT_IK_ENABLED: true
-CONTOUR_BATCH_IK_SERVICE_TIMEOUT_S: 30.0
-CONTOUR_IK_RETRY_TIMEOUT_S: 0.05
 
 # Cartesian fallback tuning for dense paint paths. Larger EEF steps and waypoint
 # simplification reduce MoveIt fallback planning time; direct IK remains the

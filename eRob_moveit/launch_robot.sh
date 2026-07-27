@@ -67,7 +67,6 @@ cleanup_stale_zeroerr_processes() {
     "ipp_helper"
     "ruckig_helper"
     "contour_ik_helper"
-    "zeroerr_collision_monitor.py"
     "ethercat_sdo_srv_server"
     "ethercat slaves"
     "ros2cli.daemon.daemonize"
@@ -110,7 +109,6 @@ cleanup_stale_fairino_processes() {
     "ipp_helper"
     "ruckig_helper"
     "contour_ik_helper"
-    "zeroerr_collision_monitor.py"
     "ethercat_sdo_srv_server"
     "ethercat slaves"
     "ros2cli.daemon.daemonize"
@@ -238,8 +236,6 @@ launch_zeroerr() {
   local minimal_launch_file="${ZEROERR_MINIMAL_LAUNCH_FILE:-ethercat_only.launch.py}"
   local ethercat_script="${ZEROERR_ETHERCAT_SCRIPT:-}"
   local slave_monitor_script="${ZEROERR_SLAVE_MONITOR_SCRIPT:-}"
-  local collision_monitor_terminal="${ZEROERR_COLLISION_MONITOR_TERMINAL:-0}"
-  local collision_monitor_gui="${ZEROERR_COLLISION_MONITOR_GUI:-0}"
 
   if [[ "${profile}" == "ethercat_only" ]]; then
     launch_file="${minimal_launch_file}"
@@ -273,9 +269,7 @@ launch_zeroerr() {
   echo "Launching ZeroErr stack (${profile}): ${package} ${launch_file}"
   ZEROERR_ROS_PID=""
   ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
-  ZEROERR_COLLISION_MONITOR_TERMINAL="${collision_monitor_terminal}" \
-    ZEROERR_COLLISION_MONITOR_GUI="${collision_monitor_gui}" \
-    setsid ros2 launch "${package}" "${launch_file}" "${launch_args[@]}" &
+  setsid ros2 launch "${package}" "${launch_file}" "${launch_args[@]}" &
   ZEROERR_ROS_PID=$!
   trap cleanup_zeroerr EXIT INT TERM HUP
 

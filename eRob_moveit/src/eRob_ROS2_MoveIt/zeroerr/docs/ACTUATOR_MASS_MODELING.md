@@ -3,7 +3,7 @@
 This note documents how actuator family masses are folded into the ZeroErr arm URDF without replacing the original link inertials from scratch.
 
 Related files:
-- [erob_arm_family_motor_masses.urdf](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/erob_arm_family_motor_masses.urdf)
+- [erob_arm_family_motor_masses.urdf](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/urdfs/erob_arm_family_motor_masses.urdf)
 - [MOTOR_MASS_ASSUMPTIONS.md](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/docs/MOTOR_MASS_ASSUMPTIONS.md)
 
 ## Current Actuator Configuration

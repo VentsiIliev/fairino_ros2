@@ -9,7 +9,14 @@ import config
 class RobotStatusPublisher:
     """Publishes robot execution status and queue information to ROS2 topic."""
 
-    def __init__(self, node, motion_queue, topic_name=config.TOPIC_ROBOT_STATUS, publish_rate=config.STATUS_PUBLISH_RATE_HZ):
+    def __init__(
+        self,
+        node,
+        motion_queue,
+        topic_name=config.TOPIC_ROBOT_STATUS,
+        publish_rate=config.STATUS_PUBLISH_RATE_HZ,
+        enabled=True,
+    ):
         """
         Initialize status publisher.
 
@@ -21,11 +28,14 @@ class RobotStatusPublisher:
         """
         self.node = node
         self.motion_queue = motion_queue
+        self.publisher = None
+        self.timer = None
 
-        # Create publisher
+        if not bool(enabled):
+            node.get_logger().info(f'[StatusPublisher] Disabled topic {topic_name}')
+            return
+
         self.publisher = node.create_publisher(String, topic_name, 10)
-
-        # Create timer for periodic publishing
         timer_period = 1.0 / publish_rate
         self.timer = node.create_timer(timer_period, self._publish_status)
 

@@ -1,0 +1,5 @@
+# Welding profile overrides for zeroerr_state_publisher.
+# Add only keys that should differ from ../erob_state_publisher_config.yaml.
+zeroerr_state_publisher:
+  ros__parameters:
+    state_topics: {}

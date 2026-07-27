@@ -364,70 +364,21 @@ class TrajectoryExecutor:
         self._node.get_logger().info(context)
         format_drive_state = getattr(self._node, '_format_drive_state_snapshot', None)
         if callable(format_drive_state):
-            self._node.get_logger().info(format_drive_state(f'unwind_{label}'))
+            snapshot = format_drive_state(f'unwind_{label}')
+            if snapshot:
+                self._node.get_logger().info(snapshot)
 
     def _get_unwind_drive_state(self, unwind_check):
-        joint_name = str(unwind_check.get('joint_name') or '')
-        joint_index = unwind_check.get('joint_index')
-        drag_order = list(getattr(self._node, '_drag_joint_order', []) or [])
-        if joint_name in drag_order:
-            joint_index = drag_order.index(joint_name)
-
-        try:
-            joint_index = int(joint_index)
-        except (TypeError, ValueError):
-            return None
-
-        drag_lock = getattr(self._node, '_drag_lock', None)
-        status_values = None
-        if drag_lock is not None:
-            with drag_lock:
-                statusword = getattr(self._node, '_drag_statusword', None)
-                if statusword is not None:
-                    status_values = [int(round(value)) for value in statusword.tolist()]
-        if status_values is None:
-            return None
-        if joint_index < 0 or joint_index >= len(status_values):
-            return None
-
-        statusword = status_values[joint_index]
-        decode_state = getattr(self._node, '_decode_statusword_state', None)
-        decode_bits = getattr(self._node, '_decode_statusword_bits', None)
-        state = decode_state(statusword) if callable(decode_state) else ''
-        bits = decode_bits(statusword) if callable(decode_bits) else ''
-        return {
-            'joint_name': joint_name,
-            'joint_index': joint_index,
-            'statusword': statusword,
-            'state': state,
-            'bits': bits,
-        }
+        get_drive_state = getattr(self._node, 'get_unwind_drive_state', None)
+        if callable(get_drive_state):
+            return get_drive_state(unwind_check)
+        return None
 
     def _get_all_drive_states(self):
-        drag_lock = getattr(self._node, '_drag_lock', None)
-        status_values = None
-        if drag_lock is not None:
-            with drag_lock:
-                statusword = getattr(self._node, '_drag_statusword', None)
-                if statusword is not None:
-                    status_values = [int(round(value)) for value in statusword.tolist()]
-        if not status_values:
-            return []
-
-        joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
-        decode_state = getattr(self._node, '_decode_statusword_state', None)
-        decode_bits = getattr(self._node, '_decode_statusword_bits', None)
-        states = []
-        for index, statusword in enumerate(status_values):
-            joint_name = joint_names[index] if index < len(joint_names) else f'joint_{index + 1}'
-            states.append({
-                'joint_name': joint_name,
-                'joint_index': index,
-                'statusword': statusword,
-                'state': decode_state(statusword) if callable(decode_state) else '',
-                'bits': decode_bits(statusword) if callable(decode_bits) else '',
-            })
-        return states
+        get_all_drive_states = getattr(self._node, 'get_all_drive_states', None)
+        if callable(get_all_drive_states):
+            return get_all_drive_states()
+        return []
 
     def _cancel_active_trajectory(self, reason):
         if self._active_trajectory_cancel_reason == reason:

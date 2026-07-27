@@ -14,7 +14,7 @@ This document tracks ZeroErr EtherCAT communication issues, suspected causes, fi
   - `zeroerr/config/zeroErr.yaml`
   - `zeroerr/config/zeroErr1.yaml`
 - ROS 2 control config:
-  - `zeroerr/config/eRobo3.ros2_control.xacro`
+  - `zeroerr/config/urdfs/eRobo3.ros2_control.xacro`
   - `zeroerr/config/ros2_controllers.yaml`
 - Runtime watchdog:
   - `erob_moveit_runtime/scripts/robot_controller.py`
@@ -244,9 +244,8 @@ So DC synchronization may still need tuning later, but this log points first to 
 - Added REST endpoints:
   - `POST /drive/enable`
   - `POST /drive/disable`
-- Runtime activates only dedicated `drive_enable_set_controller` / `drive_disable_set_controller` for this path. It does not activate effort, torque offset, drag mode, or CST.
-- `POST /drag/enable` is explicitly blocked and returns `DISABLED_FOR_SAFETY`.
-- ZeroErr launch no longer spawns the drag effort, torque offset, mode, or drag set controllers. Only the dedicated drive enable/disable set controllers are spawned inactive.
+- Runtime activates only dedicated `drive_enable_set_controller` / `drive_disable_set_controller` for this path.
+- ZeroErr launch spawns only the dedicated drive enable/disable set controllers for this path.
 
 **Test Procedure**
 
@@ -459,12 +458,7 @@ That means the launch sequence was still allowing runtime and diagnostic nodes t
 Updated `zeroerr/launch/demo.launch.py` so these components start only after `WaitForSlavesOp.sh` exits:
 
 - `zeroerr_error_monitor.py`
-- drag controller spawners:
-  - `drag_effort_controller`
-  - `drag_torque_offset_controller`
-  - `drag_mode_controller`
-  - `drag_enable_set_controller`
-  - `drag_disable_set_controller`
+- drive enable/disable controller spawners
 - `zeroerr_runtime.py`
 - collision monitor and optional collision GUI were already gated on the OP wait
 
@@ -647,32 +641,24 @@ Relaunch without unplugging/replugging the EtherCAT cable and check:
 - Runtime should log `Activating manipulator_controller before trajectory` only when the first real command is sent.
 - All 6 slaves should remain OP without needing a cable replug.
 
-## 2026-06-26 - Safety Constraint: Do Not Enter Torque/Drag Mode at Startup
+## 2026-06-26 - Safety Constraint: Keep Startup in Position Control
 
 **Operator Safety Note**
 
-- Do not put the robot into torque mode during startup.
-- If torque/drag mode is entered unintentionally, the robot can collapse because normal position holding is no longer active.
+- Keep the robot in position control during startup.
+- Avoid activating alternate torque-control paths unintentionally because normal position holding is no longer active.
 
 **Fix Applied**
 
-- `demo.launch.py` now loads all drag-related forward command controllers inactive:
-  - `drag_effort_controller`
-  - `drag_torque_offset_controller`
-  - `drag_mode_controller`
-  - `drag_enable_set_controller`
-  - `drag_disable_set_controller`
-- `ethercat_only.launch.py` now also loads `manipulator_controller` and all drag-related controllers inactive.
-- Runtime drag ownership switching was corrected:
-  - enabling drag mode activates drag controllers and deactivates `manipulator_controller`,
-  - disabling drag mode activates `manipulator_controller` and deactivates any active drag controllers,
+- `demo.launch.py` and `ethercat_only.launch.py` keep the manipulator controller as the position-control path.
+- The experimental torque-control path was archived and removed from active launch/runtime configuration.
   - normal trajectory activation refuses to proceed if any drag/torque controller is still active.
 
 **Expected Startup State**
 
 - `joint_state_broadcaster`: active
 - `manipulator_controller`: inactive until the first real trajectory command
-- drag/torque/mode controllers: inactive
+- alternate torque-control controllers: inactive
 
 This preserves position-control startup safety and prevents accidental torque mode at launch.
 
@@ -692,12 +678,12 @@ This preserves position-control startup safety and prevents accidental torque mo
 
 **Kept**
 
-- Drag/torque/mode controllers still load inactive at startup.
-- Runtime drag-disable path still deactivates drag/torque controllers when returning to normal trajectory mode.
+- Alternate torque-control controllers remain out of the active startup path.
+- Normal trajectory mode stays owned by `manipulator_controller`.
 
 **Current Safety Rule**
 
-The position trajectory controller must be active for startup holding. Do not leave the robot with drives enabled and no active position controller. Also do not activate torque/drag controllers at startup.
+The position trajectory controller must be active for startup holding. Do not leave the robot with drives enabled and no active position controller. Do not activate alternate torque-control paths at startup.
 
 ## 2026-06-26 - Fix Attempt 4: Initialize JTC Hold From State, Not Command
 

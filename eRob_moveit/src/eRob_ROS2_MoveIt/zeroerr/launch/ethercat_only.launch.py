@@ -1,12 +1,9 @@
 from moveit_configs_utils import MoveItConfigsBuilder
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, SetEnvironmentVariable, TimerAction
-from launch.event_handlers import OnProcessExit
-from launch.substitutions import LaunchConfiguration
+from launch.actions import ExecuteProcess, SetEnvironmentVariable
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
-import shutil
 import yaml
 
 
@@ -16,6 +13,34 @@ def _runtime_yaml_path(package_path: str) -> str:
 
 def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
     return os.path.join(package_path, "config", profile, "runtime.yaml")
+
+
+def _contour_ik_yaml_path(package_path: str) -> str:
+    return os.path.join(package_path, "config", "contour_ik_config.yaml")
+
+
+def _profile_contour_ik_yaml_path(package_path: str, profile: str) -> str:
+    return os.path.join(package_path, "config", profile, "contour_ik_config.yaml")
+
+
+def _extra_runtime_yaml_paths(package_path: str) -> list[str]:
+    return [
+        os.path.join(package_path, "config", "contour_ik_config.yaml"),
+        os.path.join(package_path, "config", "ptp_config.yaml"),
+    ]
+
+
+def _profile_extra_runtime_yaml_paths(package_path: str, profile: str) -> list[str]:
+    return [
+        os.path.join(package_path, "config", profile, "contour_ik_config.yaml"),
+        os.path.join(package_path, "config", profile, "ptp_config.yaml"),
+    ]
+
+
+def _merge_config(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    merged.update(override)
+    return merged
 
 
 def _resolve_config_path(config_yaml: str, value: str) -> str:
@@ -40,6 +65,12 @@ def _load_runtime_config(package_path: str) -> dict:
     except Exception:
         raise RuntimeError(f"Failed to read runtime config: {rt_yaml}")
 
+    for config_yaml in _extra_runtime_yaml_paths(package_path):
+        if not os.path.isfile(config_yaml):
+            continue
+        with open(config_yaml) as f:
+            rt = _merge_config(rt, yaml.safe_load(f) or {})
+
     profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
     if profile:
         profile_yaml = _profile_runtime_yaml_path(package_path, profile)
@@ -49,8 +80,12 @@ def _load_runtime_config(package_path: str) -> dict:
             )
         with open(profile_yaml) as f:
             profile_rt = yaml.safe_load(f) or {}
-        merged = dict(rt)
-        merged.update(profile_rt)
+        merged = _merge_config(rt, profile_rt)
+        for profile_config_yaml in _profile_extra_runtime_yaml_paths(package_path, profile):
+            if not os.path.isfile(profile_config_yaml):
+                continue
+            with open(profile_config_yaml) as f:
+                merged = _merge_config(merged, yaml.safe_load(f) or {})
         merged["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
         return merged
     rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
@@ -75,21 +110,7 @@ def _srdf_path_from_runtime(package_path: str) -> str | None:
     return None
 
 
-def _runtime_value(package_path: str, key: str, default):
-    try:
-        rt = _load_runtime_config(package_path)
-        return rt.get(key, default)
-    except Exception:
-        return default
-
-
 def generate_launch_description():
-    terminal_prefix = None
-    if os.environ.get("ZEROERR_COLLISION_MONITOR_TERMINAL", "0") == "1":
-        terminal = shutil.which("x-terminal-emulator") or shutil.which("xterm")
-        if terminal:
-            terminal_prefix = f"{terminal} -e"
-    launch_collision_gui = os.environ.get("ZEROERR_COLLISION_MONITOR_GUI", "0") == "1"
     os.environ["ZEROERR_ROBOT_URDF"] = _urdf_path_from_runtime(
         get_package_share_directory("zeroerr")
     )
@@ -97,7 +118,7 @@ def generate_launch_description():
     moveit_config = (
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
         .robot_description(
-            file_path="config/eRobo3.urdf.xacro",
+            file_path="config/urdfs/eRobo3.urdf.xacro",
             mappings={"robot_urdf": _urdf_path_from_runtime(get_package_share_directory("zeroerr"))},
         )
         .robot_description_semantic(file_path=_srdf_path_from_runtime(get_package_share_directory("zeroerr")))
@@ -105,18 +126,6 @@ def generate_launch_description():
     )
 
     package_path = get_package_share_directory("zeroerr")
-    runtime_torque_log_enabled = str(
-        _runtime_value(package_path, "TORQUE_LOG_ENABLED", False)
-    ).lower()
-    runtime_torque_log_path = str(
-        _runtime_value(
-            package_path,
-            "TORQUE_LOG_PATH",
-            os.path.join(package_path, "data", "torque_sensor_log.csv"),
-        )
-    )
-    torque_log_enabled = LaunchConfiguration("torque_log_enabled")
-    torque_log_path = LaunchConfiguration("torque_log_path")
     ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
 
@@ -213,57 +222,7 @@ def generate_launch_description():
         parameters=helper_parameters,
     )
 
-    collision_monitor_kwargs = {
-        "package": "zeroerr",
-        "executable": "zeroerr_collision_monitor.py",
-        "name": "zeroerr_collision_monitor",
-        "output": "screen",
-        "additional_env": {
-            "EROB_CONFIG_PACKAGE": "zeroerr",
-        },
-        "parameters": [{
-            "slave_count": 6,
-            "poll_period_sec": float(_runtime_value(package_path, "COLLISION_MONITOR_PERIOD_SEC", 0.005)),
-            "confirm_cycles": 3,
-            "print_table": False,
-            "use_inverse_dynamics": False,
-            "dynamics_estimator_mode": "momentum_observer",
-            "friction_coulomb_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "friction_viscous_nm_per_rad_s": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "urdf_path": _urdf_path_from_runtime(package_path),
-            "base_link": "base_link",
-            "tip_link": _runtime_value(package_path, "COLLISION_TIP_LINK", "tool0"),
-            "num_joints": 6,
-            "external_torque_thresholds": [12.0, 12.0, 10.0, 8.0, 6.0, 5.0],
-            "filter_alpha": 0.7,
-            "include_gravity": True,
-            "static_torque_bias_nm": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "torque_log_enabled": torque_log_enabled,
-            "torque_log_path": torque_log_path,
-        }],
-    }
-    if terminal_prefix:
-        collision_monitor_kwargs["prefix"] = terminal_prefix
-        collision_monitor_kwargs["parameters"][0]["print_table"] = True
-
-    zeroerr_collision_monitor = Node(**collision_monitor_kwargs)
-    launch_actions = [zeroerr_collision_monitor]
-    if launch_collision_gui:
-        launch_actions.append(
-            Node(
-                package="zeroerr",
-                executable="zeroerr_collision_monitor_gui.py",
-                name="zeroerr_collision_monitor_gui",
-                output="screen",
-            )
-        )
-
     return LaunchDescription([
-        DeclareLaunchArgument("torque_log_enabled", default_value=runtime_torque_log_enabled),
-        DeclareLaunchArgument(
-            "torque_log_path",
-            default_value=runtime_torque_log_path,
-        ),
         SetEnvironmentVariable("EROB_CONFIG_PACKAGE", "zeroerr"),
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
         SetEnvironmentVariable("MESA_GL_VERSION_OVERRIDE", "3.3"),
@@ -281,10 +240,4 @@ def generate_launch_description():
         ruckig_helper_node,
         contour_ik_helper_node,
         wait_for_op_process,
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[TimerAction(period=12.0, actions=launch_actions)],
-            )
-        ),
     ])

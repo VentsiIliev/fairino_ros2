@@ -6,16 +6,6 @@ controller_manager:
     use_sim_time: false
     manipulator_controller:
       type: joint_trajectory_controller/JointTrajectoryController
-    drag_effort_controller:
-      type: forward_command_controller/ForwardCommandController
-    drag_torque_offset_controller:
-      type: forward_command_controller/ForwardCommandController
-    drag_mode_controller:
-      type: forward_command_controller/ForwardCommandController
-    drag_enable_set_controller:
-      type: forward_command_controller/ForwardCommandController
-    drag_disable_set_controller:
-      type: forward_command_controller/ForwardCommandController
     drive_enable_set_controller:
       type: forward_command_controller/ForwardCommandController
     drive_disable_set_controller:
@@ -62,62 +52,6 @@ manipulator_controller:
       Joint_4: {trajectory: 0.0, goal: 0.1}
       Joint_5: {trajectory: 0.0, goal: 0.1}
       Joint_6: {trajectory: 0.0, goal: 0.1}
-
-drag_effort_controller:
-  ros__parameters:
-    joints:
-      - Joint_1
-      - Joint_2
-      - Joint_3
-      - Joint_4
-      - Joint_5
-      - Joint_6
-    interface_name: effort
-
-drag_torque_offset_controller:
-  ros__parameters:
-    joints:
-      - Joint_1
-      - Joint_2
-      - Joint_3
-      - Joint_4
-      - Joint_5
-      - Joint_6
-    interface_name: torque_offset
-
-drag_mode_controller:
-  ros__parameters:
-    joints:
-      - Joint_1
-      - Joint_2
-      - Joint_3
-      - Joint_4
-      - Joint_5
-      - Joint_6
-    interface_name: mode_of_operation
-
-drag_enable_set_controller:
-  ros__parameters:
-    joints:
-      - Joint_1
-      - Joint_2
-      - Joint_3
-      - Joint_4
-      - Joint_5
-      - Joint_6
-    interface_name: enable_set
-
-drag_disable_set_controller:
-  ros__parameters:
-    joints:
-      - Joint_1
-      - Joint_2
-      - Joint_3
-      - Joint_4
-      - Joint_5
-      - Joint_6
-    interface_name: disable_set
-
 drive_enable_set_controller:
   ros__parameters:
     joints:
