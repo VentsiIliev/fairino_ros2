@@ -497,6 +497,21 @@ def start_rest_server(
         status = robot.node.status_publisher.get_status_dict()
         return jsonify(status)
 
+    @app.route("/state/snapshot", methods=["GET"])
+    def get_state_snapshot():
+        """Get common UI/runtime state in one request."""
+        return jsonify({
+            "success": True,
+            "position": robot.get_current_position(),
+            "flange_position": robot.get_current_flange_position(),
+            "velocity": robot.get_current_velocity(),
+            "status": robot.node.status_publisher.get_status_dict(),
+            "drive": _to_jsonable(node.get_drive_operation_status()),
+            "motion_interlock": node.get_motion_interlock_status(),
+            "active_tool": getattr(node, "active_tool_name", "TOOL_0"),
+            "safety_walls": robot.get_safety_walls_status(),
+        })
+
 
     @app.route("/jog", methods=["POST"])
     def jog():
