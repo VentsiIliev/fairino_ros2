@@ -513,6 +513,15 @@ def start_rest_server(
             "safety_walls": robot.get_safety_walls_status(),
         })
 
+    @app.route("/state/kinematics", methods=["GET"])
+    def get_state_kinematics():
+        """Get live high-rate kinematic state in one request."""
+        return jsonify({
+            "success": True,
+            "position": robot.get_current_position(),
+            "velocity": robot.get_current_velocity(),
+        })
+
 
     @app.route("/jog", methods=["POST"])
     def jog():
