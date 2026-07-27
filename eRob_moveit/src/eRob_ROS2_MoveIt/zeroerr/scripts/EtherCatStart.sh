@@ -14,6 +14,7 @@ NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}"
 
 RT_PRIORITY=90
 NIC="${ZEROERR_NIC:-enp3s0}"
+ETHERCAT_DEVICE="${ZEROERR_ETHERCAT_DEVICE:-/dev/EtherCAT0}"
 PREP_ONLY="${PREP_ONLY:-0}"
 POSTSTART_ONLY="${POSTSTART_ONLY:-0}"
 STOP_ONLY="${STOP_ONLY:-0}"
@@ -21,16 +22,26 @@ STOP_ONLY="${STOP_ONLY:-0}"
 configure_cpu() {
   echo "Setting CPU governor to performance..."
   for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    echo performance | sudo tee "$cpu" > /dev/null
+    [ -e "$cpu" ] || continue
+    echo performance | sudo tee "$cpu" > /dev/null || true
   done
-  echo "  → Governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
+  if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
+    echo "  → Governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
+  else
+    echo "  → Governor: unavailable on this CPU/kernel"
+  fi
 
   local idle_cores
   idle_cores=$(printf "%s\n%s\n%s\n" "$ISOLATED_CORES" "$IRQ_CORES" "$CONTROL_CORES" | tr ',' '\n' | awk 'NF && !seen[$0]++')
+  if [ -z "$idle_cores" ]; then
+    echo "No RT-related cores configured for idle-state tuning."
+    return 0
+  fi
   echo "Disabling deep idle states on RT-related cores: $(echo "$idle_cores" | paste -sd, -)..."
   for core in $idle_cores; do
     for state in /sys/devices/system/cpu/cpu${core}/cpuidle/state*/disable; do
-      echo 1 | sudo tee "$state" > /dev/null 2>&1
+      [ -e "$state" ] || continue
+      echo 1 | sudo tee "$state" > /dev/null 2>&1 || true
     done
   done
 }
@@ -44,6 +55,31 @@ restart_ethercat_master() {
   echo "Starting EtherCAT..."
   sudo /etc/init.d/ethercat start
   sleep 2
+}
+
+ensure_ethercat_device_access() {
+  echo "Checking EtherCAT device access: $ETHERCAT_DEVICE"
+  for _ in $(seq 1 50); do
+    [ -e "$ETHERCAT_DEVICE" ] && break
+    sleep 0.1
+  done
+
+  if [ ! -e "$ETHERCAT_DEVICE" ]; then
+    echo "  Error: $ETHERCAT_DEVICE does not exist after EtherCAT master start."
+    echo "  Check /etc/ethercat.conf MASTER0_DEVICE and run: sudo /etc/init.d/ethercat restart"
+    return 1
+  fi
+
+  sudo chmod a+rw "$ETHERCAT_DEVICE" 2>/dev/null || true
+
+  if [ ! -r "$ETHERCAT_DEVICE" ] || [ ! -w "$ETHERCAT_DEVICE" ]; then
+    echo "  Error: current user cannot read/write $ETHERCAT_DEVICE."
+    echo "  Current permissions: $(ls -l "$ETHERCAT_DEVICE" 2>/dev/null || true)"
+    echo "  Fix with: sudo chmod a+rw $ETHERCAT_DEVICE"
+    return 1
+  fi
+
+  echo "  EtherCAT device ready: $(ls -l "$ETHERCAT_DEVICE")"
 }
 
 pin_ethercat_master() {
@@ -283,6 +319,7 @@ fi
 if [ "$POSTSTART_ONLY" != "1" ]; then
   configure_cpu
   restart_ethercat_master
+  ensure_ethercat_device_access
   pin_ethercat_master
   pin_irqs
 fi

@@ -261,7 +261,7 @@ launch_zeroerr() {
       ZEROERR_CONTROL_CORES="${ZEROERR_CONTROL_CORES:-}" \
       ZEROERR_PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-}" \
       ZEROERR_NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}" \
-      PREP_ONLY=1 "${ethercat_script}" || true
+      PREP_ONLY=1 "${ethercat_script}"
     else
       echo "ZeroErr EtherCAT script is not executable: ${ethercat_script}" >&2
     fi
