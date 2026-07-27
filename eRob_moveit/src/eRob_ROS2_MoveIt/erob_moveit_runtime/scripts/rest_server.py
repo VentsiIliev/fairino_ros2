@@ -31,6 +31,7 @@ from rest_api_support import (
 LOG_FILE = config.REST_LOG
 logger = logging.getLogger("erob_moveit_rest_server")
 logger.setLevel(logging.INFO)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 if not logger.handlers:
     file_handler = logging.FileHandler(LOG_FILE)
