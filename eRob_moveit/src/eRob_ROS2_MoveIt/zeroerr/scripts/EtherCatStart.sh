@@ -249,6 +249,7 @@ pin_non_rt_away() {
     zeroerr_runtime.py
     zeroerr_state_publisher
     zeroerr_error_monitor.py
+    zeroerr_drive_diagnostics.py
     ethercat_sdo_srv_server
     ipp_helper
     ruckig_helper

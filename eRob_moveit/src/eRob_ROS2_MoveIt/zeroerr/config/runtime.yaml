@@ -131,6 +131,10 @@ RUNTIME_HEADLESS: 1
 # Debug-only SDO fault-code polling. Enable only while diagnosing drive errors.
 ZEROERR_ERROR_MONITOR_ENABLED: false
 
+# Low-rate SDO diagnostics for values intentionally kept out of fast PDOs.
+ZEROERR_DRIVE_DIAGNOSTICS_ENABLED: true
+ZEROERR_DRIVE_DIAGNOSTICS_POLL_PERIOD_S: 5.0
+
 MONITOR_UPDATE_RATE_HZ: 10.0
 
 STATE_PUBLISH_RATE_HZ: 10.0

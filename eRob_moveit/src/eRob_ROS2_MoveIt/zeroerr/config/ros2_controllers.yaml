@@ -12,6 +12,25 @@ controller_manager:
       type: forward_command_controller/ForwardCommandController
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - Joint_1
+      - Joint_2
+      - Joint_3
+      - Joint_4
+      - Joint_5
+      - Joint_6
+    interfaces:
+      - position
+      - velocity
+      - effort
+      - statusword
+      - error_code
+      - mode_display
+    publish_dynamic_joint_states: true
+
 manipulator_controller:
   ros__parameters:
     joints:

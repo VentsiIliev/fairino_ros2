@@ -144,8 +144,6 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         self._drive_statusword = np.zeros(config.NUM_JOINTS, dtype=float)
         self._drive_error_code = np.zeros(config.NUM_JOINTS, dtype=float)
         self._drive_effort_actual = np.zeros(config.NUM_JOINTS, dtype=float)
-        self._drive_motor_actual_current = np.zeros(config.NUM_JOINTS, dtype=float)
-        self._drive_following_error_actual = np.zeros(config.NUM_JOINTS, dtype=float)
         self._drive_startup_snapshot_logged = False
         self._drive_pre_motion_snapshot_logged = False
         self._drive_enable_set_pub = robot_controller.create_publisher(
@@ -218,6 +216,9 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         disable_msg.data = zeros.tolist()
         self._drive_enable_set_pub.publish(enable_msg)
         self._drive_disable_set_pub.publish(disable_msg)
+        # Give the zero reset one controller cycle window before releasing set interfaces.
+        time.sleep(0.05)
+        deactivate_ok = self._deactivate_drive_set_controllers(robot_controller)
         with self._drive_enable_lock:
             self._drive_operation_enabled_requested = bool(enabled)
         robot_controller.get_logger().info(
@@ -228,6 +229,7 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             "requested_enabled": bool(enabled),
             "state": "ENABLE_REQUESTED" if enabled else "DISABLE_REQUESTED",
             "controller_switch_ok": True,
+            "controller_deactivate_ok": deactivate_ok,
             "mode": "csp",
         }
 
@@ -291,6 +293,12 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             self._drive_operation_enabled_requested = False
 
     def _ensure_drive_set_controllers_active(self, robot_controller) -> bool:
+        return self._switch_drive_set_controllers(robot_controller, activate=True)
+
+    def _deactivate_drive_set_controllers(self, robot_controller) -> bool:
+        return self._switch_drive_set_controllers(robot_controller, activate=False)
+
+    def _switch_drive_set_controllers(self, robot_controller, *, activate: bool) -> bool:
         controller_states = robot_controller._get_controller_states()
         if controller_states is None:
             return False
@@ -305,25 +313,39 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         request.strictness = 2
         request.activate_asap = True
         request.timeout = Duration(sec=2, nanosec=0)
-        request.activate_controllers = [
-            name for name in self._DRIVE_SET_CONTROLLER_NAMES
-            if controller_states.get(name) != 'active'
-        ]
-        request.deactivate_controllers = []
+        if activate:
+            request.activate_controllers = [
+                name for name in self._DRIVE_SET_CONTROLLER_NAMES
+                if controller_states.get(name) != 'active'
+            ]
+            request.deactivate_controllers = []
+            action = 'Activating'
+            failure_action = 'activation'
+        else:
+            request.activate_controllers = []
+            request.deactivate_controllers = [
+                name for name in self._DRIVE_SET_CONTROLLER_NAMES
+                if controller_states.get(name) == 'active'
+            ]
+            action = 'Deactivating'
+            failure_action = 'deactivation'
 
-        if not request.activate_controllers:
+        target_controllers = request.activate_controllers or request.deactivate_controllers
+        if not target_controllers:
             return True
 
         robot_controller.get_logger().info(
-            f"[DriveEnable] Activating set controllers: {request.activate_controllers}"
+            f"[DriveEnable] {action} set controllers: {target_controllers}"
         )
         future = robot_controller.switch_controller_client.call_async(request)
         response = robot_controller._wait_for_service_future(future, timeout_s=3.0)
         if response is None:
-            robot_controller.get_logger().error('[DriveEnable] Timed out activating set controllers')
+            robot_controller.get_logger().error(f'[DriveEnable] Timed out during set controller {failure_action}')
             return False
         if not response.ok:
-            robot_controller.get_logger().error('[DriveEnable] Controller manager rejected set controller activation')
+            robot_controller.get_logger().error(
+                f'[DriveEnable] Controller manager rejected set controller {failure_action}'
+            )
             return False
         return True
 
@@ -337,8 +359,6 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         joint_index = {name: idx for idx, name in enumerate(self._drive_joint_order)}
         statusword = np.zeros(config.NUM_JOINTS, dtype=float)
         error_code = np.zeros(config.NUM_JOINTS, dtype=float)
-        motor_actual_current = np.zeros(config.NUM_JOINTS, dtype=float)
-        following_error_actual = np.zeros(config.NUM_JOINTS, dtype=float)
         mode_display = self._drive_mode_display.copy()
         for joint_name, interface_value in zip(msg.joint_names, msg.interface_values):
             index = joint_index.get(joint_name)
@@ -349,17 +369,11 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
                     statusword[index] = float(value)
                 elif name == 'error_code' and np.isfinite(value):
                     error_code[index] = float(value)
-                elif name == 'motor_actual_current' and np.isfinite(value):
-                    motor_actual_current[index] = float(value)
-                elif name == 'following_error_actual' and np.isfinite(value):
-                    following_error_actual[index] = float(value)
                 elif name == 'mode_display' and np.isfinite(value):
                     mode_display[index] = float(value)
         with self._drive_state_lock:
             self._drive_statusword = statusword
             self._drive_error_code = error_code
-            self._drive_motor_actual_current = motor_actual_current
-            self._drive_following_error_actual = following_error_actual
             self._drive_mode_display = mode_display
 
     def format_drive_state_snapshot(self, robot_controller, label: str):
@@ -368,8 +382,6 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             error_code = [int(round(value)) for value in self._drive_error_code.tolist()]
             mode_display = [int(round(value)) for value in self._drive_mode_display.tolist()]
             effort = [round(value, 3) for value in self._drive_effort_actual.tolist()]
-            motor_current = [round(value, 3) for value in self._drive_motor_actual_current.tolist()]
-            following_error = [round(value, 3) for value in self._drive_following_error_actual.tolist()]
         statusword_bits = [self._decode_statusword_bits(value) for value in statusword]
         statusword_state = [self._decode_statusword_state(value) for value in statusword]
         error_text = [self._decode_drive_error_code(value) for value in error_code]
@@ -381,9 +393,7 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             f'error_code={[f"0x{value:04X}" for value in error_code]} '
             f'error_text={error_text} '
             f'mode_display={mode_display} '
-            f'effort={effort} '
-            f'motor_actual_current={motor_current} '
-            f'following_error_actual={following_error}'
+            f'effort={effort}'
         )
 
     def _maybe_log_drive_state_snapshot(self, robot_controller, label: str):

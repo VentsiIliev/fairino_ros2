@@ -250,6 +250,25 @@ def generate_launch_description():
         }],
     )
 
+    zeroerr_drive_diagnostics = Node(
+        package="zeroerr",
+        executable="zeroerr_drive_diagnostics.py",
+        name="zeroerr_drive_diagnostics",
+        output="screen",
+        emulate_tty=True,
+        prefix=low_priority_non_rt_prefix,
+        parameters=[{
+            "master_id": 0,
+            "slave_count": 6,
+            "poll_period_sec": float(_runtime_value(
+                package_path,
+                "ZEROERR_DRIVE_DIAGNOSTICS_POLL_PERIOD_S",
+                5.0,
+            )),
+            "topic_name": "/zeroerr/drive_diagnostics",
+        }],
+    )
+
     drive_enable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
         output="screen",
@@ -367,6 +386,10 @@ def generate_launch_description():
         TimerAction(period=16.0, actions=[zeroerr_runtime]),
         TimerAction(period=35.0, actions=[ethercat_sdo_server]),
     ]
+    if bool(_runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
+        delayed_zeroerr_actions.append(
+            TimerAction(period=42.0, actions=[zeroerr_drive_diagnostics])
+        )
     if bool(_runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
         delayed_zeroerr_actions.append(
             TimerAction(period=50.0, actions=[zeroerr_error_monitor])
