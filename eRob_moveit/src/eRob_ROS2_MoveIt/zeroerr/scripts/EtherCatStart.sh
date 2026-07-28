@@ -13,11 +13,49 @@ PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-0}"
 NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}"
 
 RT_PRIORITY=90
+AFFINITY_CHECK_PERIOD_S="${ZEROERR_AFFINITY_CHECK_PERIOD_S:-2}"
+NON_RT_DISCOVERY_PERIOD_S="${ZEROERR_NON_RT_DISCOVERY_PERIOD_S:-6}"
 NIC="${ZEROERR_NIC:-enp3s0}"
 ETHERCAT_DEVICE="${ZEROERR_ETHERCAT_DEVICE:-/dev/EtherCAT0}"
 PREP_ONLY="${PREP_ONLY:-0}"
 POSTSTART_ONLY="${POSTSTART_ONLY:-0}"
 STOP_ONLY="${STOP_ONLY:-0}"
+
+declare -A CANONICAL_CPU_LISTS=()
+CANONICAL_CPU_LIST_RESULT=""
+
+canonical_cpu_list() {
+  local target="$1"
+  if [ -z "${CANONICAL_CPU_LISTS[$target]:-}" ]; then
+    CANONICAL_CPU_LISTS["$target"]=$(
+      taskset -c "$target" awk '/Cpus_allowed_list/ {print $2}' /proc/self/status
+    )
+  fi
+  CANONICAL_CPU_LIST_RESULT="${CANONICAL_CPU_LISTS[$target]}"
+}
+
+ensure_affinity() {
+  local target="$1"
+  local task_id="$2"
+  local expected=""
+  local actual=""
+  local key=""
+  local value=""
+
+  [ -r "/proc/$task_id/status" ] || return 0
+  while IFS=$'\t' read -r key value; do
+    if [ "$key" = "Cpus_allowed_list:" ]; then
+      actual="${value//[[:space:]]/}"
+      break
+    fi
+  done < "/proc/$task_id/status"
+
+  canonical_cpu_list "$target"
+  expected="$CANONICAL_CPU_LIST_RESULT"
+  if [ "$actual" != "$expected" ]; then
+    sudo taskset -cp "$target" "$task_id" > /dev/null 2>&1 || true
+  fi
+}
 
 configure_cpu() {
   echo "Setting CPU governor to performance..."
@@ -117,17 +155,6 @@ pin_ethercat_master() {
       affinity=$(taskset -pc "$pid" 2>/dev/null | awk -F': ' '/current affinity list/ {print $2}')
       echo "  EtherCAT PID $pid → requested cores $ETHERCAT_CORES, actual affinity ${affinity:-unknown}, FIFO $RT_PRIORITY"
 
-      (
-        while true; do
-          sleep 0.5
-          [ -d "/proc/$pid" ] || break
-          sudo taskset -cp "$ETHERCAT_CORES" "$pid" > /dev/null 2>&1 || true
-          for tid in $(ls /proc/$pid/task/ 2>/dev/null); do
-            sudo taskset -cp "$ETHERCAT_CORES" "$tid" > /dev/null 2>&1 || true
-          done
-        done
-        echo "  [RT] EtherCAT re-pin loop finished for PID $pid"
-      ) &
     done
   else
     echo "  Warning: EtherCAT process not found."
@@ -136,9 +163,8 @@ pin_ethercat_master() {
 
 start_ethercat_repin_monitor() {
   (
-    local seen=""
     while true; do
-      sleep 0.5
+      sleep "$AFFINITY_CHECK_PERIOD_S"
       local current_pids
       current_pids=$(pgrep -x "EtherCAT-OP" 2>/dev/null || true)
       [ -n "$current_pids" ] || current_pids=$(pgrep -f "EtherCAT" 2>/dev/null || true)
@@ -148,19 +174,13 @@ start_ethercat_repin_monitor() {
       normalized=$(printf "%s\n" "$current_pids" | sort -n | uniq | tr '\n' ' ' | sed 's/[[:space:]]*$//')
       [ -n "$normalized" ] || continue
 
-      if [ "$normalized" != "$seen" ]; then
-        echo "Refreshing EtherCAT affinity for PID set: $normalized"
-        for pid in $normalized; do
-          sudo taskset -cp "$ETHERCAT_CORES" "$pid" > /dev/null 2>&1 || true
-          for tid in $(ls /proc/$pid/task/ 2>/dev/null); do
-            sudo taskset -cp "$ETHERCAT_CORES" "$tid" > /dev/null 2>&1 || true
-          done
-          local affinity
-          affinity=$(taskset -pc "$pid" 2>/dev/null | awk -F': ' '/current affinity list/ {print $2}')
-          echo "  EtherCAT monitor PID $pid → actual affinity ${affinity:-unknown}"
+      for pid in $normalized; do
+        ensure_affinity "$ETHERCAT_CORES" "$pid"
+        for task_path in /proc/"$pid"/task/*; do
+          [ -d "$task_path" ] || continue
+          ensure_affinity "$ETHERCAT_CORES" "${task_path##*/}"
         done
-        seen="$normalized"
-      fi
+      done
     done
   ) &
 }
@@ -250,17 +270,24 @@ pin_ros2_control() {
     # Try kernel-enforced cpuset cgroup — prevents threads from self-reassigning cores
     pin_to_cpuset_cgroup "$ros2_ctrl_pid" || true
 
-    # Background: keep re-pinning in case ROS 2 / DDS spawns threads late or threads escape.
+    # Background: verify affinity for late DDS/controller threads. Reads from
+    # /proc are cheap; taskset is called only if a thread actually escaped.
     (
+      local last_non_rt_scan=0
       while true; do
-        sleep 0.5
+        sleep "$AFFINITY_CHECK_PERIOD_S"
         [ -d "/proc/$ros2_ctrl_pid" ] || break
-        for tid in $(ls /proc/$ros2_ctrl_pid/task/ 2>/dev/null); do
-          sudo taskset -cp $CONTROL_CORES $tid > /dev/null 2>&1
+        for task_path in /proc/"$ros2_ctrl_pid"/task/*; do
+          [ -d "$task_path" ] || continue
+          ensure_affinity "$CONTROL_CORES" "${task_path##*/}"
         done
 
-        # Optionally keep known non-RT processes off the isolated cores as they come and go.
-        pin_non_rt_away 1
+        # Discover late non-RT processes at a lower rate. A single ps snapshot
+        # replaces the previous 13 pgrep commands every 0.5 seconds.
+        if (( SECONDS - last_non_rt_scan >= NON_RT_DISCOVERY_PERIOD_S )); then
+          pin_non_rt_away 1
+          last_non_rt_scan=$SECONDS
+        fi
       done
       echo "  [RT] Thread re-pin loop finished"
     ) &
@@ -303,12 +330,20 @@ pin_non_rt_away() {
   if [ "$quiet" != "1" ]; then
     echo "Pinning non-RT ROS2 processes away from RT cores (→ cores $non_rt_cores)..."
   fi
-  local proc=""
-  for proc in "${procs[@]}"; do
-    for pid in $(pgrep -f "$proc" 2>/dev/null || true); do
-      taskset -cp "$non_rt_cores" "$pid" > /dev/null 2>&1 || true
+  local pid=""
+  local args=""
+  while read -r pid args; do
+    local proc=""
+    for proc in "${procs[@]}"; do
+      if [[ "$args" == *"$proc"* ]]; then
+        for task_path in /proc/"$pid"/task/*; do
+          [ -d "$task_path" ] || continue
+          ensure_affinity "$non_rt_cores" "${task_path##*/}"
+        done
+        break
+      fi
     done
-  done
+  done < <(ps -eo pid=,args=)
 }
 
 if [ "$STOP_ONLY" = "1" ]; then

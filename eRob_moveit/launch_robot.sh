@@ -226,8 +226,19 @@ export ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE}"
 export ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY}"
 
+# Keep NumPy/SciPy numerical backends from creating one worker per CPU in
+# latency-sensitive ROS processes.  The runtime primarily operates on small
+# robot transforms and Jacobians, where a multi-threaded BLAS pool adds more
+# scheduling overhead than useful parallelism.  Preserve explicit caller
+# overrides for machines/workloads that benefit from a different limit.
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+
 echo "Using AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-}"
 echo "Using ROS_DOMAIN_ID=${ROS_DOMAIN_ID} ROS_AUTOMATIC_DISCOVERY_RANGE=${ROS_AUTOMATIC_DISCOVERY_RANGE} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
+echo "Using numerical thread limits: OPENBLAS=${OPENBLAS_NUM_THREADS} OMP=${OMP_NUM_THREADS} MKL=${MKL_NUM_THREADS} NUMEXPR=${NUMEXPR_NUM_THREADS}"
 
 launch_zeroerr() {
   local package="${ZEROERR_PACKAGE:?ZEROERR_PACKAGE is required}"
