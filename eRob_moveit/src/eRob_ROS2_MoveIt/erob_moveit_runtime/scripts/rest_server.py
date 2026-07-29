@@ -515,16 +515,11 @@ def start_rest_server(
 
     @app.route("/state/kinematics", methods=["GET"])
     def get_state_kinematics():
-        """Get live high-rate kinematic state in one request."""
-        data = node.get_latest_data()
-        if data is None:
-            return jsonify({
-                "success": False,
-                "error": "kinematic state unavailable",
-            }), 503
+        """Get current TCP kinematic state in one request."""
+        position = robot.get_current_position()
+        velocity = robot.get_current_velocity()
+        acceleration = robot.get_current_acceleration()
 
-        position = data.get("cartesian")
-        velocity = data.get("cart_velocity")
         if position is None:
             return jsonify({
                 "success": False,
@@ -533,8 +528,13 @@ def start_rest_server(
 
         return jsonify({
             "success": True,
-            "position": _to_jsonable(position),
-            "velocity": _to_jsonable(velocity if velocity is not None else [0.0, 0.0, 0.0]),
+            "position": position,
+            "velocity": velocity if velocity is not None else [0.0, 0.0, 0.0],
+            "acceleration": (
+                acceleration
+                if acceleration is not None
+                else [0.0, 0.0, 0.0]
+            ),
         })
 
 
