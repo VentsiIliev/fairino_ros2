@@ -45,14 +45,82 @@ source "${CONFIG_FILE}"
 ROS_SETUP_FILE="${ROS_SETUP_FILE:-${DEFAULT_ROS_SETUP_FILE}}"
 BASE_UNDERLAY_SETUP_FILE="${BASE_UNDERLAY_SETUP_FILE:-}"
 USE_RVIZ="${USE_RVIZ:-true}"
+ROBOT_LAUNCH_ACTION="${ROBOT_LAUNCH_ACTION:-launch}"
 ROBOT_ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID:-42}"
 ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
 ROBOT_ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY:-1}"
+ZEROERR_KEEP_ETHERCAT_RUNNING="${ZEROERR_KEEP_ETHERCAT_RUNNING:-1}"
 ZEROERR_ROS_PID=""
 ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
+ZEROERR_RUNTIME_PID_FILE="/tmp/zeroerr_runtime.pid"
 FAIRINO_ROS_PID=""
 
+kill_pid_file_process() {
+  local pid_file="$1"
+  local pid=""
+  if [[ ! -f "${pid_file}" ]]; then
+    return
+  fi
+
+  pid="$(cat "${pid_file}" 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      if ! kill -0 "${pid}" 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 "${pid}" 2>/dev/null; then
+      kill -9 "${pid}" 2>/dev/null || true
+    fi
+  fi
+  rm -f "${pid_file}"
+}
+
+kill_matching_processes() {
+  local patterns=("$@")
+  local pattern=""
+  local pid=""
+  local pids=""
+  local alive=""
+
+  for pattern in "${patterns[@]}"; do
+    while read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      pids+="${pid}"$'\n'
+    done < <(pgrep -f "${pattern}" 2>/dev/null || true)
+  done
+
+  pids="$(printf '%s\n' "${pids}" | sed '/^$/d' | sort -n | uniq)"
+  [[ -n "${pids}" ]] || return 0
+
+  echo "Cleaning up stale processes: $(printf '%s\n' "${pids}" | paste -sd, -)"
+  while read -r pid; do
+    kill "${pid}" 2>/dev/null || true
+  done <<< "${pids}"
+
+  for _ in $(seq 1 20); do
+    alive=""
+    while read -r pid; do
+      if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+        alive+="${pid}"$'\n'
+      fi
+    done <<< "${pids}"
+    [[ -z "${alive}" ]] && return 0
+    sleep 0.1
+  done
+
+  while read -r pid; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      kill -9 "${pid}" 2>/dev/null || true
+    fi
+  done <<< "${pids}"
+}
+
 cleanup_stale_zeroerr_processes() {
+  kill_pid_file_process "${ZEROERR_RUNTIME_PID_FILE}"
+
   local patterns=(
     "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
@@ -62,6 +130,7 @@ cleanup_stale_zeroerr_processes() {
     "ros2 launch zeroerr"
     "WaitForSlavesOp.sh"
     "zeroerr_state_publisher.py"
+    "zeroerr_runtime.py"
     "/erob_moveit_runtime/.*/main.py"
     "/lib/erob_moveit_runtime/main.py"
     "ipp_helper"
@@ -71,33 +140,12 @@ cleanup_stale_zeroerr_processes() {
     "ethercat slaves"
     "ros2cli.daemon.daemonize"
   )
-  local pattern=""
-
-  for pattern in "${patterns[@]}"; do
-    pkill -f "${pattern}" 2>/dev/null || true
-  done
-
-  for _ in $(seq 1 10); do
-    local alive=0
-    for pattern in "${patterns[@]}"; do
-      if pgrep -f "${pattern}" >/dev/null 2>&1; then
-        alive=1
-        break
-      fi
-    done
-    if [[ "${alive}" -eq 0 ]]; then
-      return
-    fi
-    sleep 1
-  done
-
-  for pattern in "${patterns[@]}"; do
-    pkill -9 -f "${pattern}" 2>/dev/null || true
-  done
-  sleep 1
+  kill_matching_processes "${patterns[@]}"
 }
 
 cleanup_stale_fairino_processes() {
+  kill_pid_file_process "${ZEROERR_RUNTIME_PID_FILE}"
+
   local patterns=(
     "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
@@ -106,6 +154,7 @@ cleanup_stale_fairino_processes() {
     "/erob_moveit_runtime/.*/main.py"
     "/lib/erob_moveit_runtime/main.py"
     "fairino_state_publisher.py"
+    "zeroerr_runtime.py"
     "ipp_helper"
     "ruckig_helper"
     "contour_ik_helper"
@@ -117,33 +166,12 @@ cleanup_stale_fairino_processes() {
     "ros2 launch zeroerr"
     "WaitForSlavesOp.sh"
   )
-  local pattern=""
-
-  for pattern in "${patterns[@]}"; do
-    pkill -f "${pattern}" 2>/dev/null || true
-  done
-
-  for _ in $(seq 1 10); do
-    local alive=0
-    for pattern in "${patterns[@]}"; do
-      if pgrep -f "${pattern}" >/dev/null 2>&1; then
-        alive=1
-        break
-      fi
-    done
-    if [[ "${alive}" -eq 0 ]]; then
-      return
-    fi
-    sleep 1
-  done
-
-  for pattern in "${patterns[@]}"; do
-    pkill -9 -f "${pattern}" 2>/dev/null || true
-  done
-  sleep 1
+  kill_matching_processes "${patterns[@]}"
 }
 
 cleanup_zeroerr() {
+  kill_pid_file_process "${ZEROERR_RUNTIME_PID_FILE}"
+
   if [[ -f "${ZEROERR_MONITOR_PID_FILE}" ]]; then
     monitor_pid=$(cat "${ZEROERR_MONITOR_PID_FILE}" 2>/dev/null || true)
     if [[ -n "${monitor_pid}" ]] && kill -0 "${monitor_pid}" 2>/dev/null; then
@@ -158,8 +186,10 @@ cleanup_zeroerr() {
     wait "${ZEROERR_ROS_PID}" 2>/dev/null || true
   fi
 
-  if [[ -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
+  if [[ "${ZEROERR_KEEP_ETHERCAT_RUNNING}" != "1" && -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
     STOP_ONLY=1 "${ZEROERR_ETHERCAT_SCRIPT}" 2>/dev/null || true
+  elif [[ -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
+    echo "Leaving EtherCAT master running."
   fi
 
   cleanup_stale_zeroerr_processes
@@ -235,10 +265,29 @@ export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+export ZEROERR_RUNTIME_PID_FILE
 
 echo "Using AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-}"
 echo "Using ROS_DOMAIN_ID=${ROS_DOMAIN_ID} ROS_AUTOMATIC_DISCOVERY_RANGE=${ROS_AUTOMATIC_DISCOVERY_RANGE} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
 echo "Using numerical thread limits: OPENBLAS=${OPENBLAS_NUM_THREADS} OMP=${OMP_NUM_THREADS} MKL=${MKL_NUM_THREADS} NUMEXPR=${NUMEXPR_NUM_THREADS}"
+
+if [[ "${ROBOT_LAUNCH_ACTION}" == "stop" ]]; then
+  case "${ROBOT_TYPE}" in
+    zeroerr)
+      echo "Stopping ZeroErr stack..."
+      cleanup_zeroerr
+      ;;
+    fairino)
+      echo "Stopping Fairino stack..."
+      cleanup_fairino
+      ;;
+    *)
+      echo "Unsupported ROBOT_TYPE='${ROBOT_TYPE}'. Expected 'fairino' or 'zeroerr'." >&2
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
 
 launch_zeroerr() {
   local package="${ZEROERR_PACKAGE:?ZEROERR_PACKAGE is required}"
@@ -262,7 +311,7 @@ launch_zeroerr() {
 
   if [[ -n "${ethercat_script}" ]]; then
     if [[ -x "${ethercat_script}" ]]; then
-      echo "Resetting ZeroErr EtherCAT master: ${ethercat_script}"
+      echo "Preparing ZeroErr EtherCAT master: ${ethercat_script}"
       ZEROERR_ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}" \
       ZEROERR_ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-}" \
       ZEROERR_IRQ_CORES="${ZEROERR_IRQ_CORES:-}" \
@@ -272,6 +321,7 @@ launch_zeroerr() {
       ZEROERR_CONTROL_CORES="${ZEROERR_CONTROL_CORES:-}" \
       ZEROERR_PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-}" \
       ZEROERR_NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}" \
+      ZEROERR_REUSE_ETHERCAT_MASTER="${ZEROERR_REUSE_ETHERCAT_MASTER:-1}" \
       PREP_ONLY=1 "${ethercat_script}"
     else
       echo "ZeroErr EtherCAT script is not executable: ${ethercat_script}" >&2
@@ -296,6 +346,7 @@ launch_zeroerr() {
     ZEROERR_CONTROL_CORES="${ZEROERR_CONTROL_CORES:-}" \
     ZEROERR_PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-}" \
     ZEROERR_NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}" \
+    ZEROERR_REUSE_ETHERCAT_MASTER="${ZEROERR_REUSE_ETHERCAT_MASTER:-1}" \
     POSTSTART_ONLY=1 "${ethercat_script}" || true
   fi
 

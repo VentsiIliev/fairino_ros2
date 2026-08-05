@@ -44,12 +44,10 @@ install(FILES
   scripts/__init__.py
   scripts/config.py
   scripts/enums.py
-  scripts/fairino_ros2_robot.py
   scripts/monitor_window.py
   scripts/rest_api_support.py
   scripts/rest_server.py
   scripts/robot_controller.py
-  scripts/zeroerr_ros2_robot.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

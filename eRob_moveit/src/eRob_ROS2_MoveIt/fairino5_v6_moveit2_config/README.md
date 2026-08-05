@@ -11,15 +11,15 @@ This package contains:
 ## Main Entry Points
 
 - `scripts/main.py`
-  - desktop/dev entrypoint that starts `RobotController`, wraps it in `FairinoRos2Robot`, and launches the REST server in the same process
+  - desktop/dev entrypoint that starts `RobotController`, creates the configured backend through `backend_factory.py`, and launches the REST server in the same process
 - `scripts/robot_controller.py`
   - the main ROS node (`velocity_monitor`) that owns MoveIt service clients, motion queueing, safety walls, and monitoring state
 - `scripts/rest_server.py`
   - Flask REST bridge exposing motion, stop, status, safety-wall control, and reachability validation
 - `scripts/rest_api_support.py`
   - REST-only helpers for motion error mapping, jog payload parsing, and pose reachability validation
-- `scripts/fairino_ros2_robot.py`
-  - robot-style wrapper used by the REST layer; converts workobject/user/tool inputs into node execution requests
+- `scripts/backend/moveit_robot_backend.py`
+  - robot-style backend used by the REST layer; converts workobject/user/tool inputs into node execution requests
 
 ## High-Level Architecture
 
@@ -27,7 +27,7 @@ This package contains:
 REST client
   -> rest_server.py
     -> rest_api_support.py for request parsing / validation helpers
-    -> FairinoRos2Robot
+    -> MoveItRobotBackend
       -> RobotController
         -> motion.strategies
           -> motion.planning

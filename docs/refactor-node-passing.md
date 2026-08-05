@@ -301,7 +301,7 @@ Each phase is independently deployable and testable.
 
 ## What Does NOT Change
 
-- Public API of `RobotController` (callers like `fairino_ros2_robot.py`, `rest_server.py` unchanged)
+- Public API of `RobotController` (callers like `MoveItRobotBackend`, `rest_server.py` unchanged)
 - `config.py` (no constants move)
 - `SafetyWallManager`, `RobotMonitor`, `MotionQueue` (untouched)
 - C++ nodes / hardware interface (untouched)

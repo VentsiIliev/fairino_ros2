@@ -20,6 +20,7 @@ ETHERCAT_DEVICE="${ZEROERR_ETHERCAT_DEVICE:-/dev/EtherCAT0}"
 PREP_ONLY="${PREP_ONLY:-0}"
 POSTSTART_ONLY="${POSTSTART_ONLY:-0}"
 STOP_ONLY="${STOP_ONLY:-0}"
+REUSE_ETHERCAT_MASTER="${ZEROERR_REUSE_ETHERCAT_MASTER:-1}"
 
 declare -A CANONICAL_CPU_LISTS=()
 CANONICAL_CPU_LIST_RESULT=""
@@ -84,15 +85,49 @@ configure_cpu() {
   done
 }
 
+ethercat_master_pids() {
+  local pids=""
+  pids=$(pgrep -x "EtherCAT-OP" 2>/dev/null || true)
+  [ -n "$pids" ] || pids=$(pgrep -f "EtherCAT" 2>/dev/null || true)
+  printf "%s\n" "$pids" | sort -n | uniq
+}
+
+ethercat_master_healthy() {
+  local pids=""
+  pids="$(ethercat_master_pids)"
+  [ -n "$pids" ] || return 1
+  [ -e "$ETHERCAT_DEVICE" ] || return 1
+  ethercat slaves > /dev/null 2>&1 || return 1
+  return 0
+}
+
+start_ethercat_master() {
+  echo "Starting EtherCAT..."
+  sudo /etc/init.d/ethercat start
+  sleep 2
+}
+
 restart_ethercat_master() {
   echo "Resetting EtherCAT..."
   sudo /etc/init.d/ethercat stop > /dev/null 2>&1 || true
   sleep 1
   sudo pkill -f "EtherCAT" 2>/dev/null || true
   sleep 1
-  echo "Starting EtherCAT..."
-  sudo /etc/init.d/ethercat start
-  sleep 2
+  start_ethercat_master
+}
+
+ensure_ethercat_master_running() {
+  if [ "$REUSE_ETHERCAT_MASTER" = "1" ] && ethercat_master_healthy; then
+    echo "Reusing running EtherCAT master."
+    return 0
+  fi
+
+  if [ -n "$(ethercat_master_pids)" ]; then
+    echo "Running EtherCAT master is not healthy; restarting it..."
+    restart_ethercat_master
+  else
+    start_ethercat_master
+  fi
 }
 
 ensure_ethercat_device_access() {
@@ -353,7 +388,7 @@ fi
 
 if [ "$POSTSTART_ONLY" != "1" ]; then
   configure_cpu
-  restart_ethercat_master
+  ensure_ethercat_master_running
   ensure_ethercat_device_access
   pin_ethercat_master
   pin_irqs

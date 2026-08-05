@@ -30,10 +30,13 @@ MOTION_ERROR_DESCRIPTIONS = {
 }
 
 
-def motion_error_response(result: int):
+def motion_error_response(result: int, **extra):
     description = MOTION_ERROR_DESCRIPTIONS.get(result, f"Unknown error code {result}")
     http_status = 503 if result in (-2, -5, -12) else 409 if result in (-13, -14) else 400 if result in (-3, -11) else 500
-    return jsonify({"result": result, "success": False, "error": description}), http_status
+    body = {"result": result, "success": False, "error": description}
+    body.update(extra)
+    body["success"] = False
+    return jsonify(body), http_status
 
 
 def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction, float, float, float]:
@@ -43,17 +46,19 @@ def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction
     if axis_val is None:
         raise ValueError("Missing 'axis'")
     try:
-        axis = RobotAxis(axis_val)
+        axis = RobotAxis.get_by_string(axis_val) if isinstance(axis_val, str) else RobotAxis(axis_val)
     except ValueError as exc:
-        raise ValueError(f"Invalid 'axis': {axis_val}") from exc
+        valid_axes = [axis.name for axis in RobotAxis]
+        raise ValueError(f"Invalid 'axis': {axis_val}. Valid axes: {valid_axes}") from exc
 
     direction_val = payload.get("direction")
     if direction_val is None:
         raise ValueError("Missing 'direction'")
     try:
-        direction = Direction(direction_val)
+        direction = Direction.get_by_string(direction_val) if isinstance(direction_val, str) else Direction(direction_val)
     except ValueError as exc:
-        raise ValueError(f"Invalid 'direction': {direction_val}") from exc
+        valid_directions = [direction.name for direction in Direction]
+        raise ValueError(f"Invalid 'direction': {direction_val}. Valid directions: {valid_directions}") from exc
 
     try:
         step = float(payload.get("step"))

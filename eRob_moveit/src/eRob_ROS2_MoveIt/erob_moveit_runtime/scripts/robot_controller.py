@@ -79,6 +79,10 @@ from config import (
     MONITOR_UPDATE_RATE_HZ,
     RUNTIME_JOINT_STATE_INPUT_RATE_HZ,
     RUNTIME_DYNAMIC_STATE_INPUT_RATE_HZ,
+    STARTUP_AUTO_ENABLE_DRIVES,
+    STARTUP_AUTO_ENABLE_DRIVES_TIMEOUT_S,
+    STARTUP_AUTO_ENABLE_DRIVES_RETRY_PERIOD_S,
+    STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S,
     MOTION_ERROR_HARDWARE_NOT_READY,
     MOTION_ERROR_DRIVE_NOT_ENABLED,
 )
@@ -217,6 +221,7 @@ class RobotController(Node):
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
         self._ethercat_last_recovery_attempt_ts = 0.0
+        self._startup_auto_enable_thread = None
         self._motion_interlock_lock = Lock()
         self._motion_interlock_active = False
         self._motion_interlock_reason = ""
@@ -254,6 +259,14 @@ class RobotController(Node):
                                  self._controller_status_callback, 10)
 
         self.get_logger().info(f'[Init] RobotController ready ({time.time() - start_time:.2f}s total)')
+
+        if bool(STARTUP_AUTO_ENABLE_DRIVES):
+            self._startup_auto_enable_thread = threading.Thread(
+                target=self._startup_auto_enable_drives_loop,
+                daemon=True,
+                name="StartupAutoEnableDrives",
+            )
+            self._startup_auto_enable_thread.start()
 
     def _delayed_safety_init(self):
         """Publish safety walls after a short delay to speed up startup."""
@@ -808,6 +821,64 @@ class RobotController(Node):
 
     def get_drive_operation_status(self) -> dict:
         return self.runtime_adapter.get_drive_operation_status(self)
+
+    def _startup_auto_enable_drives_loop(self):
+        timeout_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_TIMEOUT_S), 0.1)
+        retry_period_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_RETRY_PERIOD_S), 0.1)
+        verify_timeout_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S), 0.1)
+        deadline = time.monotonic() + timeout_s
+        last_reason = ""
+
+        self.get_logger().info(
+            f'[DriveEnable] Startup auto-enable enabled; waiting up to {timeout_s:.1f}s'
+        )
+        while rclpy.ok() and time.monotonic() < deadline:
+            if self.is_drive_operation_enabled_for_motion():
+                self.get_logger().info('[DriveEnable] Startup auto-enable skipped: drives already operation_enabled')
+                return
+
+            if not self.is_hardware_ready_for_motion():
+                last_reason = self.get_hardware_fault_reason()
+                self.get_logger().info(f'[DriveEnable] Startup auto-enable waiting: {last_reason}')
+                time.sleep(retry_period_s)
+                continue
+
+            if self.current_joint_state is None:
+                last_reason = 'joint_states not available yet'
+                self.get_logger().info(f'[DriveEnable] Startup auto-enable waiting: {last_reason}')
+                time.sleep(retry_period_s)
+                continue
+
+            if self._get_controller_states() is None:
+                last_reason = 'controller manager services not available yet'
+                self.get_logger().info(f'[DriveEnable] Startup auto-enable waiting: {last_reason}')
+                time.sleep(retry_period_s)
+                continue
+
+            self.get_logger().info('[DriveEnable] Startup auto-enable requesting operation enable')
+            result = self.set_drive_operation_enabled(True)
+            if not result.get('success', False):
+                last_reason = str(result.get('error') or result)
+                self.get_logger().warning(f'[DriveEnable] Startup auto-enable request failed: {last_reason}')
+                time.sleep(retry_period_s)
+                continue
+
+            verify_deadline = time.monotonic() + verify_timeout_s
+            while rclpy.ok() and time.monotonic() < verify_deadline:
+                if self.is_drive_operation_enabled_for_motion():
+                    self.get_logger().info('[DriveEnable] Startup auto-enable complete: all drives operation_enabled')
+                    return
+                last_reason = self.get_drive_enable_fault_reason()
+                time.sleep(0.1)
+
+            self.get_logger().warning(
+                f'[DriveEnable] Startup auto-enable verification timed out: {last_reason}'
+            )
+            time.sleep(retry_period_s)
+
+        self.get_logger().error(
+            f'[DriveEnable] Startup auto-enable failed after {timeout_s:.1f}s: {last_reason or "timeout"}'
+        )
 
     def _get_controller_states(self) -> dict[str, str] | None:
         if not self.list_controllers_client.wait_for_service(timeout_sec=2.0):

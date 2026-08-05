@@ -220,8 +220,8 @@ def generate_launch_description():
         output="screen",
         additional_env={
             "EXPECTED_SLAVES": "6",
-            "REQUIRED_STABLE_POLLS": "3",
-            "POLL_INTERVAL": "1",
+            "REQUIRED_STABLE_POLLS": "2",
+            "POLL_INTERVAL": "0.25",
         },
     )
     demo_ld.add_action(wait_for_op_process)
@@ -277,17 +277,8 @@ def generate_launch_description():
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
         output="screen",
     )
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=[
-                    TimerAction(period=0.5, actions=[drive_enable_set_spawner]),
-                    TimerAction(period=2.0, actions=[drive_disable_set_spawner]),
-                ],
-            )
-        )
-    )
+    demo_ld.add_action(TimerAction(period=3.0, actions=[drive_enable_set_spawner]))
+    demo_ld.add_action(TimerAction(period=4.0, actions=[drive_disable_set_spawner]))
 
     ipp_helper_node = Node(
         package="erob_moveit_runtime",
@@ -378,13 +369,14 @@ def generate_launch_description():
         },
         prefix=non_rt_prefix,
     )
+    demo_ld.add_action(TimerAction(period=1.0, actions=[zeroerr_runtime]))
+    demo_ld.add_action(TimerAction(period=2.0, actions=[zeroerr_state_publisher]))
+    demo_ld.add_action(TimerAction(period=5.0, actions=[ipp_helper_node]))
+    demo_ld.add_action(TimerAction(period=6.5, actions=[ruckig_helper_node]))
+    demo_ld.add_action(TimerAction(period=8.0, actions=[contour_ik_helper_node]))
+
     delayed_zeroerr_actions = [
-        TimerAction(period=4.0, actions=[zeroerr_state_publisher]),
-        TimerAction(period=7.0, actions=[ipp_helper_node]),
-        TimerAction(period=10.0, actions=[ruckig_helper_node]),
-        TimerAction(period=13.0, actions=[contour_ik_helper_node]),
-        TimerAction(period=16.0, actions=[zeroerr_runtime]),
-        TimerAction(period=35.0, actions=[ethercat_sdo_server]),
+        TimerAction(period=10.0, actions=[ethercat_sdo_server]),
     ]
     if bool(_runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
         delayed_zeroerr_actions.append(
@@ -395,10 +387,10 @@ def generate_launch_description():
             TimerAction(period=50.0, actions=[zeroerr_error_monitor])
         )
 
-    # Delay ZeroErr-specific processes until EtherCAT OP is stable, then bring them
-    # up in a fixed order. This avoids stacking controller spawners, MoveIt helper
-    # model loads, runtime initialization, and SDO diagnostics in the same timing
-    # window as the 1 ms EtherCAT/control loops.
+    # Keep SDO diagnostics behind the OP monitor, but start HTTP and the
+    # non-hardware model-loading helpers from launch-time timers above. That
+    # gives the frontend progress data early and avoids adding the full OP wait
+    # duration to helper startup.
     demo_ld.add_action(
         RegisterEventHandler(
             OnProcessExit(

@@ -62,6 +62,15 @@ ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 # Require a short stable enabled window before sending the next trajectory.
 EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S: 0.05
 
+# Automatically request drive operation enable once EtherCAT is fully OP and
+# controller services are available. This makes /drive/status report
+# requested_enabled/actual_enabled without requiring the frontend to press
+# enable after every startup.
+STARTUP_AUTO_ENABLE_DRIVES: true
+STARTUP_AUTO_ENABLE_DRIVES_TIMEOUT_S: 30.0
+STARTUP_AUTO_ENABLE_DRIVES_RETRY_PERIOD_S: 1.0
+STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S: 5.0
+
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 

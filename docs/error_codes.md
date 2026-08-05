@@ -2,7 +2,7 @@
 
 ## Internal Motion Error Codes
 
-These codes are returned by `RobotController`, `FairinoRos2Robot`, and all motion methods.
+These codes are returned by `RobotController`, `MoveItRobotBackend`, and all motion methods.
 
 | Code | Meaning | REST HTTP Status |
 |------|---------|-----------------|
@@ -169,7 +169,7 @@ Returns the current Cartesian velocity `[vx, vy, vz]` in mm/s published by the C
 {"error": "Failed to get velocity"}     // HTTP 500 — no data from /cartesian_velocity yet
 ```
 
-> **Note:** `get_current_acceleration()` exists in `FairinoRos2Robot` but is not yet exposed
+> **Note:** `get_current_acceleration()` exists in `MoveItRobotBackend` but is not yet exposed
 > as a REST endpoint in either server. Add `/acceleration/current` if needed.
 
 ### `/jog` — Input Validation And Busy Semantics

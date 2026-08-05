@@ -9,8 +9,8 @@ fairino5_v6_moveit2_config/
 │   ├── robot_controller.py
 │   ├── rest_server.py
 │   ├── rest_api_support.py
-│   ├── fairino_ros2_robot.py
 │   ├── config.py
+│   ├── backend/
 │   ├── motion/
 │   │   ├── strategies.py
 │   │   ├── planning/
@@ -37,7 +37,7 @@ Typical dev/runtime composition:
 1. initialize ROS2
 2. construct `RobotController`
 3. spin the node in a background thread
-4. construct `FairinoRos2Robot`
+4. construct the configured robot backend through `backend_factory.py`
 5. start the Flask REST server in another background thread
 
 ### `RobotController`
@@ -64,9 +64,9 @@ Important embedded components:
 - `RobotStateStore`
 - `RobotStatusPublisher`
 
-### `FairinoRos2Robot`
+### `MoveItRobotBackend`
 
-`FairinoRos2Robot` is a robot-wrapper facade used by the REST layer.
+`MoveItRobotBackend` is the robot-wrapper facade used by the REST layer.
 
 Responsibilities:
 - apply workobject/user transforms
@@ -102,7 +102,7 @@ The REST server can run in:
 
 ```text
 REST /move/linear
-  -> FairinoRos2Robot.move_liner()
+  -> MoveItRobotBackend.move_liner()
     -> SingleTargetStrategy
       -> motion.planning.single_target.send_cartesian_goal()
         -> MoveIt cartesian planning
@@ -114,7 +114,7 @@ REST /move/linear
 
 ```text
 REST /execute/path
-  -> FairinoRos2Robot.execute_path()
+  -> MoveItRobotBackend.execute_path()
     -> PathStrategy
       -> motion.planning.trajectory.send_path_cartesian()
         -> path planning / optional staged approach

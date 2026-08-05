@@ -87,8 +87,6 @@ All runtime Python lives in the shared `erob_moveit_runtime` package, not in the
 
 **Core Node:**
 - `robot_controller.py` — Main `rclpy.Node` (`RobotController`). Owns motion queue, tool/workobject state, and delegates to all submodules.
-- `fairino_ros2_robot.py` — Drop-in SDK-compatible wrapper implementing `IRobotBackend`. Used by REST layer.
-- `zeroerr_ros2_robot.py` — Thin alias; imports `MoveItRobotBackend` for the ZeroErr robot.
 
 **Backend abstraction (`backend/`):**
 - `i_robot_backend.py` — `IRobotBackend` ABC defining the common robot interface.
@@ -141,7 +139,7 @@ Key `runtime.yaml` groups:
 ```
 REST POST /move/cartesian
   → rest_server.py
-  → FairinoRos2Robot (IRobotBackend impl)
+  → MoveItRobotBackend (IRobotBackend impl)
       applies workobject + tool transforms
   → RobotController.send_cartesian_goal()
   → motion/strategies.py → motion/planning/trajectory_planner.py

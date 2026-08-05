@@ -480,17 +480,51 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"execute_sequence error: {e}")
             return -1
 
+    def get_ordered_motion_chain_status(self):
+        if self.node is None:
+            return {"active": False}
+        status = getattr(self.node, "_ordered_motion_chain_status", None)
+        if not isinstance(status, dict):
+            return {"active": False}
+        return dict(status)
+
+    def _set_ordered_motion_chain_status(self, **updates):
+        if self.node is None:
+            return
+        status = dict(getattr(self.node, "_ordered_motion_chain_status", {}) or {})
+        status.update(updates)
+        status["updated_at"] = time.time()
+        setattr(self.node, "_ordered_motion_chain_status", status)
+
     def execute_ordered_motion_chain(self, segments, tool=0, user=0, blocking=True, trajectory_optimizer=None):
         started_at = perf_counter()
         if self.node is None or not segments:
             return -1
+        setattr(self.node, "_ordered_motion_chain_stop_requested", False)
+        self._set_ordered_motion_chain_status(
+            active=True,
+            phase="starting",
+            total_segments=len(segments),
+            current_segment_index=None,
+            current_segment_number=None,
+            current_segment_label=None,
+            current_segment_type=None,
+            current_segment_protected=False,
+            result=None,
+        )
         drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
         if drive_error is not None:
+            self._set_ordered_motion_chain_status(active=False, phase="rejected", result=int(drive_error))
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
                 "[EXECUTE_ORDERED_MOTION_CHAIN] Rejected: %s",
                 self.node.get_hardware_fault_reason(),
+            )
+            self._set_ordered_motion_chain_status(
+                active=False,
+                phase="rejected",
+                result=int(config.MOTION_ERROR_HARDWARE_NOT_READY),
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
@@ -504,10 +538,12 @@ class MoveItRobotBackend(IRobotBackend):
                 trajectory_optimizer=trajectory_optimizer,
             )
             if result != 0:
+                self._set_ordered_motion_chain_status(active=False, phase="failed", result=int(result))
                 return result
             self.node.get_logger().info(
                 f"[TIMING] ordered_motion_chain_total result=0 elapsed_s={perf_counter() - started_at:.3f}"
             )
+            self._set_ordered_motion_chain_status(active=False, phase="completed", result=0)
             return 0
         except Exception as e:
             details = traceback.format_exc()
@@ -515,6 +551,7 @@ class MoveItRobotBackend(IRobotBackend):
                 self.node.get_logger().error(f"execute_ordered_motion_chain error: {e}\n{details}")
             else:
                 print(f"execute_ordered_motion_chain error: {e}\n{details}")
+            self._set_ordered_motion_chain_status(active=False, phase="error", result=-1, error=str(e))
             return -1
 
     def _execute_ordered_motion_chain_pipelined(self, segments, tool=0, user=0, trajectory_optimizer=None):
@@ -664,6 +701,7 @@ class MoveItRobotBackend(IRobotBackend):
                     "trajectory": planned.joint_trajectory,
                     "plan_elapsed_s": perf_counter() - plan_started,
                     "optimize_elapsed_s": planned.optimize_elapsed_s,
+                    "protected": bool(segment.get("protected", False)),
                 }
             if segment_type == "path":
                 path_base = []
@@ -712,6 +750,7 @@ class MoveItRobotBackend(IRobotBackend):
                     "final_state": _robot_state_from_trajectory_end(joint_trajectory),
                     "trajectory": joint_trajectory,
                     "plan_elapsed_s": perf_counter() - plan_started,
+                    "protected": bool(segment.get("protected", False)),
                 }
             if segment_type == "unwind_joint6":
                 joint_names = list(getattr(config, "JOINT_NAMES", []) or [])
@@ -737,6 +776,7 @@ class MoveItRobotBackend(IRobotBackend):
                         "trajectory_checks": [],
                         "check": None,
                         "plan_elapsed_s": perf_counter() - plan_started,
+                        "protected": bool(segment.get("protected", False)),
                     }
                 axis_index = int(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX", 5))
                 joint_index = joint_names.index(joint_name)
@@ -756,6 +796,7 @@ class MoveItRobotBackend(IRobotBackend):
                         "trajectory_checks": [],
                         "check": None,
                         "plan_elapsed_s": perf_counter() - plan_started,
+                        "protected": bool(segment.get("protected", False)),
                     }
                 vel_percent = self.node.trajectory_executor._clamp_percentage(segment.get("vel", config.DEFAULT_VEL_PERCENT))
                 acc_percent = self.node.trajectory_executor._clamp_percentage(segment.get("acc", config.DEFAULT_ACC_PERCENT))
@@ -828,12 +869,24 @@ class MoveItRobotBackend(IRobotBackend):
                         "target_value": final_target,
                     },
                     "plan_elapsed_s": perf_counter() - plan_started,
+                    "protected": bool(segment.get("protected", False)),
                 }
             raise RuntimeError(f"Unsupported ordered-chain segment type: {segment_type!r}")
 
         def _execute_planned_segment(index, total, planned):
             exec_started = perf_counter()
             segment_type = planned["type"]
+            self._set_ordered_motion_chain_status(
+                active=True,
+                phase="executing",
+                total_segments=total,
+                current_segment_index=index - 1,
+                current_segment_number=index,
+                current_segment_label=planned.get("label"),
+                current_segment_type=segment_type,
+                current_segment_protected=bool(planned.get("protected", False)),
+                result=None,
+            )
             if segment_type in {"linear", "path"}:
                 duration = planned["trajectory"].points[-1].time_from_start
                 duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
@@ -895,6 +948,16 @@ class MoveItRobotBackend(IRobotBackend):
                     setattr(self.node, "_last_ordered_unwind_failure_result", int(result))
             else:
                 result = -1
+            self._set_ordered_motion_chain_status(
+                active=True,
+                phase="segment_completed" if result == 0 else "segment_failed",
+                current_segment_index=index - 1,
+                current_segment_number=index,
+                current_segment_label=planned.get("label"),
+                current_segment_type=segment_type,
+                current_segment_protected=bool(planned.get("protected", False)),
+                result=int(result) if isinstance(result, int) else result,
+            )
             planning_node.get_logger().info(
                 f"[TIMING] ordered_motion_chain_segment index={index} label='{planned['label']}' "
                 f"type={segment_type} result={result} elapsed_s={perf_counter() - exec_started:.3f}"
@@ -946,6 +1009,20 @@ class MoveItRobotBackend(IRobotBackend):
                     f"[TIMING] ordered_motion_chain_plan_ready index={expected_index + 1} "
                     f"wait_before_execute_s={perf_counter() - wait_started:.3f}"
                 )
+
+                if bool(getattr(self.node, "_ordered_motion_chain_stop_requested", False)):
+                    stop_planning.set()
+                    self._set_ordered_motion_chain_status(
+                        active=False,
+                        phase="stopped",
+                        current_segment_index=expected_index,
+                        current_segment_number=expected_index + 1,
+                        current_segment_label=planned.get("label"),
+                        current_segment_type=planned.get("type"),
+                        current_segment_protected=bool(planned.get("protected", False)),
+                        result=-14,
+                    )
+                    return -14
 
                 setattr(self.node, "_suppress_post_success_unwind", expected_index + 1 < len(segments))
                 result = _execute_planned_segment(expected_index + 1, len(segments), planned)
@@ -1675,6 +1752,7 @@ class MoveItRobotBackend(IRobotBackend):
                 "error": "robot node not available",
             }
 
+        setattr(self.node, "_ordered_motion_chain_stop_requested", True)
         return self.node.stop_motion()
 
     def resetAllErrors(self):
