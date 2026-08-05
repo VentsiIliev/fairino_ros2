@@ -58,7 +58,71 @@ ensure_affinity() {
   fi
 }
 
+cpu_list_to_mask() {
+  local cpus="$1"
+  python3 - "$cpus" <<'PY'
+import sys
+
+mask = 0
+for part in sys.argv[1].split(","):
+    part = part.strip()
+    if not part:
+        continue
+    if "-" in part:
+        start, end = part.split("-", 1)
+        for cpu in range(int(start), int(end) + 1):
+            mask |= 1 << cpu
+    else:
+        mask |= 1 << int(part)
+print(f"{mask:x}")
+PY
+}
+
+cpu_lists_intersect() {
+  local lhs="$1"
+  local rhs="$2"
+  python3 - "$lhs" "$rhs" <<'PY'
+import sys
+
+def expand(value):
+    cpus = set()
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            cpus.update(range(int(start), int(end) + 1))
+        else:
+            cpus.add(int(part))
+    return cpus
+
+raise SystemExit(0 if expand(sys.argv[1]) & expand(sys.argv[2]) else 1)
+PY
+}
+
+detect_kernel_isolated_cores() {
+  tr ' ' '\n' < /proc/cmdline \
+    | awk -F= '/^(isolcpus|nohz_full)=/ {print $2; exit}' \
+    | sed 's/managed_irq,//g; s/domain,//g; s/nohz,//g' || true
+}
+
+validate_rt_core_config() {
+  local kernel_isolated=""
+  kernel_isolated="$(detect_kernel_isolated_cores)"
+  if [ -n "$kernel_isolated" ] && [ -n "$ISOLATED_CORES" ] && [ "$kernel_isolated" != "$ISOLATED_CORES" ]; then
+    echo "  Warning: kernel isolates CPUs $kernel_isolated but ZEROERR_ISOLATED_CORES=$ISOLATED_CORES"
+  fi
+  if [ -n "$kernel_isolated" ] && [ -n "$ETHERCAT_CORES" ] && ! cpu_lists_intersect "$kernel_isolated" "$ETHERCAT_CORES"; then
+    echo "  Warning: EtherCAT cores ($ETHERCAT_CORES) are not in kernel isolated CPUs ($kernel_isolated)"
+  fi
+  if [ -n "$kernel_isolated" ] && [ -n "$CONTROL_CORES" ] && ! cpu_lists_intersect "$kernel_isolated" "$CONTROL_CORES"; then
+    echo "  Warning: ros2_control cores ($CONTROL_CORES) are not in kernel isolated CPUs ($kernel_isolated)"
+  fi
+}
+
 configure_cpu() {
+  validate_rt_core_config
   echo "Setting CPU governor to performance..."
   for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
     [ -e "$cpu" ] || continue
@@ -225,6 +289,9 @@ pin_irqs() {
   local irq_nums=""
   local affinity_mask="${IRQ_MASK#0x}"
   affinity_mask="${affinity_mask#0X}"
+  if [ -z "$affinity_mask" ]; then
+    affinity_mask="$(cpu_list_to_mask "$IRQ_CORES")"
+  fi
   irq_nums=$(awk -v nic="$NIC" '$0 ~ nic {gsub(":", "", $1); print $1}' /proc/interrupts || true)
 
   if [ -z "$irq_nums" ]; then
@@ -244,6 +311,39 @@ pin_irqs() {
   done
 }
 
+move_non_ethercat_irqs_off_isolated_cores() {
+  [ -n "$ISOLATED_CORES" ] || return 0
+  [ -n "$NON_RT_CORES" ] || return 0
+
+  local non_rt_mask
+  non_rt_mask="$(cpu_list_to_mask "$NON_RT_CORES")"
+  local nic_irq_nums
+  nic_irq_nums="$(awk -v nic="$NIC" '$0 ~ nic {gsub(":", "", $1); print $1}' /proc/interrupts || true)"
+
+  echo "Moving non-EtherCAT IRQs off isolated cores $ISOLATED_CORES (→ cores $NON_RT_CORES)..."
+  local irq_num=""
+  while read -r irq_num; do
+    [ -n "$irq_num" ] || continue
+    if printf "%s\n" "$nic_irq_nums" | grep -qx "$irq_num"; then
+      continue
+    fi
+    local effective=""
+    effective=$(cat "/proc/irq/${irq_num}/effective_affinity_list" 2>/dev/null || true)
+    if [ -n "$effective" ] && ! cpu_lists_intersect "$effective" "$ISOLATED_CORES"; then
+      continue
+    fi
+
+    if echo "$non_rt_mask" | sudo tee "/proc/irq/${irq_num}/smp_affinity" > /dev/null 2>&1; then
+      effective=$(cat "/proc/irq/${irq_num}/effective_affinity_list" 2>/dev/null || true)
+      echo "  IRQ $irq_num → mask $non_rt_mask, effective CPUs ${effective:-unknown}"
+    else
+      local irq_name=""
+      irq_name=$(awk -v irq="$irq_num" '$1 == irq ":" {$1=""; print}' /proc/interrupts 2>/dev/null || true)
+      echo "  Warning: failed to move IRQ $irq_num off isolated cores${irq_name:+:$irq_name}"
+    fi
+  done < <(awk '/^[[:space:]]*[0-9]+:/ {gsub(":", "", $1); print $1}' /proc/interrupts)
+}
+
 stop_ethercat_master() {
   echo "Stopping EtherCAT..."
   sudo /etc/init.d/ethercat stop > /dev/null 2>&1 || true
@@ -253,7 +353,7 @@ stop_ethercat_master() {
 pin_to_cpuset_cgroup() {
   local pid="$1"
   local cg_root="/sys/fs/cgroup"
-  local cg_path="$cg_root/rt_ethercat"
+  local cg_path="$cg_root/rt_control"
 
   # cpuset.cpus only appears in child cgroups if parent has cpuset in subtree_control
   if ! grep -q cpuset "$cg_root/cgroup.subtree_control" 2>/dev/null; then
@@ -391,6 +491,9 @@ if [ "$POSTSTART_ONLY" != "1" ]; then
   ensure_ethercat_master_running
   ensure_ethercat_device_access
   pin_ethercat_master
+  if [ "${ZEROERR_MOVE_NON_ETHERCAT_IRQS:-0}" = "1" ]; then
+    move_non_ethercat_irqs_off_isolated_cores
+  fi
   pin_irqs
 fi
 

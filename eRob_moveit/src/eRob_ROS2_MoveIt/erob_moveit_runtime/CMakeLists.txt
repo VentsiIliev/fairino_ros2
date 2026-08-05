@@ -51,7 +51,7 @@ install(FILES
   DESTINATION lib/${PROJECT_NAME}
 )
 
-foreach(module_dir api backend motion safety status utils)
+foreach(module_dir api backend motion runtime_websockets safety status utils)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/${module_dir})
     install(DIRECTORY scripts/${module_dir}
       DESTINATION lib/${PROJECT_NAME}

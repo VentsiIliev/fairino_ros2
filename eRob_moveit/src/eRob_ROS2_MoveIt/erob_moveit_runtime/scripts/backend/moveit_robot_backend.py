@@ -493,6 +493,14 @@ class MoveItRobotBackend(IRobotBackend):
             return
         status = dict(getattr(self.node, "_ordered_motion_chain_status", {}) or {})
         status.update(updates)
+        if status.get("active") is False:
+            status.update({
+                "current_segment_index": None,
+                "current_segment_number": None,
+                "current_segment_label": None,
+                "current_segment_type": None,
+                "current_segment_protected": False,
+            })
         status["updated_at"] = time.time()
         setattr(self.node, "_ordered_motion_chain_status", status)
 

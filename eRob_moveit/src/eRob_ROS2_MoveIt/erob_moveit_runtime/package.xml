@@ -37,6 +37,7 @@
   <exec_depend>PyQt6</exec_depend>
   <exec_depend>scipy</exec_depend>
   <exec_depend>numpy</exec_depend>
+  <exec_depend>python3-websockets</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 

@@ -15,6 +15,8 @@ from rclpy.executors import MultiThreadedExecutor
 from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
 from backend.i_robot_backend import IRobotBackend
+from runtime_websockets.execution_server import start_execution_websocket_server
+from runtime_websockets.state_server import start_state_websocket_server
 from utils.work_object import WorkObject
 import config
 from rest_api_support import (
@@ -295,6 +297,7 @@ def _as_dict(value, error_message: str) -> dict:
     if isinstance(value, dict):
         return value
     return {"success": False, "error": error_message}
+
 
 def start_rest_server(
         robot: IRobotBackend | None = None,
@@ -648,8 +651,9 @@ def start_rest_server(
                 "queued": True,
                 "queue_position": result,
                 "task_id": task_id,
-                "status_url": "/status",
-                "message": "sequence queued; poll /status for current_task_id, last_completed_task_id, and last_completed_result",
+                "status_ws": "/ws/execution",
+                "status_ws_port": int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
+                "message": "sequence queued; subscribe to /ws/execution for current_task_id, last_completed_task_id, and last_completed_result",
             }), 202
         elif result == 0:
             if payload["blocking"]:
@@ -670,8 +674,9 @@ def start_rest_server(
                 "state": "ACCEPTED_ASYNC",
                 "queued": False,
                 "task_id": task_id,
-                "status_url": "/status",
-                "message": "sequence accepted; planning/execution completes asynchronously, poll /status for final result",
+                "status_ws": "/ws/execution",
+                "status_ws_port": int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
+                "message": "sequence accepted; planning/execution completes asynchronously, subscribe to /ws/execution for final result",
             }), 202
         else:
             return motion_error_response(
@@ -1122,6 +1127,24 @@ def start_rest_server(
     logger.info("eRob MoveIt Runtime Server")
     logger.info(f"Server running on http://{host}:{port}")
     update_startup_status("http_ready", "HTTP server is ready for startup polling")
+    start_state_websocket_server(
+        robot=robot,
+        node=node,
+        config=config,
+        fallback_host=host,
+        fallback_port=port,
+        robot_getter=lambda: robot,
+        node_getter=lambda: node,
+    )
+    start_execution_websocket_server(
+        robot=robot,
+        node=node,
+        config=config,
+        fallback_host=host,
+        fallback_port=port,
+        robot_getter=lambda: robot,
+        node_getter=lambda: node,
+    )
     logger.info("=" * 60)
 
     with open(LOG_FILE, "a") as f:

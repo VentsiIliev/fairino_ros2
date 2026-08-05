@@ -121,6 +121,16 @@ TOOL_ID_MAP:
 # REST server log file path.
 REST_LOG: /tmp/zeroerr_rest_server.log
 
+# Read-only WebSocket telemetry stream for GUI clients.
+REST_WS_STATE_ENABLED: true
+REST_WS_STATE_HOST: 0.0.0.0
+REST_WS_STATE_PORT: 5001
+REST_WS_STATE_RATE_HZ: 50.0
+REST_WS_EXECUTION_ENABLED: true
+REST_WS_EXECUTION_HOST: 0.0.0.0
+REST_WS_EXECUTION_PORT: 5002
+REST_WS_EXECUTION_RATE_HZ: 10.0
+
 # Publish /robot_status from the runtime controller.
 ROBOT_STATUS_PUBLISH_ENABLED: false
 

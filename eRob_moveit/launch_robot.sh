@@ -124,10 +124,13 @@ cleanup_stale_zeroerr_processes() {
   local patterns=(
     "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
+    "/controller_manager/ros2_control_node"
+    "ros2_control_node --ros-args"
     "/opt/ros/.*/moveit_ros_move_group/move_group"
     "rest_server_main.py"
     "/opt/ros/.*/rviz2/rviz2.*zeroerr/share/zeroerr/config/moveit.rviz"
     "ros2 launch zeroerr"
+    "EtherCatStart.sh"
     "WaitForSlavesOp.sh"
     "zeroerr_state_publisher.py"
     "zeroerr_runtime.py"
@@ -149,6 +152,8 @@ cleanup_stale_fairino_processes() {
   local patterns=(
     "/opt/ros/.*/robot_state_publisher/robot_state_publisher"
     "/opt/ros/.*/controller_manager/ros2_control_node"
+    "/controller_manager/ros2_control_node"
+    "ros2_control_node --ros-args"
     "/opt/ros/.*/moveit_ros_move_group/move_group"
     "/opt/ros/.*/rviz2/rviz2"
     "/erob_moveit_runtime/.*/main.py"
@@ -164,6 +169,7 @@ cleanup_stale_fairino_processes() {
     "spawner"
     "ros2 launch fairino5_v6_moveit2_config"
     "ros2 launch zeroerr"
+    "EtherCatStart.sh"
     "WaitForSlavesOp.sh"
   )
   kill_matching_processes "${patterns[@]}"
