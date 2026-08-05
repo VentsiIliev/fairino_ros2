@@ -1,7 +1,7 @@
 # Ubuntu/ROS apt dependencies for this workspace.
 # Generated from this PC on 2026-07-20.
 # Target OS: Ubuntu 24.04 noble
-# Target ROS: ROS 2 Rolling
+# Target ROS: ROS 2 Jazzy
 #
 # Install after adding the official ROS 2 apt repository:
 #   sudo apt update
@@ -26,45 +26,46 @@ python3-requests
 python3-rosdep
 python3-scipy
 python3-vcstool
-ros-rolling-ament-cmake
-ros-rolling-ament-cmake-gmock
-ros-rolling-ament-cmake-gtest
-ros-rolling-ament-cmake-python
-ros-rolling-controller-manager
-ros-rolling-forward-command-controller
-ros-rolling-hardware-interface
-ros-rolling-joint-state-publisher
-ros-rolling-joint-state-publisher-gui
-ros-rolling-joint-trajectory-controller
-ros-rolling-moveit-configs-utils
-ros-rolling-moveit-core
-ros-rolling-moveit-kinematics
-ros-rolling-moveit-msgs
-ros-rolling-moveit-planners
-ros-rolling-moveit-planners-ompl
-ros-rolling-moveit-ros-move-group
-ros-rolling-moveit-ros-occupancy-map-monitor
-ros-rolling-moveit-ros-planning
-ros-rolling-moveit-ros-planning-interface
-ros-rolling-moveit-ros-visualization
-ros-rolling-moveit-ros-warehouse
-ros-rolling-moveit-setup-assistant
-ros-rolling-moveit-simple-controller-manager
-ros-rolling-pilz-industrial-motion-planner
-ros-rolling-pluginlib
-ros-rolling-robot-state-publisher
-ros-rolling-ros2-control
-ros-rolling-ros2-controllers
-ros-rolling-rosidl-default-generators
-ros-rolling-rosidl-default-runtime
-ros-rolling-ruckig
-ros-rolling-rviz2
-ros-rolling-rviz-common
-ros-rolling-rviz-default-plugins
-ros-rolling-tf2
-ros-rolling-tf2-geometry-msgs
-ros-rolling-tf2-ros
-ros-rolling-urdf
-ros-rolling-warehouse-ros
-ros-rolling-xacro
-ros-rolling-yaml-cpp-vendor
+ros-jazzy-ament-cmake
+ros-jazzy-ament-cmake-gmock
+ros-jazzy-ament-cmake-gtest
+ros-jazzy-ament-cmake-python
+ros-jazzy-controller-manager
+ros-jazzy-forward-command-controller
+ros-jazzy-hardware-interface
+ros-jazzy-joint-state-publisher
+ros-jazzy-joint-state-publisher-gui
+ros-jazzy-joint-trajectory-controller
+ros-jazzy-moveit-configs-utils
+ros-jazzy-moveit-core
+ros-jazzy-moveit-kinematics
+ros-jazzy-moveit-msgs
+ros-jazzy-moveit-planners
+ros-jazzy-moveit-planners-ompl
+ros-jazzy-moveit-ros-move-group
+ros-jazzy-moveit-ros-occupancy-map-monitor
+ros-jazzy-moveit-ros-planning
+ros-jazzy-moveit-ros-planning-interface
+ros-jazzy-moveit-ros-visualization
+ros-jazzy-moveit-ros-warehouse
+ros-jazzy-moveit-setup-assistant
+ros-jazzy-moveit-simple-controller-manager
+ros-jazzy-pilz-industrial-motion-planner
+ros-jazzy-pluginlib
+ros-jazzy-robot-state-publisher
+ros-jazzy-ros2-control
+ros-jazzy-ros2-controllers
+ros-jazzy-rosidl-default-generators
+ros-jazzy-rosidl-default-runtime
+ros-jazzy-ruckig
+ros-jazzy-rviz2
+ros-jazzy-rviz-common
+ros-jazzy-rviz-default-plugins
+ros-jazzy-tf2
+ros-jazzy-trac-ik-kinematics-plugin
+ros-jazzy-tf2-geometry-msgs
+ros-jazzy-tf2-ros
+ros-jazzy-urdf
+ros-jazzy-warehouse-ros
+ros-jazzy-xacro
+ros-jazzy-yaml-cpp-vendor

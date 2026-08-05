@@ -18,6 +18,10 @@ class TrajectoryExecutor:
         self._queue = motion_queue
         self._controller_client = controller_client
         self._last_sent_trajectory = None
+        self._active_goal_started_monotonic = None
+        self._goal_sequence = 0
+        self._active_goal_sequence = None
+        self._active_goal_is_stop = False
         self._active_unwind_check = None
         self._unwind_diag_timers = []
         self._active_drive_monitor_timer = None
@@ -72,6 +76,71 @@ class TrajectoryExecutor:
             whole += 1
             nanos -= 1_000_000_000
         return Duration(sec=whole, nanosec=nanos)
+
+    def _next_goal_sequence(self):
+        self._goal_sequence += 1
+        return self._goal_sequence
+
+    def _sample_joint_trajectory(self, joint_trajectory, sample_time_s):
+        points = list(getattr(joint_trajectory, 'points', []) or [])
+        if not points:
+            return None
+
+        sample_time_s = max(0.0, float(sample_time_s))
+        times = [self._duration_to_sec(point.time_from_start) for point in points]
+        joint_count = len(joint_trajectory.joint_names)
+
+        if sample_time_s <= times[0]:
+            point = points[0]
+            positions = [float(value) for value in point.positions[:joint_count]]
+            velocities = list(getattr(point, 'velocities', []) or [])
+            if len(velocities) >= joint_count:
+                velocities = [float(value) for value in velocities[:joint_count]]
+            else:
+                velocities = [0.0] * joint_count
+            return positions, velocities
+
+        if sample_time_s >= times[-1]:
+            point = points[-1]
+            positions = [float(value) for value in point.positions[:joint_count]]
+            velocities = [0.0] * joint_count
+            return positions, velocities
+
+        for index in range(1, len(points)):
+            prev_t = times[index - 1]
+            next_t = times[index]
+            if sample_time_s > next_t:
+                continue
+
+            prev_point = points[index - 1]
+            next_point = points[index]
+            dt = max(next_t - prev_t, 1e-9)
+            ratio = max(0.0, min(1.0, (sample_time_s - prev_t) / dt))
+            prev_positions = [float(value) for value in prev_point.positions[:joint_count]]
+            next_positions = [float(value) for value in next_point.positions[:joint_count]]
+            positions = [
+                prev_value + (next_value - prev_value) * ratio
+                for prev_value, next_value in zip(prev_positions, next_positions)
+            ]
+
+            next_velocities = list(getattr(next_point, 'velocities', []) or [])
+            prev_velocities = list(getattr(prev_point, 'velocities', []) or [])
+            if len(prev_velocities) >= joint_count and len(next_velocities) >= joint_count:
+                velocities = [
+                    float(prev_value) + (float(next_value) - float(prev_value)) * ratio
+                    for prev_value, next_value in zip(
+                        prev_velocities[:joint_count],
+                        next_velocities[:joint_count],
+                    )
+                ]
+            else:
+                velocities = [
+                    (next_value - prev_value) / dt
+                    for prev_value, next_value in zip(prev_positions, next_positions)
+                ]
+            return positions, velocities
+
+        return None
 
     def _log_final_trajectory_segment(self, joint_trajectory, count=5):
         if not joint_trajectory or not joint_trajectory.points:
@@ -381,6 +450,11 @@ class TrajectoryExecutor:
         return []
 
     def _cancel_active_trajectory(self, reason):
+        if self._active_goal_is_stop:
+            self._node.get_logger().warning(
+                f'[STOP] Suppressing cancellation of replacement stop trajectory: {reason}'
+            )
+            return False
         if self._active_trajectory_cancel_reason == reason:
             return True
         self._active_trajectory_cancel_reason = reason
@@ -561,6 +635,187 @@ class TrajectoryExecutor:
             f'[Controller] Drive did not stay operation_enabled before trajectory after {timeout_s:.2f}s: {reason}'
         )
         return False
+
+    def _build_path_stop_trajectory(self):
+        if not bool(getattr(config, 'EXECUTOR_PATH_STOP_ENABLED', True)):
+            return None, 'disabled'
+
+        source = self._last_sent_trajectory
+        if source is None or len(getattr(source, 'points', []) or []) < 2:
+            return None, 'no active trajectory copy'
+
+        started_at = self._active_goal_started_monotonic
+        if started_at is None:
+            return None, 'active trajectory start time unavailable'
+
+        joint_names = list(getattr(source, 'joint_names', []) or [])
+        if not joint_names:
+            return None, 'active trajectory has no joint names'
+
+        measured_positions = self._get_latest_joint_state_in_trajectory_order(joint_names)
+        if measured_positions is None:
+            return None, 'measured joint state unavailable'
+
+        elapsed_s = max(0.0, time.monotonic() - started_at)
+        duration_s = max(
+            0.05,
+            float(getattr(config, 'EXECUTOR_PATH_STOP_DURATION_S', 0.30)),
+        )
+        sample_period_s = max(
+            0.01,
+            float(getattr(config, 'EXECUTOR_PATH_STOP_SAMPLE_PERIOD_S', 0.04)),
+        )
+        tracking_tol = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_PATH_STOP_TRACKING_TOL_RAD', 0.20)),
+        )
+
+        start_sample = self._sample_joint_trajectory(source, elapsed_s)
+        if start_sample is None:
+            return None, 'could not sample active trajectory at stop time'
+
+        path_positions, path_velocities = start_sample
+        max_tracking_error = max(
+            abs(float(measured) - float(expected))
+            for measured, expected in zip(measured_positions, path_positions)
+        )
+        if max_tracking_error > tracking_tol:
+            return None, (
+                f'tracking error {max_tracking_error:.4f} rad exceeds '
+                f'{tracking_tol:.4f} rad'
+            )
+
+        source_end_s = self._duration_to_sec(source.points[-1].time_from_start)
+        remaining_s = max(0.0, source_end_s - elapsed_s)
+        forward_window_s = min(remaining_s, duration_s * 0.5)
+        point_count = max(2, int(math.ceil(duration_s / sample_period_s)) + 1)
+        hold_joint_names = {
+            str(name).strip()
+            for name in getattr(config, 'EXECUTOR_PATH_STOP_HOLD_JOINT_NAMES', [])
+            if str(name).strip()
+        }
+        hold_joint_indices = [
+            index
+            for index, name in enumerate(joint_names)
+            if name in hold_joint_names
+        ]
+        hold_joint_positions = {
+            index: float(path_positions[index])
+            for index in hold_joint_indices
+        }
+
+        traj = JointTrajectory()
+        traj.joint_names = joint_names
+        traj.header.stamp = self._node.get_clock().now().to_msg()
+
+        points = []
+        for index in range(point_count):
+            u = index / (point_count - 1)
+            # Advance along the original trajectory, but reduce path speed to zero.
+            path_offset_s = forward_window_s * (1.0 - (1.0 - u) * (1.0 - u))
+            speed_scale = 1.0 - u
+            sample = self._sample_joint_trajectory(source, elapsed_s + path_offset_s)
+            if sample is None:
+                return None, 'could not sample stop trajectory point'
+            positions, velocities = sample
+            for held_index in hold_joint_indices:
+                positions[held_index] = hold_joint_positions[held_index]
+                velocities[held_index] = 0.0
+
+            point = JointTrajectoryPoint()
+            point.positions = [float(value) for value in positions]
+            point.velocities = [
+                float(value) * speed_scale
+                for value in velocities
+            ]
+            point.accelerations = [0.0] * len(joint_names)
+            point.time_from_start = self._sec_to_duration(duration_s * u)
+            points.append(point)
+
+        points[-1].velocities = [0.0] * len(joint_names)
+        points[-1].accelerations = [0.0] * len(joint_names)
+        traj.points = points
+
+        return traj, (
+            f'elapsed={elapsed_s:.3f}s forward_window={forward_window_s:.3f}s '
+            f'duration={duration_s:.3f}s points={len(points)} '
+            f'max_tracking_error={max_tracking_error:.4f}rad '
+            f'held_joints={[joint_names[index] for index in hold_joint_indices]} '
+            f'held_positions={[round(hold_joint_positions[index], 6) for index in hold_joint_indices]}'
+        )
+
+    def send_path_stop_trajectory(self):
+        stop_trajectory, detail = self._build_path_stop_trajectory()
+        if stop_trajectory is None:
+            self._node.get_logger().warning(
+                f'[STOP] Path stop trajectory unavailable: {detail}'
+            )
+            return False
+
+        if not self._controller_client.wait_for_server(timeout_sec=0.25):
+            self._node.get_logger().warning(
+                f'[STOP] Cannot send path stop: {self._controller_name} not available'
+            )
+            return False
+
+        goal_sequence = self._next_goal_sequence()
+        controller_goal = FollowJointTrajectory.Goal()
+        controller_goal.trajectory = stop_trajectory
+
+        goal_tolerance = []
+        path_tolerance = []
+        hold_joint_names = {
+            str(name).strip()
+            for name in getattr(config, 'EXECUTOR_PATH_STOP_HOLD_JOINT_NAMES', [])
+            if str(name).strip()
+        }
+        held_goal_tolerance = float(
+            getattr(config, 'EXECUTOR_PATH_STOP_HELD_GOAL_TOL_RAD', 0.35)
+        )
+        for name in stop_trajectory.joint_names:
+            goal_tol = JointTolerance()
+            goal_tol.name = name
+            goal_tol.position = held_goal_tolerance if name in hold_joint_names else config.EXECUTOR_GOAL_POS_TOL_RAD
+            goal_tol.velocity = 0.0
+            goal_tol.acceleration = 0.0
+            goal_tolerance.append(goal_tol)
+
+            path_tol = JointTolerance()
+            path_tol.name = name
+            path_tol.position = float(getattr(config, 'EXECUTOR_PATH_POS_TOL_RAD', 0.35))
+            path_tol.velocity = 0.0
+            path_tol.acceleration = 0.0
+            path_tolerance.append(path_tol)
+
+        controller_goal.path_tolerance = path_tolerance
+        controller_goal.goal_tolerance = goal_tolerance
+        stop_duration_s = self._duration_to_sec(stop_trajectory.points[-1].time_from_start)
+        time_tolerance_sec = max(1.0, stop_duration_s + 1.0)
+        controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
+        controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
+
+        self._last_sent_trajectory = deepcopy(stop_trajectory)
+        self._active_unwind_check = None
+        self._active_trajectory_cancel_reason = 'operator path stop'
+        self._active_drive_cancel_suppressed = True
+        self._active_goal_sequence = goal_sequence
+        self._active_goal_is_stop = True
+        self._active_goal_started_monotonic = time.monotonic()
+        self._cancel_unwind_diagnostic_timers()
+        self._cancel_active_drive_monitor()
+
+        self._node.get_logger().warning(
+            f'[STOP] Sending replacement path stop trajectory ({detail})'
+        )
+        future = self._controller_client.send_goal_async(controller_goal)
+        self._motion.active_execute_send_future = future
+        future.add_done_callback(
+            lambda done_future, sequence=goal_sequence: self._on_controller_goal_response(
+                done_future,
+                sequence,
+            )
+        )
+        return True
 
     def _cancel_active_unwind_if_drive_disabled(self, label):
         if not bool(getattr(config, 'EXECUTOR_UNWIND_CANCEL_ON_DRIVE_DISABLE', True)):
@@ -1217,9 +1472,19 @@ class TrajectoryExecutor:
             f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
             f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
 
+        goal_sequence = self._next_goal_sequence()
+        self._active_goal_sequence = goal_sequence
+        self._active_goal_is_stop = False
+        self._active_goal_started_monotonic = None
+
         future = self._controller_client.send_goal_async(controller_goal)
         self._motion.active_execute_send_future = future
-        future.add_done_callback(self._on_controller_goal_response)
+        future.add_done_callback(
+            lambda done_future, sequence=goal_sequence: self._on_controller_goal_response(
+                done_future,
+                sequence,
+            )
+        )
 
     def process_next_queued_task(self):
         task = self._queue.get_next_task()
@@ -1239,8 +1504,11 @@ class TrajectoryExecutor:
         else:
             self._node.get_logger().info('[Queue] No more queued tasks')
 
-    def _on_controller_goal_response(self, future):
+    def _on_controller_goal_response(self, future, goal_sequence=None):
         self._motion.active_execute_send_future = None
+        if goal_sequence is not None and goal_sequence != self._active_goal_sequence:
+            self._node.get_logger().warning('[Controller] Ignoring stale goal response')
+            return
         try:
             goal_handle = future.result()
             if not goal_handle.accepted:
@@ -1248,6 +1516,9 @@ class TrajectoryExecutor:
                     f'[Controller] Trajectory execution rejected by {self._controller_name}'
                 )
                 self._motion.active_controller_goal = None
+                self._active_goal_sequence = None
+                self._active_goal_started_monotonic = None
+                self._active_goal_is_stop = False
                 self._active_unwind_check = None
                 with self._motion.lock:
                     self._motion.is_executing = False
@@ -1258,6 +1529,7 @@ class TrajectoryExecutor:
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
             self._motion.active_controller_goal = goal_handle
+            self._active_goal_started_monotonic = time.monotonic()
             if self._active_drive_cancel_suppressed:
                 self._node.get_logger().info(
                     '[Controller] Active drive-disable cancellation suppressed for this trajectory'
@@ -1274,18 +1546,28 @@ class TrajectoryExecutor:
                 self._schedule_unwind_diagnostics()
                 self._cancel_active_unwind_if_drive_disabled('accepted')
             result_future = goal_handle.get_result_async()
-            result_future.add_done_callback(self._on_controller_goal_result)
+            result_future.add_done_callback(
+                lambda done_future, sequence=goal_sequence: self._on_controller_goal_result(
+                    done_future,
+                    sequence,
+                )
+            )
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Goal response error: {e}')
+            self._active_goal_sequence = None
+            self._active_goal_started_monotonic = None
+            self._active_goal_is_stop = False
             self._active_unwind_check = None
             with self._motion.lock:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
 
-    def _on_controller_goal_result(self, future):
+    def _on_controller_goal_result(self, future, goal_sequence=None):
         cancelled_or_stale = False
         with self._motion.lock:
             if self._motion.active_controller_goal is None:
+                cancelled_or_stale = True
+            if goal_sequence is not None and goal_sequence != self._active_goal_sequence:
                 cancelled_or_stale = True
 
         if cancelled_or_stale:
@@ -1296,7 +1578,11 @@ class TrajectoryExecutor:
             result = future.result().result
             queued_unwind = None
             active_unwind_check = self._active_unwind_check
-            if self._active_trajectory_cancel_reason:
+            active_goal_is_stop = bool(self._active_goal_is_stop)
+            if active_goal_is_stop and result.error_code == 0:
+                self._node.get_logger().warning('[STOP] Path stop trajectory completed')
+                self._motion.last_move_result = -1
+            elif self._active_trajectory_cancel_reason:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory result ignored after active cancellation: '
                     f'{self._active_trajectory_cancel_reason}'
@@ -1364,9 +1650,13 @@ class TrajectoryExecutor:
             self._motion.last_move_result = -1
         finally:
             cancelled_by_monitor = self._active_trajectory_cancel_reason is not None
+            completed_stop_goal = bool(self._active_goal_is_stop)
             self._cancel_unwind_diagnostic_timers()
             self._cancel_active_drive_monitor()
             self._motion.active_controller_goal = None
+            self._active_goal_sequence = None
+            self._active_goal_started_monotonic = None
+            self._active_goal_is_stop = False
             self._active_unwind_check = None
             cancel_reason = self._active_trajectory_cancel_reason
             self._active_trajectory_cancel_reason = None
@@ -1383,7 +1673,13 @@ class TrajectoryExecutor:
                 with self._motion.lock:
                     self._motion.is_executing = False
                 self._queue.mark_current_complete(self._motion.last_move_result)
-                if cancelled_by_monitor:
+                if completed_stop_goal:
+                    queue_cleared = self._queue.clear()
+                    self._node.get_logger().warning(
+                        '[STOP] Motion queue drain suppressed after path stop completion'
+                        + (f'; cleared={queue_cleared}' if queue_cleared > 0 else '')
+                    )
+                elif cancelled_by_monitor:
                     queue_cleared = self._queue.clear()
                     self._node.get_logger().error(
                         '[Controller] Motion queue drain suppressed after active trajectory cancellation'

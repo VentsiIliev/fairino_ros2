@@ -71,6 +71,32 @@ class MotionCoordinator:
                 self._node.get_logger().error(f'[STOP] Failed to cancel send future: {e}')
 
         if self.active_controller_goal is not None:
+            send_path_stop = getattr(
+                getattr(self._node, 'trajectory_executor', None),
+                'send_path_stop_trajectory',
+                None,
+            )
+            if callable(send_path_stop):
+                try:
+                    if send_path_stop():
+                        with self.lock:
+                            self.plan_generation += 1
+                            self.last_move_result = -1
+                        queue_cleared = self._motion_queue.clear()
+                        if queue_cleared > 0:
+                            self._node.get_logger().warning(f'[STOP] Cleared {queue_cleared} queued motions')
+                        self._node.get_logger().warning('[STOP] Path stop trajectory submitted; queue cleared')
+                        return {
+                            'state': 'STOPPING',
+                            'result': 0,
+                            'success': True,
+                            'stopped': True,
+                            'queue_cleared': queue_cleared,
+                        }
+                except Exception as e:
+                    controller_cancel_error = str(e)
+                    self._node.get_logger().error(f'[STOP] Failed to submit path stop trajectory: {e}')
+
             self._node.get_logger().info('[STOP] Cancelling active controller trajectory...')
             try:
                 self.active_controller_goal.cancel_goal_async()

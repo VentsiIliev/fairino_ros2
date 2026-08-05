@@ -55,7 +55,6 @@
   </joint>
 
 
-
   <link name="Link_1">
     <collision name="Link_1_collision">
       <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
