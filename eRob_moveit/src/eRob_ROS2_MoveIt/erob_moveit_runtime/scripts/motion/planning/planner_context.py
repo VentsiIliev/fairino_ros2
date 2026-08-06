@@ -64,7 +64,7 @@ class PlannerContext:
         return self.sequence_client.wait_for_service(timeout_sec=timeout_sec)
 
     def force_safety_update(self):
-        self.safety_manager.force_update()
+        return self.safety_manager.force_update(force=False)
 
     def check_position_safety(self, *args, **kwargs):
         return self.safety_manager.check_position_safety(*args, **kwargs)

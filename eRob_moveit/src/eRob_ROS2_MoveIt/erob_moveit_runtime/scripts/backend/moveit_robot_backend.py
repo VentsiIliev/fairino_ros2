@@ -96,6 +96,17 @@ class MoveItRobotBackend(IRobotBackend):
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
+            from motion.move_linear_timing import ensure as ensure_move_linear_timing, mark as mark_move_linear_timing
+            ensure_move_linear_timing(self.node, source="backend.move_liner")
+            mark_move_linear_timing(
+                self.node,
+                "backend_received",
+                blocking=bool(blocking),
+                tool=tool,
+                user=user,
+                vel=float(vel),
+                acc=float(acc),
+            )
             position_base = self.apply_workobject(position, user_id=user)
             tool_transform = self.node.get_tool_transform(tool)
             vel_scale = max(0.0, min(1.0, vel / 100.0))
@@ -513,6 +524,17 @@ class MoveItRobotBackend(IRobotBackend):
         started_at = perf_counter()
         if self.node is None or not segments:
             return -1
+        from motion.move_linear_timing import begin as begin_motion_timing, clear as clear_motion_timing, mark as mark_motion_timing
+
+        begin_motion_timing(self.node, source="ordered_motion_chain")
+        mark_motion_timing(
+            self.node,
+            "backend_received",
+            segments=len(segments),
+            blocking=bool(blocking),
+            tool=tool,
+            user=user,
+        )
         setattr(self.node, "_ordered_motion_chain_stop_requested", False)
         self._set_ordered_motion_chain_status(
             active=True,
@@ -539,6 +561,8 @@ class MoveItRobotBackend(IRobotBackend):
         drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
         if drive_error is not None:
             self._set_ordered_motion_chain_status(active=False, phase="rejected", result=int(drive_error))
+            mark_motion_timing(self.node, "ordered_chain_rejected", result=int(drive_error), reason="drive_not_enabled")
+            clear_motion_timing(self.node, force=True)
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
@@ -550,6 +574,13 @@ class MoveItRobotBackend(IRobotBackend):
                 phase="rejected",
                 result=int(config.MOTION_ERROR_HARDWARE_NOT_READY),
             )
+            mark_motion_timing(
+                self.node,
+                "ordered_chain_rejected",
+                result=int(config.MOTION_ERROR_HARDWARE_NOT_READY),
+                reason="hardware_not_ready",
+            )
+            clear_motion_timing(self.node, force=True)
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
             self.node.get_logger().info(
@@ -567,6 +598,7 @@ class MoveItRobotBackend(IRobotBackend):
             self.node.get_logger().info(
                 f"[TIMING] ordered_motion_chain_total result=0 elapsed_s={perf_counter() - started_at:.3f}"
             )
+            mark_motion_timing(self.node, "ordered_chain_done", result=0, total_elapsed_s=perf_counter() - started_at)
             self._set_ordered_motion_chain_status(active=False, phase="completed", result=0)
             return 0
         except Exception as e:
@@ -577,6 +609,8 @@ class MoveItRobotBackend(IRobotBackend):
                 print(f"execute_ordered_motion_chain error: {e}\n{details}")
             self._set_ordered_motion_chain_status(active=False, phase="error", result=-1, error=str(e))
             return -1
+        finally:
+            clear_motion_timing(self.node, force=True)
 
     def _execute_ordered_motion_chain_pipelined(self, segments, tool=0, user=0, trajectory_optimizer=None):
         from concurrent.futures import ThreadPoolExecutor
@@ -593,8 +627,10 @@ class MoveItRobotBackend(IRobotBackend):
         )
         from motion.planning.direct_contour_ik import _build_direct_contour_trajectory, _log_report
         from motion.planning.planner_utils import _to_pose_list
+        from motion.move_linear_timing import mark as mark_motion_timing
 
         planning_node = getattr(self.node, "planner_context", self.node)
+        init_started = perf_counter()
         tool_transform = self.node.get_tool_transform(tool)
         start_cartesian = list(planning_node.prev_cartesian[:6])
         clean_joint_state = deepcopy(planning_node.current_joint_state)
@@ -608,6 +644,12 @@ class MoveItRobotBackend(IRobotBackend):
             str(getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or "").strip().upper() or None
         )
         previous_execution_suppress = bool(getattr(self.node, "_suppress_post_success_unwind", False))
+        mark_motion_timing(
+            self.node,
+            "ordered_initial_state_ready",
+            duration_s=perf_counter() - init_started,
+            optimizer=selected_optimizer or "default",
+        )
 
         def _joint_positions_by_name(state):
             names = list(getattr(state.joint_state, "name", []) or [])
@@ -697,10 +739,131 @@ class MoveItRobotBackend(IRobotBackend):
             )
             return optimized.joint_trajectory
 
+        def _ordered_trajectory_point_match_error(joint_trajectory, point):
+            live_state = getattr(self.node, "current_joint_state", None)
+            if live_state is None:
+                return None, "no live joint state"
+            state_names = list(getattr(live_state, "name", []) or [])
+            state_positions = list(getattr(live_state, "position", []) or [])
+            if not state_names or len(state_names) != len(state_positions):
+                return None, "invalid live joint state"
+
+            live_by_name = {name: float(value) for name, value in zip(state_names, state_positions)}
+            joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+            planned_positions = list(getattr(point, "positions", []) or [])
+            if not joint_names or len(planned_positions) < len(joint_names):
+                return None, "invalid planned trajectory point"
+
+            worst = None
+            for joint_name, planned_value in zip(joint_names, planned_positions):
+                if joint_name not in live_by_name:
+                    return None, f"live joint state missing {joint_name}"
+                actual_value = live_by_name[joint_name]
+                error = abs(actual_value - float(planned_value))
+                if worst is None or error > worst[0]:
+                    worst = (error, joint_name, actual_value, float(planned_value))
+            if worst is None:
+                return None, "no joints to compare"
+            return worst, None
+
+        def _wait_ordered_trajectory_point_match(label, joint_trajectory, point, phase):
+            if not bool(getattr(config, "EXECUTOR_ORDERED_START_MATCH_ENABLED", True)):
+                planning_node.get_logger().info(
+                    f"[OrderedChain] {phase} state match check disabled for '{label}'"
+                )
+                mark_motion_timing(self.node, "ordered_state_match_skipped", label=label, phase=phase)
+                return True
+
+            tolerance_rad = max(0.0, float(getattr(config, "EXECUTOR_ORDERED_START_MATCH_TOL_RAD", 0.02)))
+            timeout_s = max(0.0, float(getattr(config, "EXECUTOR_ORDERED_START_MATCH_TIMEOUT_S", 0.35)))
+            mark_motion_timing(
+                self.node,
+                "ordered_state_match_start",
+                label=label,
+                phase=phase,
+                tolerance_rad=tolerance_rad,
+                timeout_s=timeout_s,
+            )
+            planning_node.get_logger().info(
+                f"[OrderedChain] Waiting for {phase} state match for '{label}' "
+                f"tolerance={tolerance_rad:.4f}rad timeout_s={timeout_s:.3f}"
+            )
+            started = perf_counter()
+            last_worst = None
+            last_reason = None
+            while True:
+                worst, reason = _ordered_trajectory_point_match_error(joint_trajectory, point)
+                if worst is not None:
+                    last_worst = worst
+                    if worst[0] <= tolerance_rad:
+                        match_elapsed = perf_counter() - started
+                        planning_node.get_logger().info(
+                            f"[OrderedChain] {phase} state matched for '{label}': "
+                            f"max_error={worst[0]:.4f}rad joint={worst[1]} "
+                            f"elapsed_s={match_elapsed:.3f}"
+                        )
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_state_match_done",
+                            label=label,
+                            phase=phase,
+                            matched=True,
+                            duration_s=match_elapsed,
+                            max_error_rad=worst[0],
+                            joint=worst[1],
+                        )
+                        return True
+                else:
+                    last_reason = reason
+
+                if perf_counter() - started >= timeout_s:
+                    match_elapsed = perf_counter() - started
+                    if last_worst is not None:
+                        error, joint_name, actual_value, planned_value = last_worst
+                        planning_node.get_logger().error(
+                            f"[OrderedChain] {phase} state mismatch for '{label}': "
+                            f"max_error={error:.4f}rad tolerance={tolerance_rad:.4f}rad "
+                            f"joint={joint_name} actual={actual_value:.6f} planned={planned_value:.6f} "
+                            f"timeout_s={timeout_s:.3f}"
+                        )
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_state_match_done",
+                            label=label,
+                            phase=phase,
+                            matched=False,
+                            duration_s=match_elapsed,
+                            max_error_rad=error,
+                            joint=joint_name,
+                        )
+                    else:
+                        planning_node.get_logger().error(
+                            f"[OrderedChain] {phase} state mismatch for '{label}': {last_reason or 'unknown'} "
+                            f"timeout_s={timeout_s:.3f}"
+                        )
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_state_match_done",
+                            label=label,
+                            phase=phase,
+                            matched=False,
+                            duration_s=match_elapsed,
+                            reason=last_reason or "unknown",
+                        )
+                    return False
+                time.sleep(0.01)
+
         def _plan_ordered_segment(index, segment, current_cartesian, current_state):
             segment_type = str(segment.get("type") or "").strip().lower()
             label = str(segment.get("label") or f"segment_{index + 1}")
             plan_started = perf_counter()
+            mark_motion_timing(
+                self.node,
+                "ordered_segment_plan_start",
+                index=index + 1,
+                label=label,
+                segment_type=segment_type,
+            )
             if segment_type == "linear":
                 target_base = self.apply_workobject(list(segment["position"][:6]), user_id=user)
                 planned = _plan_segment(
@@ -717,13 +880,24 @@ class MoveItRobotBackend(IRobotBackend):
                     start_state=current_state,
                     tool_transform=tool_transform,
                 )
+                plan_elapsed = perf_counter() - plan_started
+                mark_motion_timing(
+                    self.node,
+                    "ordered_segment_plan_done",
+                    index=index + 1,
+                    label=label,
+                    segment_type=segment_type,
+                    duration_s=plan_elapsed,
+                    points=len(getattr(planned.joint_trajectory, "points", []) or []),
+                    optimize_s=float(getattr(planned, "optimize_elapsed_s", 0.0) or 0.0),
+                )
                 return {
                     "type": segment_type,
                     "label": label,
                     "target_position": planned.target_position,
                     "final_state": planned.final_state,
                     "trajectory": planned.joint_trajectory,
-                    "plan_elapsed_s": perf_counter() - plan_started,
+                    "plan_elapsed_s": plan_elapsed,
                     "optimize_elapsed_s": planned.optimize_elapsed_s,
                     "protected": bool(segment.get("protected", False)),
                 }
@@ -767,13 +941,24 @@ class MoveItRobotBackend(IRobotBackend):
                     acc_scaling=acc_scale,
                     trajectory_optimizer_name=selected_optimizer,
                 )
+                plan_elapsed = perf_counter() - plan_started
+                mark_motion_timing(
+                    self.node,
+                    "ordered_segment_plan_done",
+                    index=index + 1,
+                    label=label,
+                    segment_type=segment_type,
+                    duration_s=plan_elapsed,
+                    points=len(getattr(joint_trajectory, "points", []) or []),
+                    waypoints=len(planning_path),
+                )
                 return {
                     "type": segment_type,
                     "label": label,
                     "target_position": list(path_base[-1][:6]),
                     "final_state": _robot_state_from_trajectory_end(joint_trajectory),
                     "trajectory": joint_trajectory,
-                    "plan_elapsed_s": perf_counter() - plan_started,
+                    "plan_elapsed_s": plan_elapsed,
                     "protected": bool(segment.get("protected", False)),
                 }
             if segment_type == "unwind_joint6":
@@ -900,6 +1085,14 @@ class MoveItRobotBackend(IRobotBackend):
         def _execute_planned_segment(index, total, planned, preplanned_ready_count=0):
             exec_started = perf_counter()
             segment_type = planned["type"]
+            mark_motion_timing(
+                self.node,
+                "ordered_segment_execute_start",
+                index=index,
+                label=planned.get("label"),
+                segment_type=segment_type,
+                preplanned_ready_count=int(preplanned_ready_count),
+            )
             self._set_ordered_motion_chain_status(
                 active=True,
                 phase="executing",
@@ -927,8 +1120,50 @@ class MoveItRobotBackend(IRobotBackend):
                     f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f} "
                     f"plan_s={planned['plan_elapsed_s']:.3f}"
                 )
-                _send_trajectory_to_controller(self.node, planned["trajectory"])
-                result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
+                if not _wait_ordered_trajectory_point_match(
+                    planned["label"],
+                    planned["trajectory"],
+                    planned["trajectory"].points[0],
+                    "start",
+                ):
+                    result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+                else:
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_controller_handoff_start",
+                        index=index,
+                        label=planned.get("label"),
+                        points=len(getattr(planned["trajectory"], "points", []) or []),
+                    )
+                    _send_trajectory_to_controller(self.node, planned["trajectory"])
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_wait_execution_start",
+                        index=index,
+                        label=planned.get("label"),
+                        timeout_s=execution_timeout_s,
+                    )
+                    result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_wait_execution_done",
+                        index=index,
+                        label=planned.get("label"),
+                        result=int(result) if isinstance(result, int) else result,
+                        duration_s=perf_counter() - exec_started,
+                    )
+                    if result == 0:
+                        planning_node.get_logger().info(
+                            f"[OrderedChain] Controller completed segment {index}/{total} "
+                            f"label='{planned['label']}', verifying live end state before next segment"
+                        )
+                        if not _wait_ordered_trajectory_point_match(
+                            planned["label"],
+                            planned["trajectory"],
+                            planned["trajectory"].points[-1],
+                            "end",
+                        ):
+                            result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
             elif segment_type == "unwind_joint6":
                 if bool(planned.get("runtime_unwind", False)):
                     planning_node.get_logger().info(
@@ -989,6 +1224,15 @@ class MoveItRobotBackend(IRobotBackend):
                 f"[TIMING] ordered_motion_chain_segment index={index} label='{planned['label']}' "
                 f"type={segment_type} result={result} elapsed_s={perf_counter() - exec_started:.3f}"
             )
+            mark_motion_timing(
+                self.node,
+                "ordered_segment_execute_done",
+                index=index,
+                label=planned.get("label"),
+                segment_type=segment_type,
+                result=int(result) if isinstance(result, int) else result,
+                duration_s=perf_counter() - exec_started,
+            )
             return result
 
         executor = ThreadPoolExecutor(max_workers=1)
@@ -1031,25 +1275,59 @@ class MoveItRobotBackend(IRobotBackend):
                 planned_by_index.pop(index, None)
 
         def _planning_worker():
+            worker_started = perf_counter()
+            mark_motion_timing(self.node, "ordered_planning_worker_start", segments=len(segments))
             previous_target = start_cartesian
             previous_state = start_state
             try:
                 for index, segment in enumerate(segments):
                     if stop_planning.is_set():
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_planning_worker_stopped",
+                            index=index + 1,
+                            duration_s=perf_counter() - worker_started,
+                        )
                         break
                     planned_segment = _plan_ordered_segment(index, segment, previous_target, previous_state)
                     planned_queue.put((index, planned_segment, None))
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_segment_queued",
+                        index=index + 1,
+                        label=planned_segment.get("label"),
+                        duration_s=perf_counter() - worker_started,
+                    )
                     _mark_planned(index, planned_segment)
                     previous_target = planned_segment["target_position"]
                     previous_state = planned_segment["final_state"]
                 planned_queue.put((None, None, None))
+                mark_motion_timing(
+                    self.node,
+                    "ordered_planning_worker_done",
+                    duration_s=perf_counter() - worker_started,
+                )
             except Exception as exc:
+                mark_motion_timing(
+                    self.node,
+                    "ordered_planning_worker_error",
+                    duration_s=perf_counter() - worker_started,
+                    error=str(exc),
+                )
                 planned_queue.put((None, None, exc))
 
+        mark_motion_timing(self.node, "ordered_planner_submit_start")
         planner_future = executor.submit(_planning_worker)
+        mark_motion_timing(self.node, "ordered_planner_submit_done")
         try:
             for expected_index in range(len(segments)):
                 wait_started = perf_counter()
+                mark_motion_timing(
+                    self.node,
+                    "ordered_plan_wait_start",
+                    index=expected_index + 1,
+                    timeout_s=plan_timeout_s,
+                )
                 try:
                     planned_index, planned, exc = planned_queue.get(timeout=plan_timeout_s)
                 except Empty as exc:
@@ -1070,6 +1348,14 @@ class MoveItRobotBackend(IRobotBackend):
                 planning_node.get_logger().info(
                     f"[TIMING] ordered_motion_chain_plan_ready index={expected_index + 1} "
                     f"wait_before_execute_s={perf_counter() - wait_started:.3f}"
+                )
+                mark_motion_timing(
+                    self.node,
+                    "ordered_plan_ready",
+                    index=expected_index + 1,
+                    label=planned.get("label"),
+                    wait_before_execute_s=perf_counter() - wait_started,
+                    plan_s=float(planned.get("plan_elapsed_s", 0.0) or 0.0),
                 )
                 _mark_consumed(expected_index)
                 preplanned_snapshot = _preplanned_snapshot(current_index=expected_index + 1)

@@ -82,3 +82,7 @@ TOOL_REGISTRY:
 TOOL_ID_MAP:
   0: TOOL_0
   1: TOOL_1
+
+# Use Pilz CommandPlanner LIN for single-target /move/linear requests.
+MOVE_LIN_STRATEGY: cartesian_path
+

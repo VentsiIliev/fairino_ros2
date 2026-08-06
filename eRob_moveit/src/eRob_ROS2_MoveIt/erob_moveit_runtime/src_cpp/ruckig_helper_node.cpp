@@ -647,8 +647,8 @@ private:
     void applyRuckig(const std::shared_ptr<ApplyRuckig::Request> request,
                      std::shared_ptr<ApplyRuckig::Response> response)
     {
-        RCLCPP_INFO(this->get_logger(), "📥 Received Ruckig request with %zu points",
-                    request->trajectory.points.size());
+        RCLCPP_DEBUG(this->get_logger(), "📥 Received Ruckig request with %zu points",
+                     request->trajectory.points.size());
 
         if (request->trajectory.points.size() >= 2)
         {
@@ -684,8 +684,8 @@ private:
         const double max_vel_scaling = std::max(0.0, std::min(1.0, request->max_velocity_scaling));
         const double max_acc_scaling = std::max(0.0, std::min(1.0, request->max_acceleration_scaling));
 
-        RCLCPP_INFO(this->get_logger(), "⚙️  Applying Ruckig smoothing with vel_scale=%.2f, acc_scale=%.2f",
-                    max_vel_scaling, max_acc_scaling);
+        RCLCPP_DEBUG(this->get_logger(), "⚙️  Applying Ruckig smoothing with vel_scale=%.2f, acc_scale=%.2f",
+                     max_vel_scaling, max_acc_scaling);
 
         trajectory_processing::TimeOptimalTrajectoryGeneration totg_seed;
         const bool seed_ok = totg_seed.computeTimeStamps(rt, max_vel_scaling, max_acc_scaling);
@@ -728,7 +728,7 @@ private:
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "✅ Ruckig Smoothing returned success");
+        RCLCPP_DEBUG(this->get_logger(), "✅ Ruckig Smoothing returned success");
         rt.getRobotTrajectoryMsg(response->trajectory);
 
         if (!validateRuckigAgainstSeed(seeded_msg, response->trajectory, this->get_logger()))
@@ -744,8 +744,8 @@ private:
             const auto& last_point = response->trajectory.joint_trajectory.points.back();
             const double total_time = last_point.time_from_start.sec +
                                       last_point.time_from_start.nanosec * 1e-9;
-            RCLCPP_INFO(this->get_logger(), "🔍 Trajectory: %zu points, duration: %.2fs",
-                        num_points, total_time);
+            RCLCPP_DEBUG(this->get_logger(), "🔍 Trajectory: %zu points, duration: %.2fs",
+                         num_points, total_time);
         }
 
         double max_duration = 10.0 / std::max(0.1, max_vel_scaling);
@@ -763,9 +763,9 @@ private:
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "✅ Trajectory validated successfully");
+        RCLCPP_DEBUG(this->get_logger(), "✅ Trajectory validated successfully");
 //         logTrajectory(response->trajectory, this->get_logger(), false);
-        RCLCPP_INFO(this->get_logger(), "📤 Returning %zu jerk-limited points", num_points);
+        RCLCPP_DEBUG(this->get_logger(), "📤 Returning %zu jerk-limited points", num_points);
     }
 };
 

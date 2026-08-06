@@ -286,10 +286,13 @@ def _plan_segment(
     vel_scaling = max(0.0, min(1.0, float(segment["vel"]) / 100.0))
     acc_scaling = max(0.0, min(1.0, float(segment["acc"]) / 100.0))
 
+    pose_started = perf_counter()
     poses, err = _to_pose_list(rc, [start_cartesian, target], tool_transform)
+    pose_elapsed = perf_counter() - pose_started
     if err:
         raise RuntimeError(f"pose conversion failed with result {err}")
 
+    geometry_started = perf_counter()
     p0, p1 = poses[0].position, poses[-1].position
     delta_m = ((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2) ** 0.5
     orientation_delta_deg = max(
@@ -298,6 +301,8 @@ def _plan_segment(
         _wrapped_angle_delta_deg(start_cartesian[5], target[5]),
     )
     max_step = _compute_max_step(delta_m, orientation_delta_deg)
+    geometry_elapsed = perf_counter() - geometry_started
+    request_started = perf_counter()
     request = _build_cartesian_request(
         rc,
         poses,
@@ -307,22 +312,40 @@ def _plan_segment(
         start_state=start_state,
         avoid_collisions=config.resolve_avoid_collisions(None),
     )
+    request_elapsed = perf_counter() - request_started
 
     rc.get_logger().info(
         f"[SegmentPlan] Planning segment {index + 1}: label='{label}' "
         f"vel={float(segment['vel']):.1f}% acc={float(segment['acc']):.1f}% "
-        f"delta_mm={delta_m * 1000.0:.3f} start_seed={'planned' if start_state is not None else 'live'}"
+        f"delta_mm={delta_m * 1000.0:.3f} orientation_delta_deg={orientation_delta_deg:.3f} "
+        f"max_step_m={max_step:.6f} start_seed={'planned' if start_state is not None else 'live'}"
     )
+    rc.get_logger().info(
+        f"[SEGMENT_PLAN_TIMING] segment={index + 1} label='{label}' stage=request_ready "
+        f"pose_s={pose_elapsed:.3f} geometry_s={geometry_elapsed:.3f} request_s={request_elapsed:.3f} "
+        f"waypoints={len(getattr(request, 'waypoints', []) or [])} avoid_collisions={bool(getattr(request, 'avoid_collisions', False))}"
+    )
+    dispatch_started = perf_counter()
     future = rc.request_cartesian_path(request)
+    dispatch_elapsed = perf_counter() - dispatch_started
+    wait_started = perf_counter()
     response = _wait_future(
         future,
         timeout_s=float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)),
     )
+    wait_elapsed = perf_counter() - wait_started
+    parse_started = perf_counter()
     fraction = float(getattr(response, "fraction", 0.0))
     trajectory = getattr(response, "solution", None)
     joint_trajectory = getattr(trajectory, "joint_trajectory", None) if trajectory is not None else None
     point_count = len(getattr(joint_trajectory, "points", []) or [])
+    parse_elapsed = perf_counter() - parse_started
     plan_elapsed = perf_counter() - started
+    rc.get_logger().info(
+        f"[SEGMENT_PLAN_TIMING] segment={index + 1} label='{label}' stage=cartesian_response "
+        f"dispatch_s={dispatch_elapsed:.3f} wait_s={wait_elapsed:.3f} parse_s={parse_elapsed:.3f} "
+        f"fraction={fraction:.4f} points={point_count} total_before_opt_s={plan_elapsed:.3f}"
+    )
     rc.get_logger().info(
         f"[TIMING] segment_plan segment={index + 1} label='{label}' "
         f"fraction={fraction:.4f} points={point_count} elapsed_s={plan_elapsed:.3f}"
@@ -330,7 +353,14 @@ def _plan_segment(
     if fraction < config.CARTESIAN_MIN_FRACTION or point_count <= 1:
         raise RuntimeError(f"cartesian planning failed: fraction={fraction:.4f} points={point_count}")
 
+    optimize_started = perf_counter()
     optimized, optimize_elapsed = _optimize_sync(rc, trajectory, vel_scaling, acc_scaling)
+    optimize_total_elapsed = perf_counter() - optimize_started
+    rc.get_logger().info(
+        f"[SEGMENT_PLAN_TIMING] segment={index + 1} label='{label}' stage=optimizer "
+        f"reported_s={optimize_elapsed:.3f} optimizer_total_s={optimize_total_elapsed:.3f} "
+        f"segment_total_s={perf_counter() - started:.3f}"
+    )
     optimized_joint_trajectory = optimized.joint_trajectory
     return _PlannedSegment(
         index=index,

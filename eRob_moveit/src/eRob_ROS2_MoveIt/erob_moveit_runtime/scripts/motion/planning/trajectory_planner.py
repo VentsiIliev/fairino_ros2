@@ -1215,7 +1215,13 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
         gen:         plan_generation token for staleness detection
         log_prefix:  log tag, e.g. '[Cartesian Path]' or '[EXECUTE_PATH]'
     """
+    optimizer_prepare_started_at = perf_counter()
     prepared_trajectory = _sanitize_optimizer_start(rc, trajectory, log_prefix)
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(rc, "optimizer_prepare_done", duration_s=perf_counter() - optimizer_prepare_started_at)
+    except Exception:
+        pass
     optimizer_started_at = perf_counter()
 
     def on_done(result):
@@ -1235,19 +1241,35 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
         request_started_at = getattr(rc, '_last_cartesian_request_started_at', None)
         if request_started_at is not None:
             total_from_request = perf_counter() - float(request_started_at)
+        optimizer_elapsed_s = perf_counter() - optimizer_started_at
         rc.get_logger().info(
             f'[TIMING] optimizer kind={getattr(rc, "_last_cartesian_request_kind", "unknown")} '
             f'optimizer={trajectory_optimizer_name or getattr(getattr(rc, "trajectory_optimizer", None), "__class__", type("", (), {})).__name__} '
             f'success=true traj_points={len(getattr(getattr(result, "joint_trajectory", None), "points", []) or [])} '
-            f'elapsed_s={perf_counter() - optimizer_started_at:.3f}'
+            f'elapsed_s={optimizer_elapsed_s:.3f}'
             + (f' total_from_request_s={total_from_request:.3f}' if total_from_request is not None else '')
         )
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(
+                rc,
+                "optimizer_done",
+                duration_s=optimizer_elapsed_s,
+                traj_points=len(getattr(getattr(result, "joint_trajectory", None), "points", []) or []),
+            )
+        except Exception:
+            pass
         with rc.lock:
             rc.last_move_result = 0
         joint_trajectory = _stretch_single_target_joint_rate_if_needed(rc, result.joint_trajectory)
         _send_trajectory_to_controller(rc, joint_trajectory)
 
     optimizer = resolve_trajectory_optimizer(trajectory_optimizer_name, node=rc, default_optimizer=rc.trajectory_optimizer)
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(rc, "optimizer_request_start", optimizer=optimizer.__class__.__name__)
+    except Exception:
+        pass
     optimizer.optimize(
         rc,
         prepared_trajectory,
@@ -1314,9 +1336,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         acc_scaling:      acceleration scaling factor (0–1) forwarded to time parameterization
         generation:       plan_generation value captured at submission; used for staleness check
     """
-    # Re-publish safety walls + ACM so MoveIt's scene is current for any
-    # subsequent validity checks (e.g. _jacobian_check_and_execute)
-    robot_controller.force_safety_update()
+    response_callback_started_at = perf_counter()
 
     if _is_stale(robot_controller, generation):
         robot_controller.get_logger().info('[Cartesian Path] Stale response discarded (preempted)')
@@ -1324,7 +1344,18 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
 
     try:
         callback_started = perf_counter()
+        response_read_started_at = perf_counter()
         response = future.result()
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(
+                robot_controller,
+                "cartesian_response_read",
+                duration_s=perf_counter() - response_read_started_at,
+                callback_delay_s=callback_started - response_callback_started_at,
+            )
+        except Exception:
+            pass
         fraction = response.fraction
         request_started_at = getattr(robot_controller, '_last_cartesian_request_started_at', None)
         planning_elapsed_s = None
@@ -1339,6 +1370,19 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
             f'fraction={fraction:.4f} traj_points={num_pts} '
             + (f'elapsed_s={planning_elapsed_s:.3f}' if planning_elapsed_s is not None else 'elapsed_s=unknown')
         )
+        if getattr(robot_controller, "_last_cartesian_request_kind", None) == "single_target":
+            try:
+                from motion.move_linear_timing import mark as mark_move_linear_timing
+                mark_move_linear_timing(
+                    robot_controller,
+                    "planning_done",
+                    strategy="cartesian_path",
+                    fraction=float(fraction),
+                    traj_points=num_pts,
+                    plan_elapsed_s=planning_elapsed_s if planning_elapsed_s is not None else -1.0,
+                )
+            except Exception:
+                pass
         robot_controller.get_logger().info(f'[Cartesian Path] Path computed: {fraction * 100:.1f}% successful')
 
         # ── Partial / zero path ──────────────────────────────────────────────
@@ -1451,10 +1495,20 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
         # TOTG or Ruckig adds velocity/acceleration/jerk profiles to the raw
         # joint-space waypoints returned by MoveIt (which have no timing).
         def _on_validated():
+            try:
+                from motion.move_linear_timing import mark as mark_move_linear_timing
+                mark_move_linear_timing(robot_controller, "collision_validation_done", points=num_pts)
+            except Exception:
+                pass
             _apply_time_param(robot_controller, trajectory, vel_scaling, acc_scaling,
                               generation, log_prefix='[Cartesian Path]',
                               trajectory_optimizer_name=trajectory_optimizer_name)
 
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(robot_controller, "collision_validation_start", points=num_pts)
+        except Exception:
+            pass
         _validate_cartesian_trajectory_state_validity_async(
             robot_controller,
             trajectory,

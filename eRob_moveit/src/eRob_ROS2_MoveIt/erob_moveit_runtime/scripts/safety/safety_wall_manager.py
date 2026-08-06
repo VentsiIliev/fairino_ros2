@@ -53,6 +53,7 @@ class SafetyWallManager:
         self.safety_enabled = enabled
         self.walls_marker_array = None
         self.acm_bypass_links = set(acm_bypass_links)
+        self._last_planning_scene_signature = None
 
         # Create ROS2 publishers
         self.planning_scene_pub = self.node.create_publisher(
@@ -150,6 +151,7 @@ class SafetyWallManager:
             safety_manager.force_update()
         """
         self.acm_bypass_links.add(link_name)
+        self._last_planning_scene_signature = None
         self.node.get_logger().info(
             f'[SafetyWallManager] ACM bypass added for: {link_name}')
 
@@ -198,20 +200,40 @@ class SafetyWallManager:
 
         self.node.get_logger().info('[SafetyWallManager] Cleared safety walls from planning scene and RViz')
 
-    def force_update(self):
-        """
-        Force immediate update of planning scene (for critical operations).
+    def _planning_scene_signature(self):
+        workspace_items = tuple(
+            (key, round(float(value), 6))
+            for key, value in sorted((self.safety_workspace or {}).items())
+        )
+        return (
+            bool(self.safety_enabled),
+            workspace_items,
+            round(float(self.safety_margin), 6),
+            tuple(sorted(self.acm_bypass_links)),
+        )
 
-        Publishes collision objects and waits briefly to ensure MoveIt processes them.
+    def force_update(self, force: bool = True):
         """
+        Update planning scene for safety walls.
+
+        With force=False, unchanged wall/ACM state is treated as already current
+        and the publish + propagation sleep are skipped.
+        """
+        signature = self._planning_scene_signature()
+        if not force and signature == self._last_planning_scene_signature:
+            self.node.get_logger().debug('[SafetyWallManager] Planning scene already current; skipped safety wall update')
+            return False
+
         if self.safety_enabled:
             self.publish_to_planning_scene()
         else:
             self.clear_from_planning_scene()
+        self._last_planning_scene_signature = signature
         # Give MoveIt time to process the planning scene update
         # The node is spinning in a background thread, so we just need to wait
         # for the message to propagate through ROS2 and be processed by move_group
         time.sleep(0.05)  # 50ms should be enough for local communication
+        return True
 
     def enable_safety(self):
         """Enable safety prechecks and republish safety walls to MoveIt/RViz."""
@@ -266,6 +288,7 @@ class SafetyWallManager:
         """
         self.safety_workspace = workspace.copy()
         self.walls_marker_array = None  # Invalidate marker cache
+        self._last_planning_scene_signature = None
         self.force_update()
         self.node.get_logger().info('[SafetyWallManager] Workspace boundaries updated')
 

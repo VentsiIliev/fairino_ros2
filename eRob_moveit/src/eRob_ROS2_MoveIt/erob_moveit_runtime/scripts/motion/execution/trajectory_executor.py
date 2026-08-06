@@ -567,72 +567,32 @@ class TrajectoryExecutor:
         if not callable(is_enabled):
             return True
 
-        fault_reason = getattr(self._node, 'get_drive_enable_fault_reason', None)
-        enable = getattr(self._node, 'set_drive_operation_enabled', None)
-        timeout_s = max(
-            0.0,
-            float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_WAIT_TIMEOUT_S', 2.0)),
-        )
-        stable_s = max(
+        stable_required_s = max(
             0.0,
             float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S', 0.15)),
         )
-        poll_s = min(
-            0.05,
-            max(0.01, float(getattr(config, 'EXECUTOR_ACTIVE_DRIVE_MONITOR_PERIOD_S', 0.05))),
+        timeout_s = max(
+            stable_required_s,
+            float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_WAIT_TIMEOUT_S', 2.0)),
         )
-        started = time.monotonic()
-        deadline = time.monotonic() + timeout_s
+        started_at = time.monotonic()
         stable_since = None
-        enable_requested = False
-        warned_unstable = False
-        while time.monotonic() <= deadline:
+
+        while time.monotonic() - started_at <= timeout_s:
             now = time.monotonic()
             if is_enabled():
                 if stable_since is None:
                     stable_since = now
-                if now - stable_since >= stable_s:
-                    waited_s = now - started
-                    if waited_s > poll_s * 1.5 or enable_requested:
-                        self._node.get_logger().info(
-                            f'[Controller] Drive operation_enabled stable before trajectory '
-                            f'(stable_s={stable_s:.3f}, waited_s={waited_s:.3f})'
-                        )
+                if now - stable_since >= stable_required_s:
                     return True
             else:
                 stable_since = None
-                if not enable_requested:
-                    reason = fault_reason() if callable(fault_reason) else 'drive is not operation_enabled'
-                    self._node.get_logger().warning(
-                        f'[Controller] Drive not operation_enabled before trajectory; '
-                        f're-requesting enable: {reason}'
-                    )
-                    if not callable(enable):
-                        return False
-                    try:
-                        result = enable(True)
-                    except Exception as exc:
-                        self._node.get_logger().error(
-                            f'[Controller] Drive enable request failed before trajectory: {exc}'
-                        )
-                        return False
-                    if isinstance(result, dict) and result.get('success') is False:
-                        self._node.get_logger().error(
-                            f'[Controller] Drive enable request rejected before trajectory: {result}'
-                        )
-                        return False
-                    enable_requested = True
-                elif not warned_unstable:
-                    reason = fault_reason() if callable(fault_reason) else 'drive is not operation_enabled'
-                    self._node.get_logger().warning(
-                        f'[Controller] Waiting for drive operation_enabled to become stable before trajectory: {reason}'
-                    )
-                    warned_unstable = True
-            time.sleep(poll_s)
+            time.sleep(0.01)
 
-        reason = fault_reason() if callable(fault_reason) else 'drive did not reach operation_enabled'
+        fault_reason = getattr(self._node, 'get_drive_enable_fault_reason', None)
+        reason = fault_reason() if callable(fault_reason) else 'drive is not operation_enabled'
         self._node.get_logger().error(
-            f'[Controller] Drive did not stay operation_enabled before trajectory after {timeout_s:.2f}s: {reason}'
+            f'[Controller] Drive not stably operation_enabled before trajectory: {reason}'
         )
         return False
 
@@ -762,6 +722,7 @@ class TrajectoryExecutor:
         controller_goal = FollowJointTrajectory.Goal()
         controller_goal.trajectory = stop_trajectory
 
+        goal_build_started_at = time.perf_counter()
         goal_tolerance = []
         path_tolerance = []
         hold_joint_names = {
@@ -1355,6 +1316,13 @@ class TrajectoryExecutor:
         suppress_drive_disable_cancel=False,
     ):
         """Send trajectory directly to the low-level controller for smooth execution."""
+        controller_prepare_started_at = time.perf_counter()
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "controller_prepare_start", points=len(getattr(joint_trajectory, "points", []) or []))
+        except Exception:
+            pass
+        drive_check_started_at = time.perf_counter()
         if not self._ensure_drive_enabled_before_trajectory(
             suppress_drive_disable_cancel=suppress_drive_disable_cancel,
         ):
@@ -1362,12 +1330,18 @@ class TrajectoryExecutor:
             with self._motion.lock:
                 self._motion.is_executing = False
             return
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "drive_check_done", duration_s=time.perf_counter() - drive_check_started_at)
+        except Exception:
+            pass
 
         if not self._motion.execution_lock.acquire(blocking=False):
             self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
             self._motion.last_move_result = -1
             return
 
+        controller_server_wait_started_at = time.perf_counter()
         if not self._controller_client.wait_for_server(timeout_sec=1.0):
             self._node.get_logger().error(
                 f'[Controller] {self._controller_name} not available'
@@ -1377,6 +1351,11 @@ class TrajectoryExecutor:
                 self._motion.is_executing = False
             self._motion.execution_lock.release()
             return
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "controller_server_ready", duration_s=time.perf_counter() - controller_server_wait_started_at)
+        except Exception:
+            pass
 
         if len(joint_trajectory.points) == 0:
             self._node.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
@@ -1398,10 +1377,16 @@ class TrajectoryExecutor:
             self._motion.execution_lock.release()
             return
 
+        trajectory_mutation_started_at = time.perf_counter()
         self._overwrite_first_point_with_live_state(joint_trajectory)
         if not preserve_explicit_wrap:
             self._unwrap_joint6_continuity(joint_trajectory)
         self._soften_trajectory_start(joint_trajectory)
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "trajectory_mutation_done", duration_s=time.perf_counter() - trajectory_mutation_started_at)
+        except Exception:
+            pass
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):
             log_drive_state()
@@ -1409,6 +1394,7 @@ class TrajectoryExecutor:
         with self._motion.lock:
             self._motion.is_executing = True
 
+        goal_build_started_at = time.perf_counter()
         goal_tolerance = []
         path_tolerance = []
         for name in joint_trajectory.joint_names:
@@ -1445,6 +1431,12 @@ class TrajectoryExecutor:
             self._active_unwind_check = copied_check
             self._log_unwind_diagnostics('submit', joint_trajectory, copied_check)
 
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "controller_goal_built", duration_s=time.perf_counter() - goal_build_started_at)
+        except Exception:
+            pass
+
         if len(joint_trajectory.points) > 0:
             last_point = joint_trajectory.points[-1]
             traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
@@ -1471,12 +1463,27 @@ class TrajectoryExecutor:
             f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
             f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
             f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "controller_prepare_done", duration_s=time.perf_counter() - controller_prepare_started_at)
+        except Exception:
+            pass
 
         goal_sequence = self._next_goal_sequence()
         self._active_goal_sequence = goal_sequence
         self._active_goal_is_stop = False
         self._active_goal_started_monotonic = None
 
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(
+                self._node,
+                "goal_send",
+                points=len(joint_trajectory.points),
+                goal_time_tolerance_s=float(time_tolerance_sec),
+            )
+        except Exception:
+            pass
         future = self._controller_client.send_goal_async(controller_goal)
         self._motion.active_execute_send_future = future
         future.add_done_callback(
@@ -1512,6 +1519,12 @@ class TrajectoryExecutor:
         try:
             goal_handle = future.result()
             if not goal_handle.accepted:
+                try:
+                    from motion.move_linear_timing import mark as mark_move_linear_timing, clear as clear_move_linear_timing
+                    mark_move_linear_timing(self._node, "goal_rejected", controller=self._controller_name)
+                    clear_move_linear_timing(self._node)
+                except Exception:
+                    pass
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution rejected by {self._controller_name}'
                 )
@@ -1525,6 +1538,12 @@ class TrajectoryExecutor:
                 self._motion.execution_lock.release()
                 return
 
+            try:
+                from motion.move_linear_timing import mark as mark_move_linear_timing, clear as clear_move_linear_timing
+                mark_move_linear_timing(self._node, "goal_accepted", controller=self._controller_name)
+                clear_move_linear_timing(self._node)
+            except Exception:
+                pass
             self._node.get_logger().info(
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )

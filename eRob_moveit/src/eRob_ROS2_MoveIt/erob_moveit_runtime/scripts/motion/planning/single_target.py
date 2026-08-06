@@ -120,11 +120,37 @@ def _execute_jacobian_move(
 
 
 def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling, trajectory_optimizer_name=None):
-    robot_controller._last_cartesian_request_started_at = perf_counter()
+    dispatch_started_at = perf_counter()
+    robot_controller._last_cartesian_request_started_at = dispatch_started_at
     robot_controller._last_cartesian_request_kind = 'single_target'
     robot_controller._last_cartesian_request_waypoints = len(getattr(request, 'waypoints', []) or [])
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(
+            robot_controller,
+            "planning_start",
+            strategy="cartesian_path",
+            waypoints=robot_controller._last_cartesian_request_waypoints,
+        )
+    except Exception:
+        pass
     gen = _begin_execution(robot_controller)
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(robot_controller, "cartesian_service_dispatch", waypoints=robot_controller._last_cartesian_request_waypoints)
+    except Exception:
+        pass
+    service_call_started_at = perf_counter()
     future = robot_controller.request_cartesian_path(request)
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(
+            robot_controller,
+            "cartesian_service_dispatched",
+            duration_s=perf_counter() - service_call_started_at,
+        )
+    except Exception:
+        pass
     future.add_done_callback(
         lambda f: _cartesian_path_response(
             robot_controller, f, vel_scaling, acc_scaling, gen,
@@ -216,6 +242,7 @@ def _resolve_start_state(robot_controller, start_pose):
 def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, acc_scaling,
                           tool_transform=None, avoid_collisions=None, trajectory_optimizer_name=None):
     from config import resolve_avoid_collisions
+    execute_started_at = perf_counter()
     avoid_collisions = resolve_avoid_collisions(avoid_collisions)
     dx = target_wp[0] - start_wp[0]
     dy = target_wp[1] - start_wp[1]
@@ -231,14 +258,37 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
     robot_controller.get_logger().info(
         f'[Single Point] {len(waypoints_mm)} waypoints (Δ={distance_mm:.3f}mm, '
         f'{len(waypoints_mm) - 1} segments, structural_waypoints={use_structural_waypoints})')
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(
+            robot_controller,
+            "cartesian_waypoints_ready",
+            duration_s=perf_counter() - execute_started_at,
+            waypoints=len(waypoints_mm),
+            distance_mm=float(distance_mm),
+        )
+    except Exception:
+        pass
 
+    service_wait_started_at = perf_counter()
     if not _require_cart_path_service(robot_controller, 'Single Point'):
         return -2
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(robot_controller, "cartesian_service_ready", duration_s=perf_counter() - service_wait_started_at)
+    except Exception:
+        pass
 
     T_tool = tool_transform if tool_transform is not None else robot_controller.T_tool
+    pose_build_started_at = perf_counter()
     poses, err = _to_pose_list(robot_controller, waypoints_mm, T_tool)
     if err:
         return err
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(robot_controller, "cartesian_poses_built", duration_s=perf_counter() - pose_build_started_at, poses=len(poses))
+    except Exception:
+        pass
 
     p0, p1 = poses[0].position, poses[-1].position
     delta_m = np.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2)
@@ -271,10 +321,16 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
             f'[Single Point] Orientation-dominant move: using coarse MoveIt eef_step={max_step:.4f}m '
             f'for orientation delta={orientation_delta_deg:.3f}°')
 
+    stack_check_started_at = perf_counter()
     if not robot_controller.is_motion_stack_ready():
         robot_controller.get_logger().error(
             f'[Single Point] Motion stack not ready: {robot_controller.get_motion_stack_fault_reason()}')
         return config.MOTION_ERROR_HARDWARE_NOT_READY
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(robot_controller, "motion_stack_ready", duration_s=perf_counter() - stack_check_started_at)
+    except Exception:
+        pass
 
     if bool(getattr(config, "SINGLE_TARGET_USE_IK_SYNC_START_STATE", False)):
         start_state = _resolve_start_state(robot_controller, poses[0])
@@ -283,17 +339,30 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         robot_controller.get_logger().info(
             '[Single Point] Skipping IK-synchronized start state for Cartesian planning'
         )
+    request_build_started_at = perf_counter()
+    request = _build_cartesian_request(
+        robot_controller,
+        poses,
+        max_step,
+        vel_scaling,
+        acc_scaling,
+        start_state=start_state,
+        avoid_collisions=avoid_collisions,
+    )
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(
+            robot_controller,
+            "cartesian_request_built",
+            duration_s=perf_counter() - request_build_started_at,
+            max_step_m=float(max_step),
+            avoid_collisions=bool(avoid_collisions),
+        )
+    except Exception:
+        pass
     _dispatch_moveit(
         robot_controller,
-        _build_cartesian_request(
-            robot_controller,
-            poses,
-            max_step,
-            vel_scaling,
-            acc_scaling,
-            start_state=start_state,
-            avoid_collisions=avoid_collisions,
-        ),
+        request,
         vel_scaling,
         acc_scaling,
         trajectory_optimizer_name=trajectory_optimizer_name,
@@ -304,7 +373,13 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
 def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scale, acc_scale,
                         tool_transform=None, avoid_collisions=None, trajectory_optimizer=None):
     from config import resolve_avoid_collisions
+    safety_started_at = perf_counter()
     robot_controller.force_safety_update()
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(robot_controller, "preplan_safety_update", duration_s=perf_counter() - safety_started_at)
+    except Exception:
+        pass
     avoid_collisions = resolve_avoid_collisions(avoid_collisions)
 
     current_cart = robot_controller.prev_cartesian

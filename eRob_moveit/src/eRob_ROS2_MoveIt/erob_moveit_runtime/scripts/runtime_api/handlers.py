@@ -130,6 +130,11 @@ class RuntimeApi:
             return response_error(str(exc), 400)
 
         logger.info("Received move/linear request with data %s", data)
+        try:
+            from motion.move_linear_timing import begin as begin_move_linear_timing
+            begin_move_linear_timing(self.node, source="/move/linear")
+        except Exception:
+            pass
         result = self.robot.move_liner(
             payload["position"],
             tool=payload["tool"],

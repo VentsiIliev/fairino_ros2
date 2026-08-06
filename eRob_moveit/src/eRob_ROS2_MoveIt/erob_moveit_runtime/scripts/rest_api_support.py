@@ -94,6 +94,7 @@ def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+
 def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
     path = payload.get("path")

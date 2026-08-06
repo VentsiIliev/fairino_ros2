@@ -117,10 +117,23 @@ def _sequence_response(rc, future, generation, started_at):
         sequence_response = getattr(response, "response", None)
         error_code = int(getattr(getattr(sequence_response, "error_code", None), "val", 0))
         planned = list(getattr(sequence_response, "planned_trajectories", []) or [])
+        plan_elapsed_s = perf_counter() - started_at
         rc.get_logger().info(
             f"[TIMING] sequence_plan segments={len(planned)} error_code={error_code} "
-            f"elapsed_s={perf_counter() - started_at:.3f}"
+            f"elapsed_s={plan_elapsed_s:.3f}"
         )
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(
+                rc,
+                "planning_done",
+                strategy="pilz_lin",
+                error_code=error_code,
+                segments=len(planned),
+                plan_elapsed_s=plan_elapsed_s,
+            )
+        except Exception:
+            pass
         if error_code != 1:
             rc.get_logger().error(f"[Sequence] MoveIt sequence planning failed: error_code={error_code}")
             _set_result(rc, -6)
@@ -175,6 +188,11 @@ def send_motion_sequence(rc, segments, tool_transform=None) -> int:
         f"vel_acc_blend="
         f"{[(round(float(segment.get('vel', 0.0)), 3), round(float(segment.get('acc', 0.0)), 3), round(float(segment.get('blend_radius', 0.0)), 3)) for segment in segments]}"
     )
+    try:
+        from motion.move_linear_timing import mark as mark_move_linear_timing
+        mark_move_linear_timing(rc, "planning_start", strategy="pilz_lin", segments=len(req.request.items))
+    except Exception:
+        pass
     generation = _begin_execution(rc)
     started_at = perf_counter()
     future = rc.request_motion_sequence(req)
