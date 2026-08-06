@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from enums import RobotAxis, Direction
 from time import perf_counter
-from threading import Event
+from threading import Event, Lock
 import math
 import time
 import traceback
@@ -500,6 +500,11 @@ class MoveItRobotBackend(IRobotBackend):
                 "current_segment_label": None,
                 "current_segment_type": None,
                 "current_segment_protected": False,
+                "preplanned_ready_count": 0,
+                "next_preplanned_segment_index": None,
+                "next_preplanned_segment_number": None,
+                "next_preplanned_segment_label": None,
+                "next_preplanned_segment_type": None,
             })
         status["updated_at"] = time.time()
         setattr(self.node, "_ordered_motion_chain_status", status)
@@ -518,6 +523,17 @@ class MoveItRobotBackend(IRobotBackend):
             current_segment_label=None,
             current_segment_type=None,
             current_segment_protected=False,
+            planned_segments_count=0,
+            executed_segments_count=0,
+            preplanned_ready_count=0,
+            next_preplanned_segment_index=None,
+            next_preplanned_segment_number=None,
+            next_preplanned_segment_label=None,
+            next_preplanned_segment_type=None,
+            last_planned_segment_index=None,
+            last_planned_segment_number=None,
+            last_planned_segment_label=None,
+            last_planned_segment_type=None,
             result=None,
         )
         drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
@@ -881,7 +897,7 @@ class MoveItRobotBackend(IRobotBackend):
                 }
             raise RuntimeError(f"Unsupported ordered-chain segment type: {segment_type!r}")
 
-        def _execute_planned_segment(index, total, planned):
+        def _execute_planned_segment(index, total, planned, preplanned_ready_count=0):
             exec_started = perf_counter()
             segment_type = planned["type"]
             self._set_ordered_motion_chain_status(
@@ -893,6 +909,8 @@ class MoveItRobotBackend(IRobotBackend):
                 current_segment_label=planned.get("label"),
                 current_segment_type=segment_type,
                 current_segment_protected=bool(planned.get("protected", False)),
+                executed_segments_count=max(0, index - 1),
+                preplanned_ready_count=int(preplanned_ready_count),
                 result=None,
             )
             if segment_type in {"linear", "path"}:
@@ -964,6 +982,7 @@ class MoveItRobotBackend(IRobotBackend):
                 current_segment_label=planned.get("label"),
                 current_segment_type=segment_type,
                 current_segment_protected=bool(planned.get("protected", False)),
+                executed_segments_count=index if result == 0 else max(0, index - 1),
                 result=int(result) if isinstance(result, int) else result,
             )
             planning_node.get_logger().info(
@@ -976,6 +995,40 @@ class MoveItRobotBackend(IRobotBackend):
         planned_queue = Queue()
         stop_planning = Event()
         plan_timeout_s = float(getattr(config, "CUSTOM_SEQUENCE_PLAN_TIMEOUT_S", 10.0)) + 30.0
+        planning_lock = Lock()
+        planned_by_index = {}
+
+        def _preplanned_snapshot(current_index=0):
+            with planning_lock:
+                ready_indexes = sorted(i for i in planned_by_index if i >= current_index)
+                last_index = max(planned_by_index) if planned_by_index else None
+                last_planned = planned_by_index.get(last_index) if last_index is not None else None
+                next_index = ready_indexes[0] if ready_indexes else None
+                next_planned = planned_by_index.get(next_index) if next_index is not None else None
+                return {
+                    "planned_segments_count": len(planned_by_index),
+                    "preplanned_ready_count": len(ready_indexes),
+                    "next_preplanned_segment_index": next_index,
+                    "next_preplanned_segment_number": next_index + 1 if next_index is not None else None,
+                    "next_preplanned_segment_label": next_planned.get("label") if next_planned else None,
+                    "next_preplanned_segment_type": next_planned.get("type") if next_planned else None,
+                    "last_planned_segment_index": last_index,
+                    "last_planned_segment_number": last_index + 1 if last_index is not None else None,
+                    "last_planned_segment_label": last_planned.get("label") if last_planned else None,
+                    "last_planned_segment_type": last_planned.get("type") if last_planned else None,
+                }
+
+        def _mark_planned(index, planned_segment):
+            with planning_lock:
+                planned_by_index[index] = {
+                    "label": planned_segment.get("label"),
+                    "type": planned_segment.get("type"),
+                }
+            self._set_ordered_motion_chain_status(**_preplanned_snapshot(current_index=0))
+
+        def _mark_consumed(index):
+            with planning_lock:
+                planned_by_index.pop(index, None)
 
         def _planning_worker():
             previous_target = start_cartesian
@@ -986,6 +1039,7 @@ class MoveItRobotBackend(IRobotBackend):
                         break
                     planned_segment = _plan_ordered_segment(index, segment, previous_target, previous_state)
                     planned_queue.put((index, planned_segment, None))
+                    _mark_planned(index, planned_segment)
                     previous_target = planned_segment["target_position"]
                     previous_state = planned_segment["final_state"]
                 planned_queue.put((None, None, None))
@@ -1017,6 +1071,9 @@ class MoveItRobotBackend(IRobotBackend):
                     f"[TIMING] ordered_motion_chain_plan_ready index={expected_index + 1} "
                     f"wait_before_execute_s={perf_counter() - wait_started:.3f}"
                 )
+                _mark_consumed(expected_index)
+                preplanned_snapshot = _preplanned_snapshot(current_index=expected_index + 1)
+                self._set_ordered_motion_chain_status(**preplanned_snapshot)
 
                 if bool(getattr(self.node, "_ordered_motion_chain_stop_requested", False)):
                     stop_planning.set()
@@ -1033,7 +1090,12 @@ class MoveItRobotBackend(IRobotBackend):
                     return -14
 
                 setattr(self.node, "_suppress_post_success_unwind", expected_index + 1 < len(segments))
-                result = _execute_planned_segment(expected_index + 1, len(segments), planned)
+                result = _execute_planned_segment(
+                    expected_index + 1,
+                    len(segments),
+                    planned,
+                    preplanned_ready_count=preplanned_snapshot["preplanned_ready_count"],
+                )
                 if result != 0:
                     stop_planning.set()
                     return result

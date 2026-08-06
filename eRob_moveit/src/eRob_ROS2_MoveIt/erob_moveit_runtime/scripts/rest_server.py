@@ -15,19 +15,10 @@ from rclpy.executors import MultiThreadedExecutor
 from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
 from backend.i_robot_backend import IRobotBackend
+from runtime_api.handlers import RuntimeApi
 from runtime_websockets.execution_server import start_execution_websocket_server
 from runtime_websockets.state_server import start_state_websocket_server
-from utils.work_object import WorkObject
 import config
-from rest_api_support import (
-    motion_error_response,
-    parse_execute_ordered_motion_chain_request,
-    parse_execute_path_request,
-    parse_execute_sequence_request,
-    parse_jog_request,
-    parse_move_linear_request,
-    validate_pose_from_start,
-)
 
 
 LOG_FILE = config.REST_LOG
@@ -524,600 +515,140 @@ def start_rest_server(
     def openapi_json():
         return jsonify(OPENAPI_SPEC)
 
+    runtime_api = RuntimeApi(
+        robot_getter=lambda: robot,
+        node_getter=lambda: node,
+        startup_status_getter=get_startup_status,
+        runtime_state_snapshot_getter=runtime_state_snapshot,
+        port=port,
+    )
+
+    def api_response(response):
+        return jsonify(response.body), response.status
+
     @app.route("/move/linear", methods=["POST"])
     def move_linear():
-        try:
-            payload = parse_move_linear_request(request.json)
-        except ValueError as exc:
-            return _response_error(str(exc), 400)
-
-        logger.info(f"Received move/linera/ request with data {request.json}")
-
-        result = robot.move_liner(
-            payload["position"],
-            tool=payload["tool"],
-            user=payload["user"],
-            vel=payload["vel"],
-            acc=payload["acc"],
-            blocking=payload["blocking"],
-            trajectory_optimizer=payload["trajectory_optimizer"],
-        )
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-
-        if result > 0:
-            logger.debug(f"move_linear queued with result {result}")
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
-        elif result == 0:
-            logger.debug(f"move_linear queued with result {result}")
-            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
-        else:
-            return motion_error_response(result)
+        return api_response(runtime_api.move_linear(request.json))
 
     @app.route("/move/ptp", methods=["POST"])
     def move_ptp():
-        try:
-            payload = parse_move_linear_request(request.json)
-        except ValueError as exc:
-            return _response_error(str(exc), 400)
-
-        logger.info(f"Received move/ptp request with data {request.json}")
-
-        result = robot.move_ptp(
-            payload["position"],
-            tool=payload["tool"],
-            user=payload["user"],
-            vel=payload["vel"],
-            acc=payload["acc"],
-            blocking=payload["blocking"],
-            trajectory_optimizer=payload["trajectory_optimizer"],
-        )
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-
-        if result > 0:
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
-        elif result == 0:
-            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
-        else:
-            return motion_error_response(result)
-
+        return api_response(runtime_api.move_ptp(request.json))
 
     @app.route("/execute/path", methods=["POST"])
     def execute_path():
-        try:
-            payload = parse_execute_path_request(request.json)
-        except ValueError as exc:
-            return _response_error(str(exc), 400)
-
-        robot.node.get_logger().info(
-            f"Executing path with {len(payload['path'])} waypoints, vel={payload['vel']}, acc={payload['acc']}")
-
-        try:
-            result = robot.execute_path(
-                payload["path"],
-                rx=payload["rx"],
-                ry=payload["ry"],
-                rz=payload["rz"],
-                vel=payload["vel"],
-                acc=payload["acc"],
-                blocking=payload["blocking"],
-                trajectory_optimizer=payload["trajectory_optimizer"],
-                orientation_mode=payload["orientation_mode"],
-            )
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            robot.node.get_logger().error(f"Error executing path: {e}")
-            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
-
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-        if result > 0:
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
-        elif result == 0:
-            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
-        else:
-            return motion_error_response(result)
+        return api_response(runtime_api.execute_path(request.json))
 
     @app.route("/execute/sequence", methods=["POST"])
     def execute_sequence():
-        try:
-            payload = parse_execute_sequence_request(request.json)
-        except ValueError as exc:
-            return _response_error(str(exc), 400)
-
-        robot.node.get_logger().info(
-            f"Executing sequence with {len(payload['segments'])} segments")
-
-        try:
-            result = robot.execute_sequence(
-                payload["segments"],
-                tool=payload["tool"],
-                user=payload["user"],
-                blocking=payload["blocking"],
-            )
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            robot.node.get_logger().error(f"Error executing sequence: {e}")
-            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
-
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-        if result > 0:
-            return jsonify({
-                "result": result,
-                "success": True,
-                "accepted": True,
-                "final": False,
-                "state": "QUEUED",
-                "queued": True,
-                "queue_position": result,
-                "task_id": task_id,
-                "status_ws": "/ws/execution",
-                "status_ws_port": int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
-                "message": "sequence queued; subscribe to /ws/execution for current_task_id, last_completed_task_id, and last_completed_result",
-            }), 202
-        elif result == 0:
-            if payload["blocking"]:
-                return jsonify({
-                    "result": result,
-                    "success": True,
-                    "accepted": True,
-                    "final": True,
-                    "state": "COMPLETED",
-                    "queued": False,
-                    "task_id": task_id,
-                }), 200
-            return jsonify({
-                "result": result,
-                "success": True,
-                "accepted": True,
-                "final": False,
-                "state": "ACCEPTED_ASYNC",
-                "queued": False,
-                "task_id": task_id,
-                "status_ws": "/ws/execution",
-                "status_ws_port": int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
-                "message": "sequence accepted; planning/execution completes asynchronously, subscribe to /ws/execution for final result",
-            }), 202
-        else:
-            return motion_error_response(
-                result,
-                accepted=False,
-                final=True,
-                state="REJECTED",
-                queued=False,
-                task_id=task_id,
-            )
+        return api_response(runtime_api.execute_sequence(request.json))
 
     @app.route("/execute/ordered_motion_chain", methods=["POST"])
     def execute_ordered_motion_chain():
-        try:
-            payload = parse_execute_ordered_motion_chain_request(request.json)
-        except ValueError as exc:
-            return _response_error(str(exc), 400)
-
-        robot.node.get_logger().info(
-            f"Executing ordered motion chain with {len(payload['segments'])} segments")
-
-        try:
-            result = robot.execute_ordered_motion_chain(
-                segments=payload["segments"],
-                tool=payload["tool"],
-                user=payload["user"],
-                blocking=payload["blocking"],
-                trajectory_optimizer=payload["trajectory_optimizer"],
-            )
-        except Exception as e:
-            traceback.print_exc()
-            robot.node.get_logger().error(f"Error executing ordered motion chain: {e}")
-            return jsonify({"result": -1, "success": False, "error": str(e)}), 500
-
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-        if result > 0:
-            return jsonify({"result": result, "success": True, "queued": True, "queue_position": result, "task_id": task_id}), 202
-        elif result == 0:
-            return jsonify({"result": result, "success": True, "queued": False, "task_id": task_id}), 200
-        else:
-            return motion_error_response(result)
+        return api_response(runtime_api.execute_ordered_motion_chain(request.json))
 
     @app.route("/unwind/joint6", methods=["POST"])
     def unwind_joint6():
-        data = request.json or {}
-        blocking = bool(data.get("blocking", True))
-        queue_if_busy = bool(data.get("queue_if_busy", True))
-        vel = data.get("vel")
-        acc = data.get("acc")
-
-        try:
-            vel = None if vel is None else float(vel)
-            acc = None if acc is None else float(acc)
-        except (TypeError, ValueError):
-            return jsonify({
-                "result": -1,
-                "success": False,
-                "error": "vel and acc must be numeric when provided",
-            }), 400
-
-        try:
-            result = robot.unwind_joint6(
-                blocking=blocking,
-                queue_if_busy=queue_if_busy,
-                vel=vel,
-                acc=acc,
-            )
-        except Exception as exc:
-            traceback.print_exc()
-            robot.node.get_logger().error(f"Error executing explicit Joint_6 unwind: {exc}")
-            return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
-
-        task_id = getattr(robot.node, 'last_submitted_task_id', None)
-        if result > 0:
-            return jsonify({
-                "result": result,
-                "success": True,
-                "queued": True,
-                "queue_position": result,
-                "task_id": task_id,
-            }), 202
-        if result == 0:
-            return jsonify({
-                "result": result,
-                "success": True,
-                "queued": False,
-                "task_id": task_id,
-            }), 200
-        return motion_error_response(result)
-
+        return api_response(runtime_api.unwind_joint6(request.json))
 
     @app.route("/safety/walls/enabled", methods=["GET"])
     def safety_walls_enabled():
-        body = _as_dict(robot.get_safety_walls_status(), "invalid safety wall status")
-        success = not body.get("error")
-        return jsonify({**body, "success": success, "enabled": bool(body.get("enabled", False))}), 200 if success else 503
+        return api_response(runtime_api.safety_walls_enabled())
 
     @app.route("/safety/walls/status", methods=["GET"])
     def safety_walls_status():
-        body = _as_dict(robot.get_safety_walls_status(), "invalid safety wall status")
-        success = not body.get("error")
-        return jsonify({**body, "success": success}), 200 if success else 503
+        return api_response(runtime_api.safety_walls_status())
 
     @app.route("/safety/walls/enable", methods=["POST"])
     def enable_safety_walls():
-        body = _as_dict(robot.enable_safety_walls(), "invalid safety wall status")
-        success = bool(body.get("enabled", False)) and not body.get("error")
-        return jsonify({**body, "success": success}), 200 if success else 500
+        return api_response(runtime_api.enable_safety_walls())
 
     @app.route("/safety/walls/disable", methods=["POST"])
     def disable_safety_walls():
-        body = _as_dict(robot.disable_safety_walls(), "invalid safety wall status")
-        success = not bool(body.get("enabled", True)) and not body.get("error")
-        return jsonify({**body, "success": success}), 200 if success else 500
+        return api_response(runtime_api.disable_safety_walls())
 
     @app.route("/position/current", methods=["GET"])
     def get_position():
-        pos = robot.get_current_position()
-        if pos is None:
-            return _response_error("current position unavailable", 503)
-        return jsonify({"success": True, "position": pos})
+        return api_response(runtime_api.current_position())
 
     @app.route("/position/flange", methods=["GET"])
     def get_flange_position():
-        pos = robot.get_current_flange_position()
-        if pos is None:
-            return _response_error("current flange position unavailable", 503)
-        return jsonify({"success": True, "position": pos})
+        return api_response(runtime_api.flange_position())
 
     @app.route("/tool/registry", methods=["GET"])
     def get_tool_registry():
-        return jsonify({"success": True, **config.get_tool_registry_snapshot()})
+        return api_response(runtime_api.tool_registry())
 
     @app.route("/tool/active", methods=["GET"])
     def get_active_tool():
-        return jsonify({
-            "success": True,
-            "tool_name": getattr(node, "active_tool_name", "TOOL_0"),
-        })
+        return api_response(runtime_api.active_tool())
 
     @app.route("/tool/active", methods=["POST"])
     def set_active_tool():
-        try:
-            payload = request.json or {}
-            if "tool_id" in payload:
-                tool_name = config.resolve_tool_name(payload.get("tool_id"))
-            else:
-                tool_name = str(payload.get("name") or payload.get("tool_name") or "").strip()
-                if not tool_name:
-                    raise ValueError("tool_id or tool_name is required")
-            node.set_tool(tool_name)
-            return jsonify({
-                "success": True,
-                "tool_name": getattr(node, "active_tool_name", tool_name),
-            })
-        except ValueError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
-        except Exception as exc:
-            traceback_text = traceback.format_exc()
-            node.get_logger().error(
-                "REST /tool/active exception: "
-                f"{exc}\n{traceback_text}"
-            )
-            return jsonify({"success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.set_active_tool(request.json))
 
     @app.route("/tool/registry/<int:tool_id>", methods=["POST"])
     def update_tool_registry(tool_id):
-        try:
-            payload = request.json or {}
-            transform = payload.get("transform")
-            name = payload.get("name")
-            persist = bool(payload.get("persist", False))
-            snapshot = config.update_tool_registry(
-                tool_id=tool_id,
-                name=name,
-                transform=transform,
-                persist=persist,
-            )
-            if getattr(node, "active_tool_name", None) == config.resolve_tool_name(tool_id):
-                node.set_tool(config.resolve_tool_name(tool_id))
-            return jsonify({"success": True, **snapshot})
-        except ValueError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
-        except Exception as exc:
-            traceback_text = traceback.format_exc()
-            node.get_logger().error(
-                "REST /tool/registry exception: "
-                f"{exc}\n{traceback_text}"
-            )
-            return jsonify({"success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.update_tool_registry(tool_id, request.json))
 
     @app.route("/reachability/pose", methods=["POST"])
     def validate_pose():
-        try:
-            data = request.json or {}
-            target_position = data.get("target_position") or data.get("position")
-            start_position = data.get("start_position")
-            node.get_logger().info(
-                "REST /reachability/pose request: "
-                f"start={start_position} target={target_position} "
-                f"tool={data.get('tool', 0)} user={data.get('user', 0)} "
-                f"has_seed_joint_state={bool(data.get('start_joint_state'))}"
-            )
-            if not target_position or len(target_position) != 6:
-                return _response_error("Invalid target_position format", 400, reachable=False)
-            if start_position is None:
-                start_position = robot.get_current_position()
-            if not start_position or len(start_position) != 6:
-                return _response_error("Invalid or unavailable start_position", 400, reachable=False)
-
-            result = validate_pose_from_start(
-                node,
-                robot,
-                start_position=start_position,
-                target_position=target_position,
-                tool=data.get("tool", 0),
-                user=data.get("user", 0),
-                start_joint_state_payload=data.get("start_joint_state"),
-            )
-            result = _to_jsonable(result)
-            http_status = 200 if result.get("reachable") else 409 if result.get("reason") == "cartesian_path_partial" else 400
-            log_fn = node.get_logger().info if result.get("reachable") else node.get_logger().warning
-            log_fn(f"REST /reachability/pose response: http={http_status} result={result}")
-            return jsonify({**result, "success": bool(result.get("reachable"))}), http_status
-        except Exception as exc:
-            traceback_text = traceback.format_exc()
-            node.get_logger().error(
-                "REST /reachability/pose exception: "
-                f"{exc}\n{traceback_text}"
-            )
-            return jsonify({
-                "success": False,
-                "reachable": False,
-                "reason": "rest_handler_exception",
-                "error": str(exc),
-            }), 500
+        return api_response(runtime_api.validate_pose(request.json))
 
     @app.route("/velocity/current", methods=["GET"])
     def get_velocity():
-        vel = robot.get_current_velocity()
-        if vel is None:
-            return _response_error("current velocity unavailable", 503)
-        return jsonify({"success": True, "velocity": vel})
+        return api_response(runtime_api.current_velocity())
 
     @app.route("/stop", methods=["POST"])
     def stop_motion():
-        robot.node.get_logger().info("[rest_server.py] Stopping motion")
-        stop_result = robot.stop_motion()
-        if not isinstance(stop_result, dict):
-            stop_result = {
-                "state": "ERROR",
-                "result": -2,
-                "success": False,
-                "stopped": False,
-                "error": f"Unexpected stop result type: {type(stop_result).__name__}",
-            }
-        return jsonify({
-            "stop_state": stop_result.get("state", "ERROR"),
-            "stopped": bool(stop_result.get("stopped", False)),
-            "result": stop_result.get("result", -2),
-            "success": bool(stop_result.get("success", False)),
-            "queue_cleared": int(stop_result.get("queue_cleared", 0)),
-            **({"error": stop_result["error"]} if stop_result.get("error") else {}),
-        })
+        return api_response(runtime_api.stop_motion())
 
     @app.route("/workobject/set", methods=["POST"])
     def set_workobject():
-        data = request.json or {}
-        origin = data.get("origin")
-
-        if not origin or len(origin) != 6:
-            return _response_error("Invalid origin format", 400)
-
-        try:
-            workobject = WorkObject(origin=origin)
-            robot.set_workobject(workobject, user_id=data.get("user_id", 0))
-        except Exception as exc:
-            node.get_logger().error(f"Workobject endpoint error: {exc}")
-            return _response_error(str(exc), 500)
-        return jsonify({"success": True, "origin": origin, "user_id": data.get("user_id", 0)})
+        return api_response(runtime_api.set_workobject(request.json))
 
     @app.route("/status", methods=["GET"])
     def get_status():
-        """Get robot execution status and queue size."""
-        status = robot.node.status_publisher.get_status_dict()
-        get_ordered_status = getattr(robot, "get_ordered_motion_chain_status", None)
-        if callable(get_ordered_status):
-            status["ordered_motion_chain"] = _to_jsonable(get_ordered_status())
-        status["success"] = True
-        status.update(runtime_state_snapshot())
-        return jsonify(status)
+        return api_response(runtime_api.status())
 
     @app.route("/execute/ordered_motion_chain/status", methods=["GET"])
     def get_ordered_motion_chain_status():
-        get_ordered_status = getattr(robot, "get_ordered_motion_chain_status", None)
-        if not callable(get_ordered_status):
-            return jsonify({"success": True, "supported": False, "active": False})
-        status = _as_dict(get_ordered_status(), "invalid ordered motion chain status")
-        success = not status.get("error")
-        return jsonify({**status, "success": success}), 200 if success else 500
+        return api_response(runtime_api.ordered_motion_chain_status())
 
     @app.route("/state/snapshot", methods=["GET"])
     def get_state_snapshot():
-        """Get common UI/runtime state in one request."""
-        position = robot.get_current_position()
-        flange_position = robot.get_current_flange_position()
-        velocity = robot.get_current_velocity()
-        unavailable = []
-        if position is None:
-            unavailable.append("position")
-        if flange_position is None:
-            unavailable.append("flange_position")
-        if velocity is None:
-            unavailable.append("velocity")
-        return jsonify({
-            "success": not unavailable,
-            "partial": bool(unavailable),
-            "unavailable_fields": unavailable,
-            "position": position,
-            "flange_position": flange_position,
-            "velocity": velocity,
-            "status": robot.node.status_publisher.get_status_dict(),
-            "active_tool": getattr(node, "active_tool_name", "TOOL_0"),
-            "safety_walls": robot.get_safety_walls_status(),
-            **runtime_state_snapshot(),
-        })
+        return api_response(runtime_api.state_snapshot())
 
     @app.route("/state/kinematics", methods=["GET"])
     def get_state_kinematics():
-        """Get current TCP kinematic state in one request."""
-        position = robot.get_current_position()
-        velocity = robot.get_current_velocity()
-        acceleration = robot.get_current_acceleration()
-
-        if position is None:
-            return jsonify({
-                "success": False,
-                "error": "current position unavailable",
-            }), 503
-
-        unavailable = []
-        if velocity is None:
-            unavailable.append("velocity")
-        if acceleration is None:
-            unavailable.append("acceleration")
-
-        return jsonify({
-            "success": not unavailable,
-            "partial": bool(unavailable),
-            "unavailable_fields": unavailable,
-            "position": position,
-            "velocity": velocity,
-            "acceleration": acceleration,
-        }), 200 if not unavailable else 206
-
+        return api_response(runtime_api.state_kinematics())
 
     @app.route("/jog", methods=["POST"])
     def jog():
-        try:
-            axis, direction, step, vel, acc = parse_jog_request(request.json)
-            result = robot.start_jog(axis, direction, step, vel, acc)
-            if result == 0:
-                return jsonify({"result": result, "success": True}), 200
-            return motion_error_response(result)
-        except ValueError as exc:
-            return jsonify({"result": -1, "success": False, "error": str(exc)}), 400
-        except Exception as exc:
-            robot.node.get_logger().error(f"Jog endpoint error: {exc}")
-            return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.jog(request.json))
 
     @app.route("/io/digital_output", methods=["POST"])
     def set_digital_output():
-        try:
-            data = request.json or {}
-            port = int(data["port"])
-            value = int(data["value"])
-        except KeyError as exc:
-            return jsonify({"result": -1, "success": False, "error": f"Missing field: {exc.args[0]}"}), 400
-        except (TypeError, ValueError):
-            return jsonify({"result": -1, "success": False, "error": "port and value must be integers"}), 400
-
-        if port < 0:
-            return jsonify({"result": -1, "success": False, "error": "port must be >= 0"}), 400
-        if value not in (0, 1):
-            return jsonify({"result": -1, "success": False, "error": "value must be 0 or 1"}), 400
-
-        try:
-            result = robot.setDigitalOutput(port, value)
-            if result == 0:
-                return jsonify({"result": 0, "success": True, "port": port, "value": value}), 200
-            return jsonify({"result": result, "success": False, "port": port, "value": value}), 500
-        except Exception as exc:
-            robot.node.get_logger().error(f"Digital output endpoint error: {exc}")
-            return jsonify({"result": -1, "success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.set_digital_output(request.json))
 
     @app.route("/drive/enable", methods=["POST"])
     def enable_drive_operation():
-        try:
-            result = _to_jsonable(node.set_drive_operation_enabled(True))
-            return drive_command_response(result, desired_enabled=True)
-        except Exception as exc:
-            node.get_logger().error(f"Drive enable endpoint error: {exc}")
-            logger.exception("Drive enable endpoint error")
-            return jsonify({"success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.enable_drive_operation())
 
     @app.route("/drive/disable", methods=["POST"])
     def disable_drive_operation():
-        try:
-            result = _to_jsonable(node.set_drive_operation_enabled(False))
-            return drive_command_response(result, desired_enabled=False)
-        except Exception as exc:
-            node.get_logger().error(f"Drive disable endpoint error: {exc}")
-            logger.exception("Drive disable endpoint error")
-            return jsonify({"success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.disable_drive_operation())
 
     @app.route("/drive/status", methods=["GET"])
     def drive_operation_status():
-        try:
-            return jsonify({
-                **_to_jsonable(node.get_drive_operation_status()),
-                "hardware_ready": bool(node.is_hardware_ready_for_motion()),
-                "hardware_fault": None if node.is_hardware_ready_for_motion() else node.get_hardware_fault_reason(),
-            })
-        except Exception as exc:
-            node.get_logger().error(f"Drive status endpoint error: {exc}")
-            logger.exception("Drive status endpoint error")
-            return jsonify({"success": False, "error": str(exc)}), 500
+        return api_response(runtime_api.drive_operation_status())
 
     @app.route("/motion/interlock/status", methods=["GET"])
     def motion_interlock_status():
-        return jsonify({"success": True, **_to_jsonable(node.get_motion_interlock_status())})
+        return api_response(runtime_api.motion_interlock_status())
 
     @app.route("/motion/interlock/reset", methods=["POST"])
     def reset_motion_interlock():
-        result = _to_jsonable(node.reset_motion_interlock())
-        return jsonify({
-            **result,
-            "hardware_ready": bool(node.is_hardware_ready_for_motion()),
-            "hardware_fault": None if node.is_hardware_ready_for_motion() else node.get_hardware_fault_reason(),
-            "motion_interlock": _to_jsonable(node.get_motion_interlock_status()),
-        })
+        return api_response(runtime_api.reset_motion_interlock())
 
     # ------------------------------------------------------------------
     # Run server
