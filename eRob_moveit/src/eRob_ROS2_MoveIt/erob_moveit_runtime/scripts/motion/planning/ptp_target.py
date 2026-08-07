@@ -242,6 +242,55 @@ def _request_native_ptp(
     )
 
 
+def plan_ptp_trajectory(
+    robot_controller,
+    target_tcp_pose,
+    start_joint_state,
+    *,
+    tool_transform=None,
+):
+    """
+    Plan a native joint-space PTP trajectory from an explicitly supplied
+    joint state.
+
+    Used by:
+    - normal move_ptp, with the live joint state
+    - ordered motion chains, with the predicted end state of the previous segment
+
+    Returns:
+        ComputePtp.Response
+    """
+    if start_joint_state is None:
+        raise RuntimeError(
+            "PTP start joint state unavailable"
+        )
+
+    T_tool = (
+        tool_transform
+        if tool_transform is not None
+        else robot_controller.T_tool
+    )
+
+    target_poses, err = _to_pose_list(
+        robot_controller,
+        [list(target_tcp_pose[:6])],
+        T_tool,
+        check_last_only=True,
+    )
+
+    if err:
+        raise RuntimeError(
+            f"PTP target pose conversion failed with result {err}"
+        )
+
+    target_pose = target_poses[0]
+
+    return _request_native_ptp(
+        robot_controller,
+        target_pose,
+        start_joint_state,
+    )
+
 def send_ptp_goal(
     robot_controller,
     x_mm,
@@ -265,7 +314,6 @@ def send_ptp_goal(
         robot_controller.get_logger().error(
             "[PTP] Current joint state unavailable"
         )
-
         return -4
 
     target_tcp_pose = [
@@ -277,29 +325,12 @@ def send_ptp_goal(
         rz,
     ]
 
-    T_tool = (
-        tool_transform
-        if tool_transform is not None
-        else robot_controller.T_tool
-    )
-
-    target_poses, err = _to_pose_list(
-        robot_controller,
-        [target_tcp_pose],
-        T_tool,
-        check_last_only=True,
-    )
-
-    if err:
-        return err
-
-    target_pose = target_poses[0]
-
     try:
-        response = _request_native_ptp(
+        response = plan_ptp_trajectory(
             robot_controller,
-            target_pose,
+            target_tcp_pose,
             start_state,
+            tool_transform=tool_transform,
         )
 
     except TimeoutError as exc:

@@ -178,10 +178,10 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
         if not isinstance(raw_segment, dict):
             raise ValueError(f"Invalid segment {index}: expected object")
         segment_type = str(raw_segment.get("type") or raw_segment.get("kind") or "").strip().lower()
-        if segment_type not in {"linear", "path", "unwind_joint6"}:
+        if segment_type not in {"linear", "ptp", "path", "unwind_joint6"}:
             raise ValueError(f"Invalid segment {index}: unsupported type {segment_type!r}")
         segment = {"type": segment_type, "label": str(raw_segment.get("label") or f"segment_{index + 1}")}
-        if segment_type == "linear":
+        if segment_type in {"linear", "ptp"}:
             position = raw_segment.get("position")
             if not position or len(position) != 6:
                 raise ValueError(f"Invalid segment {index}: linear position must have 6 values")
