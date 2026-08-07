@@ -246,13 +246,6 @@ def _build_batched_contour_trajectory(robot_controller, poses, seed_state=None):
         )
         return ContourIkExecution(response.trajectory, report)
 
-    if report.ok:
-        _validate_sampled_state_validity(
-            robot_controller,
-            list(response.trajectory.joint_trajectory.joint_names),
-            [list(point.positions) for point in response.trajectory.joint_trajectory.points],
-            report,
-        )
     return ContourIkExecution(response.trajectory, report)
 
 

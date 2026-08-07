@@ -19,6 +19,8 @@
 #include <moveit_msgs/msg/move_it_error_codes.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
+#include <moveit/planning_scene_monitor/planning_scene_monitor.hpp>
+
 
 using ComputeContourIK = erob_moveit_runtime::srv::ComputeContourIK;
 
@@ -30,6 +32,7 @@ constexpr int32_t ERROR_IK_FAILED = -2;
 constexpr int32_t ERROR_FK_ERROR = -3;
 constexpr int32_t ERROR_JOINT_STEP = -4;
 constexpr int32_t ERROR_JOINT_SPAN = -5;
+constexpr int32_t ERROR_COLLISION = -10;
 
 double nearestEquivalentAngle(double reference, double value)
 {
@@ -146,17 +149,69 @@ public:
         RCLCPP_INFO(this->get_logger(), "Service '/compute_contour_ik' created");
     }
 
-    void initialize()
+   void initialize()
+{
+    auto node_ptr = shared_from_this();
+
+    loader_ =
+        std::make_shared<
+            robot_model_loader::RobotModelLoader
+        >(node_ptr);
+
+    model_ = loader_->getModel();
+
+    if (!model_)
     {
-        auto node_ptr = shared_from_this();
-        loader_ = std::make_shared<robot_model_loader::RobotModelLoader>(node_ptr);
-        model_ = loader_->getModel();
-        if (!model_)
-        {
-            throw std::runtime_error("Robot model load failed");
-        }
-        RCLCPP_INFO(this->get_logger(), "Robot model cached for contour IK");
+        throw std::runtime_error(
+            "Contour IK helper failed to load robot model"
+        );
     }
+
+    /*
+     * Maintain a local copy of MoveIt's PlanningScene.
+     *
+     * This allows collision checking directly in C++ instead
+     * of calling /check_state_validity once for every path point.
+     */
+    planning_scene_monitor_ =
+        std::make_shared<
+            planning_scene_monitor::PlanningSceneMonitor
+        >(
+            node_ptr,
+            loader_,
+            "contour_ik_planning_scene_monitor"
+        );
+
+    if (!planning_scene_monitor_->getPlanningScene())
+    {
+        throw std::runtime_error(
+            "Contour IK helper failed to create PlanningSceneMonitor"
+        );
+    }
+
+    planning_scene_monitor_->startSceneMonitor();
+    planning_scene_monitor_->startWorldGeometryMonitor();
+
+    /*
+     * The helper starts after move_group. Collision objects may
+     * therefore already exist before our subscriptions start.
+     * Pull one complete initial scene.
+     */
+    if (!planning_scene_monitor_->requestPlanningSceneState(
+            "/get_planning_scene"))
+    {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Could not request initial planning scene; "
+            "continuing with monitored scene updates"
+        );
+    }
+
+    RCLCPP_INFO(
+        this->get_logger(),
+        "Contour IK helper ready with local PlanningScene"
+    );
+}
 
 private:
     struct TimingStats
@@ -168,6 +223,8 @@ private:
         double smoothing_fk_s = 0.0;
         double final_validate_s = 0.0;
         double response_pack_s = 0.0;
+        double collision_check_s = 0.0;
+        std::size_t collision_checks = 0;
         std::size_t candidate_attempts = 0;
         std::size_t candidate_successes = 0;
         std::size_t smoothing_candidates = 0;
@@ -180,6 +237,9 @@ private:
     rclcpp::Service<ComputeContourIK>::SharedPtr service_;
     std::shared_ptr<robot_model_loader::RobotModelLoader> loader_;
     moveit::core::RobotModelPtr model_;
+    std::shared_ptr<
+    planning_scene_monitor::PlanningSceneMonitor
+    > planning_scene_monitor_;
 
     void fail(
         const std::shared_ptr<ComputeContourIK::Response>& response,
@@ -521,6 +581,137 @@ private:
         }
         return seed;
     }
+
+    bool validateCollisionFreeTrajectory(
+    const std::shared_ptr<ComputeContourIK::Response>& response,
+    const std::string& group_name,
+    const std::vector<int>& variable_indices,
+    moveit::core::RobotState& state,
+    const std::vector<std::vector<double>>& solved_points,
+    TimingStats& timing_stats)
+{
+    if (!planning_scene_monitor_)
+    {
+        fail(
+            response,
+            ERROR_INVALID_REQUEST,
+            "PlanningSceneMonitor is not initialized"
+        );
+        return false;
+    }
+
+    const double started_s = steadySeconds();
+
+    /*
+     * Hold one read lock while validating the complete returned
+     * trajectory.
+     *
+     * This avoids ROS service calls and also means all points are
+     * checked against one consistent PlanningScene snapshot.
+     */
+    planning_scene_monitor::LockedPlanningSceneRO scene(
+        planning_scene_monitor_
+    );
+
+    if (!scene)
+    {
+        fail(
+            response,
+            ERROR_INVALID_REQUEST,
+            "PlanningScene is unavailable"
+        );
+        return false;
+    }
+
+    for (std::size_t i = 0;
+         i < solved_points.size();
+         ++i)
+    {
+        setVariablePositionsByIndex(
+            state,
+            variable_indices,
+            solved_points[i]
+        );
+
+        state.update();
+
+        ++timing_stats.collision_checks;
+
+        if (scene->isStateColliding(
+                state,
+                group_name,
+                false))
+        {
+            /*
+             * Only request detailed contacts for the failed point.
+             * Don't pay the contact-generation cost for every sample.
+             */
+            collision_detection::CollisionRequest collision_request;
+            collision_detection::CollisionResult collision_result;
+
+            collision_request.group_name = group_name;
+            collision_request.contacts = true;
+            collision_request.max_contacts = 20;
+            collision_request.max_contacts_per_pair = 5;
+
+            scene->checkCollision(
+                collision_request,
+                collision_result,
+                state
+            );
+
+            std::ostringstream message;
+
+            message
+                << "collision at contour sample "
+                << i
+                << "/"
+                << (solved_points.size() - 1);
+
+            if (!collision_result.contacts.empty())
+            {
+                message << " contacts=[";
+
+                bool first = true;
+
+                for (const auto& contact_pair :
+                     collision_result.contacts)
+                {
+                    if (!first)
+                    {
+                        message << ", ";
+                    }
+
+                    first = false;
+
+                    message
+                        << contact_pair.first.first
+                        << "<->"
+                        << contact_pair.first.second;
+                }
+
+                message << "]";
+            }
+
+            timing_stats.collision_check_s +=
+                steadySeconds() - started_s;
+
+            fail(
+                response,
+                ERROR_COLLISION,
+                message.str(),
+                static_cast<uint32_t>(i)
+            );
+
+            return false;
+        }
+    }
+
+    timing_stats.collision_check_s +=
+        steadySeconds() - started_s;
+
+    return true;
+}
 
     bool solveLocalIKCandidate(
         moveit::core::RobotState& state,
@@ -1018,6 +1209,29 @@ private:
         }
         timing_stats.final_validate_s += steadySeconds() - final_validate_started_s;
 
+        /*
+         * Validate the final, smoothed trajectory against the current
+         * MoveIt PlanningScene before returning it.
+         */
+        if (!validateCollisionFreeTrajectory(
+                response,
+                group_name,
+                output_variable_indices,
+                state,
+                solved_points,
+                timing_stats))
+        {
+            response->points_solved =
+                static_cast<uint32_t>(
+                    solved_points.size()
+                );
+
+            response->solve_time_s =
+                (this->now() - started_at).seconds();
+
+            return;
+        }
+
         const double response_pack_started_s = steadySeconds();
         response->trajectory.joint_trajectory.points.reserve(solved_points.size());
         for (const auto& positions : solved_points)
@@ -1035,7 +1249,27 @@ private:
         response->solve_time_s = (this->now() - started_at).seconds();
         RCLCPP_INFO(
             this->get_logger(),
-            "Contour IK solved %zu poses in %.3fs: fk_max=%.4fmm/%.4fdeg max_step=%.4f span=%.4f endpoint=%.4f curvature=%.5f->%.5f smoothing_updates=%zu smoothing_s=%.3f timings{ik=%.3f candidate_eval=%.3f per_point_fk=%.3f smoothing_candidate=%.3f smoothing_fk=%.3f final_validate=%.3f response_pack=%.3f candidates=%zu/%zu smoothing_checks=%zu/%zu fast_points=%zu full_points=%zu rollbacks=%zu}",
+            "Contour IK solved %zu poses in %.3fs: "
+            "fk_max=%.4fmm/%.4fdeg "
+            "max_step=%.4f span=%.4f endpoint=%.4f "
+            "curvature=%.5f->%.5f "
+            "smoothing_updates=%zu smoothing_s=%.3f "
+            "timings{"
+            "ik=%.3f "
+            "candidate_eval=%.3f "
+            "per_point_fk=%.3f "
+            "smoothing_candidate=%.3f "
+            "smoothing_fk=%.3f "
+            "final_validate=%.3f "
+            "collision=%.3f "
+            "response_pack=%.3f "
+            "collision_checks=%zu "
+            "candidates=%zu/%zu "
+            "smoothing_checks=%zu/%zu "
+            "fast_points=%zu "
+            "full_points=%zu "
+            "rollbacks=%zu"
+            "}",
             solved_points.size(),
             response->solve_time_s,
             response->max_fk_position_error_mm,
@@ -1053,7 +1287,9 @@ private:
             timing_stats.smoothing_candidate_s,
             timing_stats.smoothing_fk_s,
             timing_stats.final_validate_s,
+            timing_stats.collision_check_s,
             timing_stats.response_pack_s,
+            timing_stats.collision_checks,
             timing_stats.candidate_successes,
             timing_stats.candidate_attempts,
             timing_stats.smoothing_fk_checks,

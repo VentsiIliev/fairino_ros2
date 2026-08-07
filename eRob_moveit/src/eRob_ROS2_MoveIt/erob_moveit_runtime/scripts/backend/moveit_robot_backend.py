@@ -226,16 +226,16 @@ class MoveItRobotBackend(IRobotBackend):
             return -1
 
     def execute_path(
-        self,
-        path,
-        rx=None,
-        ry=None,
-        rz=None,
-        vel=0.6,
-        acc=0.4,
-        blocking=True,
-        trajectory_optimizer=None,
-        orientation_mode="constant",
+            self,
+            path,
+            rx=None,
+            ry=None,
+            rz=None,
+            vel=0.6,
+            acc=0.4,
+            blocking=True,
+            trajectory_optimizer=None,
+            orientation_mode="constant",
     ):
         started_at = perf_counter()
         """Execute path with automatic selection of best execution strategy.
@@ -259,7 +259,7 @@ class MoveItRobotBackend(IRobotBackend):
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
- 
+
         orientation_mode = str(orientation_mode or "constant").strip().lower()
         # Convert velocity/acceleration from percentage (0-100) to scaling factor (0.0-1.0)
         vel_scale = max(0.0, min(1.0, vel / 100.0))
@@ -324,10 +324,10 @@ class MoveItRobotBackend(IRobotBackend):
         if len(waypoints_pose) > 1:
             total_dist = 0.0
             for i in range(len(waypoints_pose) - 1):
-                dx = waypoints_pose[i+1][0] - waypoints_pose[i][0]
-                dy = waypoints_pose[i+1][1] - waypoints_pose[i][1]
-                dz = waypoints_pose[i+1][2] - waypoints_pose[i][2]
-                total_dist += (dx**2 + dy**2 + dz**2) ** 0.5
+                dx = waypoints_pose[i + 1][0] - waypoints_pose[i][0]
+                dy = waypoints_pose[i + 1][1] - waypoints_pose[i][1]
+                dz = waypoints_pose[i + 1][2] - waypoints_pose[i][2]
+                total_dist += (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
             avg_spacing = total_dist / (len(waypoints_pose) - 1)
         else:
             avg_spacing = 0.0
@@ -350,7 +350,7 @@ class MoveItRobotBackend(IRobotBackend):
                 "[EXECUTE_PATH] Single waypoint detected — delegating to single-target planner"
             )
             from motion.strategies import SingleTargetStrategy
- 
+
             target = waypoints_pose[0]
             result = self.node.execute(
                 SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel_scale, acc_scale)
@@ -361,7 +361,7 @@ class MoveItRobotBackend(IRobotBackend):
                 selected_optimizer = str(
                     getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
                 ).strip().upper() or None
- 
+
             # ✅ ALWAYS use compute_cartesian_path for consistency
             # Controller's spline interpolation + TOTG provides smooth continuous motion
             self.node.get_logger().info(
@@ -524,7 +524,8 @@ class MoveItRobotBackend(IRobotBackend):
         started_at = perf_counter()
         if self.node is None or not segments:
             return -1
-        from motion.move_linear_timing import begin as begin_motion_timing, clear as clear_motion_timing, mark as mark_motion_timing
+        from motion.move_linear_timing import begin as begin_motion_timing, clear as clear_motion_timing, \
+            mark as mark_motion_timing
 
         begin_motion_timing(self.node, source="ordered_motion_chain")
         mark_motion_timing(
@@ -634,7 +635,7 @@ class MoveItRobotBackend(IRobotBackend):
         # Refresh safety/collision state once before preplanning
         # the complete ordered chain.
         #
-        planning_node.force_safety_update()
+        # planning_node.force_safety_update()
         init_started = perf_counter()
         tool_transform = self.node.get_tool_transform(tool)
         start_cartesian = list(planning_node.prev_cartesian[:6])
@@ -646,7 +647,7 @@ class MoveItRobotBackend(IRobotBackend):
         start_state.joint_state = clean_joint_state
         start_state.is_diff = False
         selected_optimizer = trajectory_optimizer or (
-            str(getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or "").strip().upper() or None
+                str(getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or "").strip().upper() or None
         )
         previous_execution_suppress = bool(getattr(self.node, "_suppress_post_success_unwind", False))
         mark_motion_timing(
@@ -690,15 +691,15 @@ class MoveItRobotBackend(IRobotBackend):
             )
 
         def _plan_unwind_direct_ik_trajectory(
-            current_pos_wobj,
-            target_pos_wobj,
-            rotation_index,
-            vel_scale,
-            acc_scale,
-            seed_state,
-            joint_name=None,
-            joint_start=None,
-            joint_target=None,
+                current_pos_wobj,
+                target_pos_wobj,
+                rotation_index,
+                vel_scale,
+                acc_scale,
+                seed_state,
+                joint_name=None,
+                joint_start=None,
+                joint_target=None,
         ):
             segment_started = perf_counter()
             direct_ik_step_deg = max(0.1, float(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG", 4.0)))
@@ -721,7 +722,8 @@ class MoveItRobotBackend(IRobotBackend):
             ik_result.report.timings["total_before_optimizer_s"] = perf_counter() - segment_started
             _log_report(planning_node, ik_result.report)
             if not ik_result.report.ok:
-                raise RuntimeError(f"unwind direct IK failed: {ik_result.report.failure_reason} {ik_result.report.details}")
+                raise RuntimeError(
+                    f"unwind direct IK failed: {ik_result.report.failure_reason} {ik_result.report.details}")
             if joint_name is not None and joint_start is not None and joint_target is not None:
                 _force_unwind_joint_branch(
                     ik_result.trajectory.joint_trajectory,
@@ -729,7 +731,8 @@ class MoveItRobotBackend(IRobotBackend):
                     float(joint_start),
                     float(joint_target),
                 )
-            optimizer_name = str(getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER", "") or "").strip().upper() or None
+            optimizer_name = str(
+                getattr(config, "EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER", "") or "").strip().upper() or None
             optimized, optimize_elapsed = _optimize_sync(
                 planning_node,
                 ik_result.trajectory,
@@ -1150,8 +1153,8 @@ class MoveItRobotBackend(IRobotBackend):
                 if joint_name not in joint_names:
                     raise RuntimeError(f"Joint {joint_name!r} is not configured")
                 if (
-                    index == len(segments) - 1
-                    and bool(getattr(config, "EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION", True))
+                        index == len(segments) - 1
+                        and bool(getattr(config, "EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION", True))
                 ):
                     planning_node.get_logger().info(
                         "[UNWIND_J6] Ordered final unwind will be planned live during execution"
@@ -1190,14 +1193,17 @@ class MoveItRobotBackend(IRobotBackend):
                         "plan_elapsed_s": perf_counter() - plan_started,
                         "protected": bool(segment.get("protected", False)),
                     }
-                vel_percent = self.node.trajectory_executor._clamp_percentage(segment.get("vel", config.DEFAULT_VEL_PERCENT))
-                acc_percent = self.node.trajectory_executor._clamp_percentage(segment.get("acc", config.DEFAULT_ACC_PERCENT))
+                vel_percent = self.node.trajectory_executor._clamp_percentage(
+                    segment.get("vel", config.DEFAULT_VEL_PERCENT))
+                acc_percent = self.node.trajectory_executor._clamp_percentage(
+                    segment.get("acc", config.DEFAULT_ACC_PERCENT))
                 vel_scale = vel_percent / 100.0
                 acc_scale = acc_percent / 100.0
                 sign = float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN", 1.0))
                 if abs(sign) < 1e-9:
                     sign = 1.0
-                max_step_deg = max(1.0, abs(float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG", 180.0))))
+                max_step_deg = max(1.0,
+                                   abs(float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG", 180.0))))
                 total_delta_deg = math.degrees(remaining) * sign
                 segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
                 planning_node.get_logger().info(
@@ -1317,10 +1323,10 @@ class MoveItRobotBackend(IRobotBackend):
                         f"plan_s={planned['plan_elapsed_s']:.3f}"
                     )
                     if not _wait_ordered_trajectory_point_match(
-                        planned["label"],
-                        planned["trajectory"],
-                        planned["trajectory"].points[0],
-                        "start",
+                            planned["label"],
+                            planned["trajectory"],
+                            planned["trajectory"].points[0],
+                            "start",
                     ):
                         result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
                     else:
@@ -1332,6 +1338,7 @@ class MoveItRobotBackend(IRobotBackend):
                             points=len(getattr(planned["trajectory"], "points", []) or []),
                         )
                         _send_trajectory_to_controller(self.node, planned["trajectory"])
+
                         mark_motion_timing(
                             self.node,
                             "ordered_wait_execution_start",
@@ -1354,10 +1361,10 @@ class MoveItRobotBackend(IRobotBackend):
                                 f"label='{planned['label']}', verifying live end state before next segment"
                             )
                             if not _wait_ordered_trajectory_point_match(
-                                planned["label"],
-                                planned["trajectory"],
-                                planned["trajectory"].points[-1],
-                                "end",
+                                    planned["label"],
+                                    planned["trajectory"],
+                                    planned["trajectory"].points[-1],
+                                    "end",
                             ):
                                 result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
             elif segment_type == "unwind_joint6":
@@ -1399,7 +1406,8 @@ class MoveItRobotBackend(IRobotBackend):
                     if result != 0:
                         break
                 if result == 0 and planned.get("check") is not None:
-                    result = 0 if self.node.trajectory_executor._verify_explicit_unwind_complete(planned["check"]) else -6
+                    result = 0 if self.node.trajectory_executor._verify_explicit_unwind_complete(
+                        planned["check"]) else -6
                 if result != 0:
                     setattr(self.node, "_last_ordered_unwind_failure_time", time.time())
                     setattr(self.node, "_last_ordered_unwind_failure_result", int(result))
@@ -1761,9 +1769,9 @@ class MoveItRobotBackend(IRobotBackend):
         deadline = time.time() + float(timeout_s)
         while time.time() < deadline:
             if (
-                not self.node.is_executing
-                and not self.node.is_motion_active()
-                and not self.node.has_pending_motion()
+                    not self.node.is_executing
+                    and not self.node.is_motion_active()
+                    and not self.node.has_pending_motion()
             ):
                 return int(getattr(self.node, 'last_move_result', -1))
             time.sleep(0.01)
@@ -1803,15 +1811,15 @@ class MoveItRobotBackend(IRobotBackend):
             )
 
     def _send_rotational_unwind_path(
-        self,
-        current_pos_wobj,
-        target_pos_wobj,
-        rotation_index,
-        vel_scale,
-        acc_scale,
-        joint_name=None,
-        joint_start=None,
-        joint_target=None,
+            self,
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            vel_scale,
+            acc_scale,
+            joint_name=None,
+            joint_start=None,
+            joint_target=None,
     ):
         if bool(getattr(config, 'EXECUTOR_POST_UNWIND_USE_DIRECT_IK', False)):
             result = self._send_rotational_unwind_direct_ik_path(
@@ -1840,15 +1848,15 @@ class MoveItRobotBackend(IRobotBackend):
         )
 
     def _send_rotational_unwind_direct_ik_path(
-        self,
-        current_pos_wobj,
-        target_pos_wobj,
-        rotation_index,
-        vel_scale,
-        acc_scale,
-        joint_name=None,
-        joint_start=None,
-        joint_target=None,
+            self,
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            vel_scale,
+            acc_scale,
+            joint_name=None,
+            joint_start=None,
+            joint_target=None,
     ):
         started_at = perf_counter()
         direct_ik_step_deg = max(0.1, float(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG', 4.0)))
@@ -1900,7 +1908,8 @@ class MoveItRobotBackend(IRobotBackend):
                 logger=self.node.get_logger(),
             )
 
-        optimizer_name = str(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER', '') or '').strip().upper() or None
+        optimizer_name = str(
+            getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER', '') or '').strip().upper() or None
         try:
             optimized, optimize_elapsed = _optimize_sync(
                 planning_node,
@@ -1928,12 +1937,12 @@ class MoveItRobotBackend(IRobotBackend):
         return 0
 
     def _rotational_path_waypoints_base(
-        self,
-        current_pos_wobj,
-        target_pos_wobj,
-        rotation_index,
-        max_step_override_deg=None,
-        apply_workobject_to_waypoints=True,
+            self,
+            current_pos_wobj,
+            target_pos_wobj,
+            rotation_index,
+            max_step_override_deg=None,
+            apply_workobject_to_waypoints=True,
     ):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         if max_step_override_deg is None:
@@ -2165,9 +2174,9 @@ class MoveItRobotBackend(IRobotBackend):
             deadline = time.time() + float(getattr(config, 'JOG_BLOCKING_TIMEOUT_S', 5.0))
             while time.time() < deadline:
                 if (
-                    not self.node.is_executing
-                    and not self.node.is_motion_active()
-                    and not self.node.has_pending_motion()
+                        not self.node.is_executing
+                        and not self.node.is_motion_active()
+                        and not self.node.has_pending_motion()
                 ):
                     return self.node.last_move_result
                 time.sleep(0.01)

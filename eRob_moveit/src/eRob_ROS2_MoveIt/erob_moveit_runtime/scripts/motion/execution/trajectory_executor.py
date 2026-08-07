@@ -1322,14 +1322,14 @@ class TrajectoryExecutor:
             mark_move_linear_timing(self._node, "controller_prepare_start", points=len(getattr(joint_trajectory, "points", []) or []))
         except Exception:
             pass
-        drive_check_started_at = time.perf_counter()
-        if not self._ensure_drive_enabled_before_trajectory(
-            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
-        ):
-            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
-            with self._motion.lock:
-                self._motion.is_executing = False
-            return
+        # drive_check_started_at = time.perf_counter()
+        # if not self._ensure_drive_enabled_before_trajectory(
+        #     suppress_drive_disable_cancel=suppress_drive_disable_cancel,
+        # ):
+        #     self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
+        #     with self._motion.lock:
+        #         self._motion.is_executing = False
+        #     return
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "drive_check_done", duration_s=time.perf_counter() - drive_check_started_at)
@@ -1451,8 +1451,8 @@ class TrajectoryExecutor:
             self._node.get_logger().info(
                 f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
             self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
-            self._log_planned_trajectory_metrics(joint_trajectory)
-            self._log_final_trajectory_segment(joint_trajectory)
+            # self._log_planned_trajectory_metrics(joint_trajectory)
+            # self._log_final_trajectory_segment(joint_trajectory)
         else:
             time_tolerance_sec = config.EXECUTOR_TIME_MIN_S
 

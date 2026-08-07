@@ -43,12 +43,29 @@ def _wait_future(future, timeout_s: float):
 
 
 def _wait_execution_complete(rc, timeout_s: float) -> int:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + float(timeout_s)
+
+    while time.monotonic() < deadline:
         if not bool(getattr(rc, "is_executing", False)):
-            return int(getattr(rc, "last_move_result", 0))
-        time.sleep(0.01)
-    rc.get_logger().error(f"[SegmentPlan] Timed out waiting for segment execution after {timeout_s:.1f}s")
+            return int(
+                getattr(
+                    rc,
+                    "last_move_result",
+                    0,
+                )
+            )
+
+        #
+        # Ordered execution needs a fast handoff after the
+        # FollowJointTrajectory result callback clears is_executing.
+        #
+        time.sleep(0.002)
+
+    rc.get_logger().error(
+        f"[SegmentPlan] Timed out waiting for segment "
+        f"execution after {timeout_s:.1f}s"
+    )
+
     return -1
 
 
