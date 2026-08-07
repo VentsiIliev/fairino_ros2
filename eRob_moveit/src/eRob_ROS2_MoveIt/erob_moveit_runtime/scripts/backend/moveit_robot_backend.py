@@ -630,6 +630,11 @@ class MoveItRobotBackend(IRobotBackend):
         from motion.move_linear_timing import mark as mark_motion_timing
 
         planning_node = getattr(self.node, "planner_context", self.node)
+        #
+        # Refresh safety/collision state once before preplanning
+        # the complete ordered chain.
+        #
+        planning_node.force_safety_update()
         init_started = perf_counter()
         tool_transform = self.node.get_tool_transform(tool)
         start_cartesian = list(planning_node.prev_cartesian[:6])
