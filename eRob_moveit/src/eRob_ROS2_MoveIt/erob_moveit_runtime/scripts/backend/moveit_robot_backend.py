@@ -615,7 +615,7 @@ class MoveItRobotBackend(IRobotBackend):
     def _execute_ordered_motion_chain_pipelined(self, segments, tool=0, user=0, trajectory_optimizer=None):
         from concurrent.futures import ThreadPoolExecutor
         from copy import deepcopy
-        from moveit_msgs.msg import RobotState
+        from moveit_msgs.msg import RobotState, RobotTrajectory
         from queue import Empty, Queue
         from motion.execution.trajectory_executor import _send_trajectory_to_controller
         from motion.planning.segment_planning import (
@@ -901,6 +901,184 @@ class MoveItRobotBackend(IRobotBackend):
                     "optimize_elapsed_s": planned.optimize_elapsed_s,
                     "protected": bool(segment.get("protected", False)),
                 }
+            if segment_type == "ptp":
+                from motion.planning.ptp_target import plan_ptp_trajectory
+
+                target_base = self.apply_workobject(
+                    list(segment["position"][:6]),
+                    user_id=user,
+                )
+
+                vel_scale = max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            segment.get(
+                                "vel",
+                                config.DEFAULT_VEL_PERCENT,
+                            )
+                        ) / 100.0,
+                    ),
+                )
+
+                acc_scale = max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            segment.get(
+                                "acc",
+                                config.DEFAULT_ACC_PERCENT,
+                            )
+                        ) / 100.0,
+                    ),
+                )
+
+                response = plan_ptp_trajectory(
+                    planning_node,
+                    target_base,
+                    current_state.joint_state,
+                    tool_transform=tool_transform,
+                )
+
+                if not bool(response.success):
+                    raise RuntimeError(
+                        f"Ordered PTP segment {label!r} rejected: "
+                        f"{response.message}"
+                    )
+
+                #
+                # Native planner says we are already at the target.
+                #
+                if bool(response.noop):
+                    plan_elapsed = perf_counter() - plan_started
+
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_segment_plan_done",
+                        index=index + 1,
+                        label=label,
+                        segment_type=segment_type,
+                        duration_s=plan_elapsed,
+                        points=0,
+                        native_ptp_ms=float(response.total_time_ms),
+                        ik_ms=float(response.ik_time_ms),
+                        validation_ms=float(response.validation_time_ms),
+                        noop=True,
+                    )
+
+                    return {
+                        "type": segment_type,
+                        "label": label,
+                        "target_position": list(target_base[:6]),
+                        "final_state": current_state,
+                        "trajectory": None,
+                        "noop": True,
+                        "plan_elapsed_s": plan_elapsed,
+                        "optimize_elapsed_s": 0.0,
+                        "protected": bool(
+                            segment.get("protected", False)
+                        ),
+                    }
+
+                joint_trajectory = response.trajectory
+
+                if not getattr(joint_trajectory, "points", None):
+                    raise RuntimeError(
+                        f"Ordered PTP segment {label!r} "
+                        "returned an empty trajectory"
+                    )
+
+                #
+                # Same optimizer pipeline as the other ordered segments.
+                #
+                moveit_trajectory = RobotTrajectory()
+                moveit_trajectory.joint_trajectory = joint_trajectory
+
+                optimized, optimize_elapsed = _optimize_sync(
+                    planning_node,
+                    moveit_trajectory,
+                    vel_scale,
+                    acc_scale,
+                    optimizer_name=selected_optimizer,
+                )
+
+                optimized_joint_trajectory = (
+                    optimized.joint_trajectory
+                )
+
+                if not getattr(
+                        optimized_joint_trajectory,
+                        "points",
+                        None,
+                ):
+                    raise RuntimeError(
+                        f"Ordered PTP segment {label!r} "
+                        "optimizer returned an empty trajectory"
+                    )
+
+                plan_elapsed = (
+                        perf_counter() - plan_started
+                )
+
+                mark_motion_timing(
+                    self.node,
+                    "ordered_segment_plan_done",
+                    index=index + 1,
+                    label=label,
+                    segment_type=segment_type,
+                    duration_s=plan_elapsed,
+                    points=len(
+                        optimized_joint_trajectory.points
+                    ),
+                    native_ptp_ms=float(
+                        response.total_time_ms
+                    ),
+                    ik_ms=float(
+                        response.ik_time_ms
+                    ),
+                    validation_ms=float(
+                        response.validation_time_ms
+                    ),
+                    optimize_s=float(
+                        optimize_elapsed
+                    ),
+                )
+
+                planning_node.get_logger().info(
+                    f"[OrderedChain][PTP] Planned '{label}' "
+                    f"points={len(optimized_joint_trajectory.points)} "
+                    f"native={response.total_time_ms:.2f}ms "
+                    f"IK={response.ik_time_ms:.2f}ms "
+                    f"validation={response.validation_time_ms:.2f}ms "
+                    f"optimize={optimize_elapsed:.3f}s "
+                    f"total={plan_elapsed:.3f}s"
+                )
+
+                return {
+                    "type": segment_type,
+                    "label": label,
+                    "target_position": list(
+                        target_base[:6]
+                    ),
+                    "final_state":
+                        _robot_state_from_trajectory_end(
+                            optimized_joint_trajectory
+                        ),
+                    "trajectory":
+                        optimized_joint_trajectory,
+                    "plan_elapsed_s":
+                        plan_elapsed,
+                    "optimize_elapsed_s":
+                        optimize_elapsed,
+                    "protected": bool(
+                        segment.get(
+                            "protected",
+                            False,
+                        )
+                    ),
+                }
             if segment_type == "path":
                 path_base = []
                 for waypoint in segment.get("path") or []:
@@ -1106,64 +1284,77 @@ class MoveItRobotBackend(IRobotBackend):
                 preplanned_ready_count=int(preplanned_ready_count),
                 result=None,
             )
-            if segment_type in {"linear", "path"}:
-                duration = planned["trajectory"].points[-1].time_from_start
-                duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
-                timeout_s = max(
-                    float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
-                    duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
-                )
-                execution_timeout_s = duration_s + timeout_s + 2.0
-                planning_node.get_logger().info(
-                    f"[OrderedChain] Sending planned segment {index}/{total} label='{planned['label']}' "
-                    f"type={segment_type} points={len(planned['trajectory'].points)} duration_s={duration_s:.3f} "
-                    f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f} "
-                    f"plan_s={planned['plan_elapsed_s']:.3f}"
-                )
-                if not _wait_ordered_trajectory_point_match(
-                    planned["label"],
-                    planned["trajectory"],
-                    planned["trajectory"].points[0],
-                    "start",
-                ):
-                    result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+            if segment_type in {"linear", "ptp", "path"}:
+
+                if bool(planned.get("noop", False)):
+                    planning_node.get_logger().info(
+                        f"[OrderedChain] Skipping no-op "
+                        f"segment {index}/{total} "
+                        f"label='{planned['label']}' "
+                        f"type={segment_type}"
+                    )
+
+                    result = 0
+
                 else:
-                    mark_motion_timing(
-                        self.node,
-                        "ordered_controller_handoff_start",
-                        index=index,
-                        label=planned.get("label"),
-                        points=len(getattr(planned["trajectory"], "points", []) or []),
+
+                    duration = planned["trajectory"].points[-1].time_from_start
+                    duration_s = float(duration.sec) + float(duration.nanosec) / 1e9
+                    timeout_s = max(
+                        float(getattr(config, "EXECUTOR_TIME_MIN_S", 5.0)),
+                        duration_s * float(getattr(config, "EXECUTOR_TIME_MULTIPLIER", 2.0)),
                     )
-                    _send_trajectory_to_controller(self.node, planned["trajectory"])
-                    mark_motion_timing(
-                        self.node,
-                        "ordered_wait_execution_start",
-                        index=index,
-                        label=planned.get("label"),
-                        timeout_s=execution_timeout_s,
+                    execution_timeout_s = duration_s + timeout_s + 2.0
+                    planning_node.get_logger().info(
+                        f"[OrderedChain] Sending planned segment {index}/{total} label='{planned['label']}' "
+                        f"type={segment_type} points={len(planned['trajectory'].points)} duration_s={duration_s:.3f} "
+                        f"controller_goal_tolerance_s={timeout_s:.3f} wait_timeout_s={execution_timeout_s:.3f} "
+                        f"plan_s={planned['plan_elapsed_s']:.3f}"
                     )
-                    result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
-                    mark_motion_timing(
-                        self.node,
-                        "ordered_wait_execution_done",
-                        index=index,
-                        label=planned.get("label"),
-                        result=int(result) if isinstance(result, int) else result,
-                        duration_s=perf_counter() - exec_started,
-                    )
-                    if result == 0:
-                        planning_node.get_logger().info(
-                            f"[OrderedChain] Controller completed segment {index}/{total} "
-                            f"label='{planned['label']}', verifying live end state before next segment"
+                    if not _wait_ordered_trajectory_point_match(
+                        planned["label"],
+                        planned["trajectory"],
+                        planned["trajectory"].points[0],
+                        "start",
+                    ):
+                        result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+                    else:
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_controller_handoff_start",
+                            index=index,
+                            label=planned.get("label"),
+                            points=len(getattr(planned["trajectory"], "points", []) or []),
                         )
-                        if not _wait_ordered_trajectory_point_match(
-                            planned["label"],
-                            planned["trajectory"],
-                            planned["trajectory"].points[-1],
-                            "end",
-                        ):
-                            result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+                        _send_trajectory_to_controller(self.node, planned["trajectory"])
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_wait_execution_start",
+                            index=index,
+                            label=planned.get("label"),
+                            timeout_s=execution_timeout_s,
+                        )
+                        result = _wait_execution_complete(self.node, timeout_s=execution_timeout_s)
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_wait_execution_done",
+                            index=index,
+                            label=planned.get("label"),
+                            result=int(result) if isinstance(result, int) else result,
+                            duration_s=perf_counter() - exec_started,
+                        )
+                        if result == 0:
+                            planning_node.get_logger().info(
+                                f"[OrderedChain] Controller completed segment {index}/{total} "
+                                f"label='{planned['label']}', verifying live end state before next segment"
+                            )
+                            if not _wait_ordered_trajectory_point_match(
+                                planned["label"],
+                                planned["trajectory"],
+                                planned["trajectory"].points[-1],
+                                "end",
+                            ):
+                                result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
             elif segment_type == "unwind_joint6":
                 if bool(planned.get("runtime_unwind", False)):
                     planning_node.get_logger().info(
