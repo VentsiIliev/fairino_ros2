@@ -1,43 +1,44 @@
-# Global defaults for PTP target selection and pre-execution checks.
-# Profile-specific overrides can be placed at:
-# config/<ACTIVE_PROFILE>/ptp_config.yaml
+# Native C++ PTP planner.
 
-# Current-vs-target TCP orientation angular tolerance. If the orientations
-# differ by at most this many degrees, PTP treats the move as same-orientation
-# and applies stricter wrist/path discipline while still reaching the requested
-# final pose.
+PTP_IK_TIMEOUT_S: 0.01
+
+# Current seed + nearby J2/J3/J4/J5 seeds.
+PTP_IK_ATTEMPTS: 9
+
+# Candidate cost.
+#
+# Important:
+# J6 deliberately has very low cost.
+PTP_JOINT_WEIGHTS:
+  - 1.0
+  - 1.2
+  - 2.5
+  - 1.5
+  - 4.0
+  - 0.10
+
+PTP_AVOID_COLLISIONS: true
+
+# If target orientation is within this value of current
+# orientation, treat it as unchanged.
 PTP_LOCK_ORIENTATION_TOL_DEG: 2.0
 
-# Max allowed TCP orientation drift along a same-orientation move.
-# Lower values keep the tool attitude tighter but may reject more IK paths.
-PTP_LOCKED_PATH_MAX_DRIFT_DEG: 2.0
+# Do NOT keep this at 2 degrees.
+#
+# PTP is joint interpolation, not Cartesian interpolation.
+# This is intended to catch a real wrist inversion, not
+# normal orientation movement.
+PTP_LOCKED_PATH_MAX_DRIFT_DEG: 30.0
 
-# Max allowed TCP orientation deviation from the expected start-to-target
-# orientation progression when the target intentionally requests reorientation.
-PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 5.0
+# Same principle for intentional reorientation.
+PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 35.0
 
-# Wrist motion below this threshold is treated as normal joint motion.
-# Wrist motion above it receives extra cost during equivalent-branch selection.
-PTP_WRIST_PENALTY_START_DEG: 45.0
+# Dense enough for local C++ collision checking.
+PTP_JOINT_INTERPOLATION_STEP_RAD: 0.05
 
-# Hard max wrist-joint motion for moves that intentionally reorient TCP.
-# If any wrist joint exceeds this, the PTP target is rejected.
-PTP_MAX_WRIST_DELTA_DEG: 160.0
+PTP_MIN_INTERPOLATION_SEGMENTS: 8
+PTP_MAX_INTERPOLATION_SEGMENTS: 80
 
-# Stricter hard max wrist-joint motion for same-orientation moves.
-# This prevents solving an equivalent final attitude by flipping the wrist.
-PTP_LOCKED_MAX_WRIST_DELTA_DEG: 120.0
-
-# If the selected target joint state is within this max joint delta from the
-# live joint state, treat the command as already reached and skip execution.
 PTP_NOOP_JOINT_DELTA_RAD: 0.001
 
-# Max joint interpolation step used for pre-execution validity/FK checks.
-# Smaller values sample more densely; larger values plan faster but check less.
-PTP_JOINT_INTERPOLATION_STEP_RAD: 0.08
-
-# Minimum number of joint interpolation segments checked before execution.
-PTP_MIN_INTERPOLATION_SEGMENTS: 8
-
-# Maximum number of joint interpolation segments checked before execution.
-PTP_MAX_INTERPOLATION_SEGMENTS: 80
+SERVICE_PTP: "/compute_ptp"

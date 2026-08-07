@@ -9,6 +9,7 @@ class PlannerSupportService:
         self._ik_client = None
         self._contour_ik_client = None
         self._state_validity_client = None
+        self._ptp_client = None
 
     def get_fk_client(self):
         if self._fk_client is None:
@@ -40,3 +41,19 @@ class PlannerSupportService:
                 '/check_state_validity',
             )
         return self._state_validity_client
+
+    def get_ptp_client(self):
+        if self._ptp_client is None:
+            import config
+            from erob_moveit_runtime.srv import ComputePtp
+
+            self._ptp_client = self._node.create_client(
+                ComputePtp,
+                getattr(
+                    config,
+                    "SERVICE_PTP",
+                    "/compute_ptp",
+                ),
+            )
+
+        return self._ptp_client

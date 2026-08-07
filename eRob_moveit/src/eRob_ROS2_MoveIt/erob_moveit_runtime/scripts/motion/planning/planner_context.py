@@ -191,6 +191,9 @@ class PlannerContext:
     def get_state_validity_client(self):
         return self._planner_support.get_state_validity_client()
 
+    def get_ptp_client(self):
+        return self._planner_support.get_ptp_client()
+
     def is_motion_stack_ready(self) -> bool:
         return self._node.is_motion_stack_ready()
 

@@ -1,0 +1,35 @@
+geometry_msgs/Pose target_pose
+sensor_msgs/JointState start_state
+
+string group_name
+string link_name
+
+float64 ik_timeout_s
+uint32 ik_attempts
+
+float64 interpolation_step_rad
+uint32 min_interpolation_segments
+uint32 max_interpolation_segments
+
+float64 orientation_lock_tolerance_deg
+float64 locked_path_max_deviation_deg
+float64 oriented_path_max_deviation_deg
+
+float64[] joint_weights
+bool avoid_collisions
+
+---
+bool success
+bool noop
+int32 error_code
+string message
+
+trajectory_msgs/JointTrajectory trajectory
+
+uint32 ik_attempts_made
+uint32 ik_solutions_found
+uint32 candidates_validated
+
+float64 ik_time_ms
+float64 validation_time_ms
+float64 total_time_ms
