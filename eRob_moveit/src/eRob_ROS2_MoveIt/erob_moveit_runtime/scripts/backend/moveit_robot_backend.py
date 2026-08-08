@@ -1977,6 +1977,82 @@ class MoveItRobotBackend(IRobotBackend):
                 + (float(b[2]) - float(a[2])) ** 2
             )
 
+        def _joint_path_distances(trajectory):
+            """
+            Return cumulative Euclidean joint-space distance for a JointTrajectory.
+
+            Result:
+                [0.0, d1, d2, ..., total]
+            """
+            points = list(
+                getattr(
+                    trajectory,
+                    "points",
+                    [],
+                )
+                or []
+            )
+
+            if not points:
+                return []
+
+            distances = [0.0]
+
+            for index in range(1, len(points)):
+                previous = points[index - 1].positions
+                current = points[index].positions
+
+                step = math.sqrt(
+                    sum(
+                        (
+                                float(current[joint])
+                                - float(previous[joint])
+                        ) ** 2
+                        for joint in range(
+                            min(
+                                len(previous),
+                                len(current),
+                            )
+                        )
+                    )
+                )
+
+                distances.append(
+                    distances[-1] + step
+                )
+
+            return distances
+
+        def _blend_trim_fraction(
+                radius_mm,
+                cartesian_length_mm,
+        ):
+            """
+            Convert blendR to a trim fraction of the actual joint path.
+
+            Translational segments keep approximate Cartesian-mm semantics.
+            Rotation-dominant segments use a conservative joint-path fraction
+            because a Cartesian radius is not meaningful when XYZ barely moves.
+            """
+            radius_mm = max(
+                0.0,
+                float(radius_mm),
+            )
+
+            cartesian_length_mm = max(
+                0.0,
+                float(cartesian_length_mm),
+            )
+
+            if cartesian_length_mm > 1.0:
+                return min(
+                    0.45,
+                    radius_mm / cartesian_length_mm,
+                )
+
+            return 0.25
+
+
         def _wait_state_validity(joint_names, joint_positions, timeout_s=2.0):
             from moveit_msgs.srv import GetStateValidity
             from sensor_msgs.msg import JointState
@@ -2002,171 +2078,652 @@ class MoveItRobotBackend(IRobotBackend):
 
             raise TimeoutError("MoveIt state-validity request timed out")
 
-        def _build_blended_pair(first, second, requested_blend_r_mm):
+        def _build_blended_group(planned_segments):
             """
-            Build one raw joint path for two already-planned LIN/PTP moves.
+            Build one raw JointTrajectory from a contiguous LIN/PTP blend group.
 
-            Version 1 intentionally supports one junction at a time:
-                A.blendR > 0
-                B.blendR == 0
+            Example:
 
-            The public radius is Cartesian millimetres.  We use the commanded
-            Cartesian lengths to choose approximate entry/exit fractions along
-            the already-selected joint paths, then build a quadratic joint-space
-            Bezier through the original waypoint.  The newly-created samples are
-            checked through MoveIt's live state-validity service before retiming.
+                A blendR=20
+                B blendR=30
+                C blendR=15
+                D blendR=0
+
+            becomes one physical trajectory:
+
+                A -> blend -> B -> blend -> C -> blend -> D
+
+            Middle segments can be trimmed at both ends. Effective blend radii
+            are reduced if adjacent blend regions would overlap.
             """
-            from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+            from trajectory_msgs.msg import (
+                JointTrajectory,
+                JointTrajectoryPoint,
+            )
 
-            first_traj = first.get("trajectory")
-            second_traj = second.get("trajectory")
-
-            if first_traj is None or second_traj is None:
-                raise RuntimeError("Cannot blend a no-op/empty trajectory")
-
-            first_points = list(getattr(first_traj, "points", []) or [])
-            second_points = list(getattr(second_traj, "points", []) or [])
-
-            if len(first_points) < 3 or len(second_points) < 3:
+            if len(planned_segments) < 2:
                 raise RuntimeError(
-                    "Blend requires at least 3 trajectory points on each side"
+                    "Blended group requires at least two segments"
                 )
 
-            first_names = list(getattr(first_traj, "joint_names", []) or [])
-            second_names = list(getattr(second_traj, "joint_names", []) or [])
-            if first_names != second_names or not first_names:
-                raise RuntimeError("Blend joint-name/order mismatch")
+            segment_count = len(planned_segments)
 
-            q_waypoint_a = list(first_points[-1].positions)
-            q_waypoint_b = list(second_points[0].positions)
-            junction_tol = float(
-                getattr(config, "ORDERED_BLEND_JUNCTION_TOL_RAD", 0.02)
-            )
-            junction_error = max(
-                abs(float(a) - float(b))
-                for a, b in zip(q_waypoint_a, q_waypoint_b)
-            )
-            if junction_error > junction_tol:
-                raise RuntimeError(
-                    f"Blend junction mismatch: {junction_error:.6f}rad "
-                    f"> {junction_tol:.6f}rad"
-                )
+            trajectories = []
+            joint_distances = []
+            joint_lengths = []
+            cartesian_lengths_mm = []
 
-            incoming_len_mm = _xyz_distance_mm(
-                first["start_position"],
-                first["target_position"],
-            )
-            outgoing_len_mm = _xyz_distance_mm(
-                second["start_position"],
-                second["target_position"],
-            )
-            if incoming_len_mm <= 1e-6 or outgoing_len_mm <= 1e-6:
-                raise RuntimeError("Cannot blend zero-length Cartesian segment")
+            # ----------------------------------------------------------
+            # Validate all members.
+            # ----------------------------------------------------------
+            for index, planned in enumerate(planned_segments):
+                trajectory = planned.get("trajectory")
 
-            requested = max(0.0, float(requested_blend_r_mm))
-            effective = min(
-                requested,
-                0.45 * incoming_len_mm,
-                0.45 * outgoing_len_mm,
-            )
-            min_radius = float(
-                getattr(config, "ORDERED_BLEND_MIN_RADIUS_MM", 0.5)
-            )
-            if effective < min_radius:
-                raise RuntimeError(
-                    f"Effective blend radius too small: {effective:.3f}mm"
-                )
-
-            entry_fraction = max(
-                0.0,
-                min(1.0, 1.0 - effective / incoming_len_mm),
-            )
-            exit_fraction = max(
-                0.0,
-                min(1.0, effective / outgoing_len_mm),
-            )
-
-            entry_index = int(round(entry_fraction * (len(first_points) - 1)))
-            exit_index = int(round(exit_fraction * (len(second_points) - 1)))
-
-            entry_index = max(1, min(entry_index, len(first_points) - 2))
-            exit_index = max(1, min(exit_index, len(second_points) - 2))
-
-            q0 = [float(v) for v in first_points[entry_index].positions]
-            q1 = [float(v) for v in q_waypoint_a]
-            q2 = [float(v) for v in second_points[exit_index].positions]
-
-            sample_count = max(
-                6,
-                int(getattr(config, "ORDERED_BLEND_SAMPLES", 12)),
-            )
-
-            blend_positions = []
-            for sample in range(sample_count + 1):
-                u = float(sample) / float(sample_count)
-                a = (1.0 - u) ** 2
-                b = 2.0 * (1.0 - u) * u
-                c = u ** 2
-                q = [
-                    a * q0[j] + b * q1[j] + c * q2[j]
-                    for j in range(len(q0))
-                ]
-                blend_positions.append(q)
-
-            validation_started = perf_counter()
-            for sample_index, q in enumerate(blend_positions):
-                validity = _wait_state_validity(first_names, q)
-                if not bool(getattr(validity, "valid", False)):
-                    contacts = []
-                    for contact in list(getattr(validity, "contacts", []) or []):
-                        body_1 = str(
-                            getattr(contact, "contact_body_1", "")
-                            or getattr(contact, "body_name_1", "")
-                        )
-                        body_2 = str(
-                            getattr(contact, "contact_body_2", "")
-                            or getattr(contact, "body_name_2", "")
-                        )
-                        if body_1 or body_2:
-                            contacts.append(
-                                f"{body_1}<->{body_2}" if body_1 and body_2
-                                else body_1 or body_2
-                            )
-                    detail = f" contacts={contacts}" if contacts else ""
+                if trajectory is None:
                     raise RuntimeError(
-                        f"Blend sample {sample_index}/{sample_count} is invalid"
-                        f"{detail}"
+                        f"Cannot blend empty/no-op segment "
+                        f"{planned.get('label')!r}"
                     )
 
+                points = list(
+                    getattr(
+                        trajectory,
+                        "points",
+                        [],
+                    )
+                    or []
+                )
+
+                if len(points) < 3:
+                    raise RuntimeError(
+                        f"Blend segment {planned.get('label')!r} "
+                        f"requires at least 3 trajectory points; "
+                        f"got {len(points)}"
+                    )
+
+                trajectories.append(trajectory)
+
+                cartesian_length_mm = _xyz_distance_mm(
+                    planned["start_position"],
+                    planned["target_position"],
+                )
+
+                distances = _joint_path_distances(
+                    trajectory
+                )
+
+                joint_length = (
+                    distances[-1]
+                    if distances
+                    else 0.0
+                )
+
+                if joint_length <= 1e-9:
+                    raise RuntimeError(
+                        f"Cannot blend true no-op segment "
+                        f"{planned.get('label')!r}"
+                    )
+
+                cartesian_lengths_mm.append(
+                    cartesian_length_mm
+                )
+
+                joint_distances.append(
+                    distances
+                )
+
+                joint_lengths.append(
+                    joint_length
+                )
+
+            joint_names = list(
+                trajectories[0].joint_names
+            )
+
+            if not joint_names:
+                raise RuntimeError(
+                    "Blended group has no joint names"
+                )
+
+            for index, trajectory in enumerate(
+                    trajectories[1:],
+                    start=1,
+            ):
+                if list(trajectory.joint_names) != joint_names:
+                    raise RuntimeError(
+                        f"Joint-name/order mismatch at "
+                        f"blend segment {index + 1}"
+                    )
+
+            # ----------------------------------------------------------
+            # Validate exact planned junctions.
+            # ----------------------------------------------------------
+            junction_tolerance = float(
+                getattr(
+                    config,
+                    "ORDERED_BLEND_JUNCTION_TOL_RAD",
+                    0.02,
+                )
+            )
+
+            for junction in range(segment_count - 1):
+                left_end = list(
+                    trajectories[junction]
+                    .points[-1]
+                    .positions
+                )
+
+                right_start = list(
+                    trajectories[junction + 1]
+                    .points[0]
+                    .positions
+                )
+
+                max_error = max(
+                    abs(float(a) - float(b))
+                    for a, b in zip(
+                        left_end,
+                        right_start,
+                    )
+                )
+
+                if max_error > junction_tolerance:
+                    raise RuntimeError(
+                        f"Blend junction "
+                        f"{junction + 1}/{segment_count - 1} "
+                        f"mismatch: {max_error:.6f}rad > "
+                        f"{junction_tolerance:.6f}rad"
+                    )
+
+            # ----------------------------------------------------------
+            # Initial effective radius for every junction.
+            #
+            # Radius belongs to the LEFT segment.
+            # ----------------------------------------------------------
+            requested_radii = []
+            effective_radii = []
+
+            for junction in range(segment_count - 1):
+                requested = max(
+                    0.0,
+                    float(
+                        planned_segments[junction]
+                        .get("blendR", 0.0)
+                        or 0.0
+                    ),
+                )
+
+                if requested <= 0.0:
+                    raise RuntimeError(
+                        f"Internal blend-group segment "
+                        f"{planned_segments[junction].get('label')!r} "
+                        "has blendR=0"
+                    )
+
+                left_cartesian_mm = (
+                    cartesian_lengths_mm[
+                        junction
+                    ]
+                )
+
+                right_cartesian_mm = (
+                    cartesian_lengths_mm[
+                        junction + 1
+                    ]
+                )
+
+                effective = requested
+
+                if left_cartesian_mm > 1.0:
+                    effective = min(
+                        effective,
+                        0.45 * left_cartesian_mm,
+                    )
+
+                if right_cartesian_mm > 1.0:
+                    effective = min(
+                        effective,
+                        0.45 * right_cartesian_mm,
+                    )
+
+                requested_radii.append(requested)
+                effective_radii.append(effective)
+
+            # ----------------------------------------------------------
+            # Middle-segment overlap is checked from the actual selected
+            # joint-trajectory indices below.  This intentionally avoids
+            # XYZ-only scaling for rotation-dominant segments.
+            # ----------------------------------------------------------
+
+            min_radius = float(
+                getattr(
+                    config,
+                    "ORDERED_BLEND_MIN_RADIUS_MM",
+                    0.5,
+                )
+            )
+
+            for junction, effective in enumerate(
+                    effective_radii
+            ):
+                if effective < min_radius:
+                    raise RuntimeError(
+                        f"Effective blend radius at junction "
+                        f"{junction + 1} is too small: "
+                        f"{effective:.3f}mm"
+                    )
+
+            # ----------------------------------------------------------
+            # Find trajectory indices corresponding approximately
+            # to each Cartesian blend radius.
+            # ----------------------------------------------------------
+            entry_indices = [None] * (
+                    segment_count - 1
+            )
+
+            exit_indices = [None] * (
+                    segment_count - 1
+            )
+
+            for junction in range(
+                    segment_count - 1
+            ):
+                left_points = list(
+                    trajectories[junction].points
+                )
+
+                right_points = list(
+                    trajectories[junction + 1].points
+                )
+
+                radius = effective_radii[junction]
+
+                left_trim_fraction = (
+                    _blend_trim_fraction(
+                        radius,
+                        cartesian_lengths_mm[
+                            junction
+                        ],
+                    )
+                )
+
+                right_trim_fraction = (
+                    _blend_trim_fraction(
+                        radius,
+                        cartesian_lengths_mm[
+                            junction + 1
+                        ],
+                    )
+                )
+
+                left_target_distance = (
+                    joint_lengths[junction]
+                    * (
+                        1.0
+                        - left_trim_fraction
+                    )
+                )
+
+                right_target_distance = (
+                    joint_lengths[
+                        junction + 1
+                    ]
+                    * right_trim_fraction
+                )
+
+                left_distances = (
+                    joint_distances[
+                        junction
+                    ]
+                )
+
+                right_distances = (
+                    joint_distances[
+                        junction + 1
+                    ]
+                )
+
+                entry_index = min(
+                    range(
+                        1,
+                        len(left_points) - 1,
+                    ),
+                    key=lambda point_index: abs(
+                        left_distances[
+                            point_index
+                        ]
+                        - left_target_distance
+                    ),
+                )
+
+                exit_index = min(
+                    range(
+                        1,
+                        len(right_points) - 1,
+                    ),
+                    key=lambda point_index: abs(
+                        right_distances[
+                            point_index
+                        ]
+                        - right_target_distance
+                    ),
+                )
+
+                entry_indices[junction] = (
+                    entry_index
+                )
+
+                exit_indices[junction] = (
+                    exit_index
+                )
+
+            # ----------------------------------------------------------
+            # Index-level overlap verification.
+            #
+            # A middle trajectory must still contain at least one
+            # original point between incoming and outgoing blends.
+            # ----------------------------------------------------------
+            for segment_index in range(
+                    1,
+                    segment_count - 1,
+            ):
+                start_index = (
+                    exit_indices[
+                        segment_index - 1
+                        ]
+                )
+
+                end_index = (
+                    entry_indices[
+                        segment_index
+                    ]
+                )
+
+                if start_index >= end_index:
+                    raise RuntimeError(
+                        f"Blend regions overlap in segment "
+                        f"{segment_index + 1} "
+                        f"{planned_segments[segment_index].get('label')!r}: "
+                        f"start={start_index} "
+                        f"end={end_index}"
+                    )
+
+            # ----------------------------------------------------------
+            # Generate a joint-space quadratic Bezier at each junction.
+            # ----------------------------------------------------------
+            sample_count = max(
+                6,
+                int(
+                    getattr(
+                        config,
+                        "ORDERED_BLEND_SAMPLES",
+                        12,
+                    )
+                ),
+            )
+
+            blends = []
+
+            for junction in range(
+                    segment_count - 1
+            ):
+                left = trajectories[junction]
+                right = trajectories[junction + 1]
+
+                q0 = [
+                    float(v)
+                    for v in left.points[
+                        entry_indices[junction]
+                    ].positions
+                ]
+
+                q1 = [
+                    float(v)
+                    for v in left.points[-1].positions
+                ]
+
+                q2 = [
+                    float(v)
+                    for v in right.points[
+                        exit_indices[junction]
+                    ].positions
+                ]
+
+                blend_positions = []
+
+                for sample in range(
+                        sample_count + 1
+                ):
+                    u = (
+                            float(sample)
+                            / float(sample_count)
+                    )
+
+                    a = (1.0 - u) ** 2
+                    b = 2.0 * (1.0 - u) * u
+                    c = u ** 2
+
+                    q = [
+                        (
+                                a * q0[joint]
+                                + b * q1[joint]
+                                + c * q2[joint]
+                        )
+                        for joint in range(
+                            len(q0)
+                        )
+                    ]
+
+                    blend_positions.append(q)
+
+                blends.append(blend_positions)
+
+            # ----------------------------------------------------------
+            # Validate ONLY newly generated blend samples.
+            #
+            # Original A/B/C/... trajectories have already been
+            # validated by their planners.
+            # ----------------------------------------------------------
+            validation_started = perf_counter()
+
+            for junction, blend_positions in enumerate(
+                    blends
+            ):
+                for sample_index, q in enumerate(
+                        blend_positions
+                ):
+                    validity = _wait_state_validity(
+                        joint_names,
+                        q,
+                    )
+
+                    if not bool(
+                            getattr(
+                                validity,
+                                "valid",
+                                False,
+                            )
+                    ):
+                        contacts = []
+
+                        for contact in list(
+                                getattr(
+                                    validity,
+                                    "contacts",
+                                    [],
+                                )
+                                or []
+                        ):
+                            body_1 = str(
+                                getattr(
+                                    contact,
+                                    "contact_body_1",
+                                    "",
+                                )
+                                or getattr(
+                                    contact,
+                                    "body_name_1",
+                                    "",
+                                )
+                            )
+
+                            body_2 = str(
+                                getattr(
+                                    contact,
+                                    "contact_body_2",
+                                    "",
+                                )
+                                or getattr(
+                                    contact,
+                                    "body_name_2",
+                                    "",
+                                )
+                            )
+
+                            if body_1 or body_2:
+                                contacts.append(
+                                    (
+                                        f"{body_1}<->{body_2}"
+                                        if body_1 and body_2
+                                        else body_1 or body_2
+                                    )
+                                )
+
+                        detail = (
+                            f" contacts={contacts}"
+                            if contacts
+                            else ""
+                        )
+
+                        raise RuntimeError(
+                            f"Blend junction "
+                            f"{junction + 1} sample "
+                            f"{sample_index}/{sample_count} "
+                            f"is invalid{detail}"
+                        )
+
+            # ----------------------------------------------------------
+            # Build one raw trajectory:
+            #
+            # segment0 -> blend0 -> segment1 middle
+            #          -> blend1 -> segment2 middle ...
+            # ----------------------------------------------------------
             merged = JointTrajectory()
-            merged.joint_names = list(first_names)
+            merged.joint_names = list(
+                joint_names
+            )
 
             def append_positions(positions):
                 point = JointTrajectoryPoint()
-                point.positions = [float(v) for v in positions]
+
+                point.positions = [
+                    float(v)
+                    for v in positions
+                ]
+
                 merged.points.append(point)
 
-            for point in first_points[:entry_index + 1]:
-                append_positions(point.positions)
+            for segment_index in range(
+                    segment_count
+            ):
+                points = list(
+                    trajectories[
+                        segment_index
+                    ].points
+                )
 
-            for q in blend_positions[1:-1]:
-                append_positions(q)
+                if segment_index == 0:
+                    start_index = 0
+                else:
+                    start_index = exit_indices[
+                        segment_index - 1
+                        ]
 
-            for point in second_points[exit_index:]:
-                append_positions(point.positions)
+                if segment_index == (
+                        segment_count - 1
+                ):
+                    end_index = (
+                            len(points) - 1
+                    )
+                else:
+                    end_index = entry_indices[
+                        segment_index
+                    ]
+
+                for point_index in range(
+                        start_index,
+                        end_index + 1,
+                ):
+                    #
+                    # Don't duplicate exact same point when
+                    # joining slices.
+                    #
+                    positions = points[
+                        point_index
+                    ].positions
+
+                    if merged.points:
+                        previous = (
+                            merged.points[-1]
+                            .positions
+                        )
+
+                        if all(
+                                abs(
+                                    float(a)
+                                    - float(b)
+                                ) <= 1e-12
+                                for a, b in zip(
+                                    previous,
+                                    positions,
+                                )
+                        ):
+                            continue
+
+                    append_positions(
+                        positions
+                    )
+
+                if segment_index < (
+                        segment_count - 1
+                ):
+                    #
+                    # q0 is already the final point of the
+                    # left segment slice.
+                    #
+                    # q2 will be the first point of the
+                    # next segment slice.
+                    #
+                    for q in blends[
+                        segment_index
+                    ][1:-1]:
+                        append_positions(q)
 
             planning_node.get_logger().info(
-                f"[OrderedBlend] Built raw pair '{first['label']}' -> "
-                f"'{second['label']}' requested={requested:.3f}mm "
-                f"effective={effective:.3f}mm "
-                f"entry={entry_index}/{len(first_points)-1} "
-                f"exit={exit_index}/{len(second_points)-1} "
-                f"blend_samples={sample_count + 1} "
-                f"merged_points={len(merged.points)} "
-                f"validation_s={perf_counter() - validation_started:.3f}"
+                "[OrderedBlend] Built raw group "
+                f"segments={segment_count} "
+                f"labels="
+                f"{[s.get('label') for s in planned_segments]} "
+                f"requested_radii="
+                f"{[round(v, 3) for v in requested_radii]} "
+                f"effective_radii="
+                f"{[round(v, 3) for v in effective_radii]} "
+                f"cartesian_lengths_mm="
+                f"{[round(v, 3) for v in cartesian_lengths_mm]} "
+                f"joint_lengths="
+                f"{[round(v, 6) for v in joint_lengths]} "
+                f"entry_indices={entry_indices} "
+                f"exit_indices={exit_indices} "
+                f"merged_points="
+                f"{len(merged.points)} "
+                f"validation_s="
+                f"{perf_counter() - validation_started:.3f}"
             )
 
-            return merged, effective
+            return (
+                merged,
+                effective_radii,
+            )
 
         def _execute_planned_segment(index, total, planned, preplanned_ready_count=0):
             exec_started = perf_counter()
@@ -2429,152 +2986,241 @@ class MoveItRobotBackend(IRobotBackend):
                                 "but there is no next segment"
                             )
 
-                        next_segment = segments[index + 1]
-                        next_type = str(
-                            next_segment.get("type") or ""
-                        ).strip().lower()
+                        #
+                        # Detect the complete contiguous blend group.
+                        #
+                        # Example:
+                        #
+                        #   A blendR=20
+                        #   B blendR=30
+                        #   C blendR=15
+                        #   D blendR=0
+                        #
+                        # becomes one physical controller trajectory [A, B, C, D].
+                        #
+                        group_end = index
 
-                        if next_type not in {"linear", "ptp"}:
-                            raise RuntimeError(
-                                f"Blend target segment {index + 2} must be LIN/PTP; "
-                                f"got {next_type!r}"
+                        while group_end < len(segments) - 1:
+                            current_segment = segments[group_end]
+                            current_type = str(
+                                current_segment.get("type") or ""
+                            ).strip().lower()
+
+                            current_blend_r = max(
+                                0.0,
+                                float(
+                                    current_segment.get("blendR", 0.0)
+                                    or 0.0
+                                ),
                             )
 
-                        if max(
-                            0.0,
-                            float(next_segment.get("blendR", 0.0) or 0.0),
-                        ) > 0.0:
+                            if current_blend_r <= 0.0:
+                                break
+
+                            if current_type not in {"linear", "ptp"}:
+                                raise RuntimeError(
+                                    f"blendR is currently supported only for LIN/PTP; "
+                                    f"segment {group_end + 1} is {current_type!r}"
+                                )
+
+                            next_segment = segments[group_end + 1]
+                            next_type = str(
+                                next_segment.get("type") or ""
+                            ).strip().lower()
+
+                            if next_type not in {"linear", "ptp"}:
+                                raise RuntimeError(
+                                    f"Segment {group_end + 1} requests "
+                                    f"blendR={current_blend_r:.3f}, but the next "
+                                    f"segment {group_end + 2} is {next_type!r}. "
+                                    "Blend groups currently support only LIN/PTP -> LIN/PTP."
+                                )
+
+                            group_end += 1
+
+                        if group_end <= index:
                             raise RuntimeError(
-                                "Version-1 ordered blending supports non-overlapping "
-                                "pairs only. Set the second segment blendR to 0."
+                                f"Could not form blend group starting at segment {index + 1}"
                             )
 
-                        first = _plan_ordered_segment(
-                            index,
-                            segment,
-                            previous_target,
-                            previous_state,
-                            defer_optimization=True,
-                        )
+                        #
+                        # Plan every logical segment in the group as raw geometry.
+                        # Each following segment uses the predicted final state of
+                        # the previous segment, preserving the existing PTP/LIN
+                        # branch selection and preplanning behaviour.
+                        #
+                        planned_group = []
+                        group_target = previous_target
+                        group_state = previous_state
 
-                        if bool(first.get("noop", False)):
-                            raise RuntimeError(
-                                f"Cannot blend no-op segment {first['label']!r}"
+                        for group_index in range(index, group_end + 1):
+                            planned_member = _plan_ordered_segment(
+                                group_index,
+                                segments[group_index],
+                                group_target,
+                                group_state,
+                                defer_optimization=True,
                             )
 
-                        second = _plan_ordered_segment(
-                            index + 1,
-                            next_segment,
-                            first["target_position"],
-                            first["final_state"],
-                            defer_optimization=True,
-                        )
+                            if bool(planned_member.get("noop", False)):
+                                raise RuntimeError(
+                                    f"Cannot blend no-op segment "
+                                    f"{planned_member['label']!r}"
+                                )
 
-                        if bool(second.get("noop", False)):
-                            raise RuntimeError(
-                                f"Cannot blend into no-op segment {second['label']!r}"
-                            )
+                            planned_group.append(planned_member)
+                            group_target = planned_member["target_position"]
+                            group_state = planned_member["final_state"]
 
-                        raw_blended, effective_blend_r = _build_blended_pair(
-                            first,
-                            second,
-                            blend_r,
+                        #
+                        # Replace all exact internal waypoints with validated
+                        # joint-space blend curves and obtain one raw trajectory.
+                        #
+                        raw_blended, effective_radii = _build_blended_group(
+                            planned_group
                         )
 
                         moveit_trajectory = RobotTrajectory()
                         moveit_trajectory.joint_trajectory = raw_blended
 
                         #
-                        # Conservative V1 rule: one blended controller trajectory
-                        # uses the slower velocity/acceleration of the pair.
+                        # Conservative first implementation:
+                        # the complete group uses the slowest requested velocity
+                        # and acceleration of any logical segment.
                         #
-                        blend_vel_scale = min(
-                            float(first.get("vel_scale", 1.0)),
-                            float(second.get("vel_scale", 1.0)),
+                        group_vel_scale = min(
+                            float(member.get("vel_scale", 1.0))
+                            for member in planned_group
                         )
-                        blend_acc_scale = min(
-                            float(first.get("acc_scale", 1.0)),
-                            float(second.get("acc_scale", 1.0)),
+
+                        group_acc_scale = min(
+                            float(member.get("acc_scale", 1.0))
+                            for member in planned_group
                         )
 
                         optimized, optimize_elapsed = _optimize_sync(
                             planning_node,
                             moveit_trajectory,
-                            blend_vel_scale,
-                            blend_acc_scale,
+                            group_vel_scale,
+                            group_acc_scale,
                             optimizer_name=selected_optimizer,
                         )
 
                         optimized_joint_trajectory = optimized.joint_trajectory
-                        if not getattr(optimized_joint_trajectory, "points", None):
+
+                        if not getattr(
+                            optimized_joint_trajectory,
+                            "points",
+                            None,
+                        ):
                             raise RuntimeError(
-                                "Optimizer returned empty blended trajectory"
+                                "Optimizer returned empty blended-group trajectory"
                             )
+
+                        first = planned_group[0]
+                        last = planned_group[-1]
 
                         combined = {
                             "type": "blended",
-                            "label": f"{first['label']} -> {second['label']}",
+                            "label": " -> ".join(
+                                str(member.get("label") or "")
+                                for member in planned_group
+                            ),
                             "start_position": list(first["start_position"]),
-                            "target_position": list(second["target_position"]),
+                            "target_position": list(last["target_position"]),
                             "final_state": _robot_state_from_trajectory_end(
                                 optimized_joint_trajectory
                             ),
                             "trajectory": optimized_joint_trajectory,
                             "plan_elapsed_s": (
-                                float(first.get("plan_elapsed_s", 0.0) or 0.0)
-                                + float(second.get("plan_elapsed_s", 0.0) or 0.0)
+                                sum(
+                                    float(
+                                        member.get("plan_elapsed_s", 0.0)
+                                        or 0.0
+                                    )
+                                    for member in planned_group
+                                )
                                 + float(optimize_elapsed)
                             ),
                             "optimize_elapsed_s": float(optimize_elapsed),
-                            "protected": bool(first.get("protected", False))
-                            or bool(second.get("protected", False)),
-                            "blendR": float(blend_r),
-                            "effective_blendR": float(effective_blend_r),
-                            "vel_scale": blend_vel_scale,
-                            "acc_scale": blend_acc_scale,
+                            "protected": any(
+                                bool(member.get("protected", False))
+                                for member in planned_group
+                            ),
+                            "blendR": float(
+                                first.get("blendR", 0.0) or 0.0
+                            ),
+                            "effective_blend_radii": list(effective_radii),
+                            "vel_scale": group_vel_scale,
+                            "acc_scale": group_acc_scale,
+                            "logical_segment_count": len(planned_group),
                         }
 
+                        #
+                        # Queue one physical trajectory at the first logical
+                        # segment index.
+                        #
                         planned_queue.put((index, combined, None))
+
                         mark_motion_timing(
                             self.node,
                             "ordered_segment_queued",
                             index=index + 1,
                             label=combined.get("label"),
                             segment_type="blended",
-                            blendR=blend_r,
-                            effective_blendR=effective_blend_r,
+                            blend_group_size=len(planned_group),
+                            effective_blend_radii=[
+                                float(value)
+                                for value in effective_radii
+                            ],
                             duration_s=perf_counter() - worker_started,
                         )
+
                         _mark_planned(index, combined)
 
                         #
-                        # Preserve the existing one-planned-item-per-logical-
-                        # segment consumer/status contract.  Segment B has
-                        # already physically executed inside the combined goal.
+                        # Preserve the existing one-queue-entry-per-logical-
+                        # segment consumer/status contract.  Every later member
+                        # of the group is physically executed inside `combined`.
                         #
-                        consumed = {
-                            "type": "blend_consumed",
-                            "label": str(
-                                second.get("label")
-                                or f"segment_{index + 2}"
-                            ),
-                            "start_position": list(second["start_position"]),
-                            "target_position": list(second["target_position"]),
-                            "final_state": combined["final_state"],
-                            "trajectory": None,
-                            "plan_elapsed_s": 0.0,
-                            "optimize_elapsed_s": 0.0,
-                            "protected": bool(second.get("protected", False)),
-                            "blendR": 0.0,
-                        }
+                        for consumed_offset in range(1, len(planned_group)):
+                            logical_index = index + consumed_offset
+                            member = planned_group[consumed_offset]
 
-                        planned_queue.put((index + 1, consumed, None))
-                        _mark_planned(index + 1, consumed)
+                            consumed = {
+                                "type": "blend_consumed",
+                                "label": str(
+                                    member.get("label")
+                                    or f"segment_{logical_index + 1}"
+                                ),
+                                "start_position": list(
+                                    member.get("start_position") or []
+                                ),
+                                "target_position": list(
+                                    member["target_position"]
+                                ),
+                                "final_state": combined["final_state"],
+                                "trajectory": None,
+                                "plan_elapsed_s": 0.0,
+                                "optimize_elapsed_s": 0.0,
+                                "protected": bool(
+                                    member.get("protected", False)
+                                ),
+                                "blendR": 0.0,
+                            }
 
-                        previous_target = list(second["target_position"])
+                            planned_queue.put(
+                                (logical_index, consumed, None)
+                            )
+                            _mark_planned(
+                                logical_index,
+                                consumed,
+                            )
+
+                        previous_target = list(last["target_position"])
                         previous_state = combined["final_state"]
 
-                        index += 2
+                        index = group_end + 1
                         continue
 
                     planned_segment = _plan_ordered_segment(

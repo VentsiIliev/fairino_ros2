@@ -1381,7 +1381,7 @@ class TrajectoryExecutor:
         self._overwrite_first_point_with_live_state(joint_trajectory)
         if not preserve_explicit_wrap:
             self._unwrap_joint6_continuity(joint_trajectory)
-        self._soften_trajectory_start(joint_trajectory)
+        # self._soften_trajectory_start(joint_trajectory)
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "trajectory_mutation_done", duration_s=time.perf_counter() - trajectory_mutation_started_at)
