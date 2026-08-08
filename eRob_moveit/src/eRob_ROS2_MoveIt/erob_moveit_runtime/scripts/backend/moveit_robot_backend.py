@@ -3,6 +3,7 @@ from enums import RobotAxis, Direction
 from time import perf_counter
 from threading import Event, Lock
 import math
+import inspect
 import time
 import traceback
 import config
@@ -861,170 +862,141 @@ class MoveItRobotBackend(IRobotBackend):
                     return False
                 time.sleep(0.01)
 
-        def _plan_ordered_segment(index, segment, current_cartesian, current_state):
-            segment_type = str(segment.get("type") or "").strip().lower()
-            label = str(segment.get("label") or f"segment_{index + 1}")
+        def _plan_ordered_segment(
+                index,
+                segment,
+                current_cartesian,
+                current_state,
+                *,
+                defer_optimization=False,
+        ):
+            segment_type = str(
+                segment.get("type") or ""
+            ).strip().lower()
+
+            label = str(
+                segment.get("label")
+                or f"segment_{index + 1}"
+            )
+
             plan_started = perf_counter()
+
+            #
+            # blendR belongs to THIS segment and describes
+            # the transition from this segment into the next.
+            #
+            # blendR == 0:
+            #     ordinary non-blended move
+            #
+            # blendR > 0:
+            #     this trajectory may be blended with the next
+            #     trajectory by the ordered planning worker.
+            #
+            blend_r = max(
+                0.0,
+                float(
+                    segment.get(
+                        "blendR",
+                        0.0,
+                    )
+                    or 0.0
+                ),
+            )
+
+            vel_percent = float(
+                segment.get(
+                    "vel",
+                    config.DEFAULT_VEL_PERCENT,
+                )
+            )
+
+            acc_percent = float(
+                segment.get(
+                    "acc",
+                    config.DEFAULT_ACC_PERCENT,
+                )
+            )
+
+            vel_scale = max(
+                0.0,
+                min(
+                    1.0,
+                    vel_percent / 100.0,
+                ),
+            )
+
+            acc_scale = max(
+                0.0,
+                min(
+                    1.0,
+                    acc_percent / 100.0,
+                ),
+            )
+
             mark_motion_timing(
                 self.node,
                 "ordered_segment_plan_start",
                 index=index + 1,
                 label=label,
                 segment_type=segment_type,
+                blendR=blend_r,
+                defer_optimization=bool(
+                    defer_optimization
+                ),
             )
-            if segment_type == "linear":
-                target_base = self.apply_workobject(list(segment["position"][:6]), user_id=user)
-                planned = _plan_segment(
-                    planning_node,
-                    index=index,
-                    segment={
-                        "label": label,
-                        "position": list(target_base[:6]),
-                        "vel": float(segment.get("vel", config.DEFAULT_VEL_PERCENT)),
-                        "acc": float(segment.get("acc", config.DEFAULT_ACC_PERCENT)),
-                        "motion_type": "linear",
-                    },
-                    start_cartesian=list(current_cartesian[:6]),
-                    start_state=current_state,
-                    tool_transform=tool_transform,
-                )
-                plan_elapsed = perf_counter() - plan_started
-                mark_motion_timing(
-                    self.node,
-                    "ordered_segment_plan_done",
-                    index=index + 1,
-                    label=label,
-                    segment_type=segment_type,
-                    duration_s=plan_elapsed,
-                    points=len(getattr(planned.joint_trajectory, "points", []) or []),
-                    optimize_s=float(getattr(planned, "optimize_elapsed_s", 0.0) or 0.0),
-                )
-                return {
-                    "type": segment_type,
-                    "label": label,
-                    "target_position": planned.target_position,
-                    "final_state": planned.final_state,
-                    "trajectory": planned.joint_trajectory,
-                    "plan_elapsed_s": plan_elapsed,
-                    "optimize_elapsed_s": planned.optimize_elapsed_s,
-                    "protected": bool(segment.get("protected", False)),
-                }
-            if segment_type == "ptp":
-                from motion.planning.ptp_target import plan_ptp_trajectory
 
+            # ============================================================
+            # LINEAR
+            # ============================================================
+            if segment_type == "linear":
                 target_base = self.apply_workobject(
                     list(segment["position"][:6]),
                     user_id=user,
                 )
 
-                vel_scale = max(
-                    0.0,
-                    min(
-                        1.0,
-                        float(
-                            segment.get(
-                                "vel",
-                                config.DEFAULT_VEL_PERCENT,
-                            )
-                        ) / 100.0,
-                    ),
-                )
-
-                acc_scale = max(
-                    0.0,
-                    min(
-                        1.0,
-                        float(
-                            segment.get(
-                                "acc",
-                                config.DEFAULT_ACC_PERCENT,
-                            )
-                        ) / 100.0,
-                    ),
-                )
-
-                response = plan_ptp_trajectory(
-                    planning_node,
-                    target_base,
-                    current_state.joint_state,
-                    tool_transform=tool_transform,
-                )
-
-                if not bool(response.success):
-                    raise RuntimeError(
-                        f"Ordered PTP segment {label!r} rejected: "
-                        f"{response.message}"
-                    )
-
-                #
-                # Native planner says we are already at the target.
-                #
-                if bool(response.noop):
-                    plan_elapsed = perf_counter() - plan_started
-
-                    mark_motion_timing(
-                        self.node,
-                        "ordered_segment_plan_done",
-                        index=index + 1,
-                        label=label,
-                        segment_type=segment_type,
-                        duration_s=plan_elapsed,
-                        points=0,
-                        native_ptp_ms=float(response.total_time_ms),
-                        ik_ms=float(response.ik_time_ms),
-                        validation_ms=float(response.validation_time_ms),
-                        noop=True,
-                    )
-
-                    return {
-                        "type": segment_type,
+                plan_kwargs = {
+                    "index": index,
+                    "segment": {
                         "label": label,
-                        "target_position": list(target_base[:6]),
-                        "final_state": current_state,
-                        "trajectory": None,
-                        "noop": True,
-                        "plan_elapsed_s": plan_elapsed,
-                        "optimize_elapsed_s": 0.0,
-                        "protected": bool(
-                            segment.get("protected", False)
-                        ),
-                    }
-
-                joint_trajectory = response.trajectory
-
-                if not getattr(joint_trajectory, "points", None):
-                    raise RuntimeError(
-                        f"Ordered PTP segment {label!r} "
-                        "returned an empty trajectory"
-                    )
+                        "position": list(target_base[:6]),
+                        "vel": vel_percent,
+                        "acc": acc_percent,
+                        "motion_type": "linear",
+                    },
+                    "start_cartesian": list(current_cartesian[:6]),
+                    "start_state": current_state,
+                    "tool_transform": tool_transform,
+                }
 
                 #
-                # Same optimizer pipeline as the other ordered segments.
+                # Newer segment_planning.py versions accept defer_optimization.
+                # Keep compatibility with the current repo version too: if the
+                # parameter is not present, plan normally and strip timing below.
                 #
-                moveit_trajectory = RobotTrajectory()
-                moveit_trajectory.joint_trajectory = joint_trajectory
+                if "defer_optimization" in inspect.signature(_plan_segment).parameters:
+                    plan_kwargs["defer_optimization"] = bool(defer_optimization)
 
-                optimized, optimize_elapsed = _optimize_sync(
+                planned = _plan_segment(
                     planning_node,
-                    moveit_trajectory,
-                    vel_scale,
-                    acc_scale,
-                    optimizer_name=selected_optimizer,
+                    **plan_kwargs,
                 )
 
-                optimized_joint_trajectory = (
-                    optimized.joint_trajectory
-                )
-
-                if not getattr(
-                        optimized_joint_trajectory,
-                        "points",
-                        None,
-                ):
-                    raise RuntimeError(
-                        f"Ordered PTP segment {label!r} "
-                        "optimizer returned an empty trajectory"
-                    )
+                if defer_optimization and "defer_optimization" not in inspect.signature(_plan_segment).parameters:
+                    #
+                    # TOTG/Ruckig does not change the geometric joint positions.
+                    # For blend construction we only need those positions, so
+                    # discard per-segment timing/velocity/acceleration here.
+                    #
+                    raw_linear = deepcopy(planned.joint_trajectory)
+                    for point in raw_linear.points:
+                        point.velocities = []
+                        point.accelerations = []
+                        point.effort = []
+                        point.time_from_start.sec = 0
+                        point.time_from_start.nanosec = 0
+                    planned.joint_trajectory = raw_linear
+                    planned.final_state = _robot_state_from_trajectory_end(raw_linear)
+                    planned.optimize_elapsed_s = 0.0
 
                 plan_elapsed = (
                         perf_counter() - plan_started
@@ -1038,7 +1010,258 @@ class MoveItRobotBackend(IRobotBackend):
                     segment_type=segment_type,
                     duration_s=plan_elapsed,
                     points=len(
-                        optimized_joint_trajectory.points
+                        getattr(
+                            planned.joint_trajectory,
+                            "points",
+                            [],
+                        )
+                        or []
+                    ),
+                    optimize_s=float(
+                        getattr(
+                            planned,
+                            "optimize_elapsed_s",
+                            0.0,
+                        )
+                        or 0.0
+                    ),
+                    blendR=blend_r,
+                    deferred=bool(
+                        defer_optimization
+                    ),
+                )
+
+                return {
+                    "type": segment_type,
+                    "label": label,
+
+                    "start_position": list(current_cartesian[:6]),
+
+                    "target_position":
+                        planned.target_position,
+
+                    "final_state":
+                        planned.final_state,
+
+                    "trajectory":
+                        planned.joint_trajectory,
+
+                    "plan_elapsed_s":
+                        plan_elapsed,
+
+                    "optimize_elapsed_s":
+                        planned.optimize_elapsed_s,
+
+                    "protected": bool(
+                        segment.get(
+                            "protected",
+                            False,
+                        )
+                    ),
+
+                    #
+                    # Needed by blend planner.
+                    #
+                    "blendR": blend_r,
+                    "vel_scale": vel_scale,
+                    "acc_scale": acc_scale,
+
+                    #
+                    # Useful for diagnostics.
+                    #
+                    "optimization_deferred": bool(
+                        defer_optimization
+                    ),
+                }
+
+            # ============================================================
+            # PTP
+            # ============================================================
+            if segment_type == "ptp":
+                from motion.planning.ptp_target import (
+                    plan_ptp_trajectory,
+                )
+
+                target_base = self.apply_workobject(
+                    list(segment["position"][:6]),
+                    user_id=user,
+                )
+
+                response = plan_ptp_trajectory(
+                    planning_node,
+                    target_base,
+                    current_state.joint_state,
+                    tool_transform=tool_transform,
+                )
+
+                if not bool(response.success):
+                    raise RuntimeError(
+                        f"Ordered PTP segment "
+                        f"{label!r} rejected: "
+                        f"{response.message}"
+                    )
+
+                #
+                # Native PTP planner says the target is
+                # already reached.
+                #
+                if bool(response.noop):
+                    plan_elapsed = (
+                            perf_counter() -
+                            plan_started
+                    )
+
+                    mark_motion_timing(
+                        self.node,
+                        "ordered_segment_plan_done",
+                        index=index + 1,
+                        label=label,
+                        segment_type=segment_type,
+                        duration_s=plan_elapsed,
+                        points=0,
+                        native_ptp_ms=float(
+                            response.total_time_ms
+                        ),
+                        ik_ms=float(
+                            response.ik_time_ms
+                        ),
+                        validation_ms=float(
+                            response.validation_time_ms
+                        ),
+                        noop=True,
+                        blendR=blend_r,
+                    )
+
+                    return {
+                        "type": segment_type,
+                        "label": label,
+
+                        "start_position": list(current_cartesian[:6]),
+
+                        "target_position": list(
+                            target_base[:6]
+                        ),
+
+                        "final_state":
+                            current_state,
+
+                        "trajectory": None,
+
+                        "noop": True,
+
+                        "plan_elapsed_s":
+                            plan_elapsed,
+
+                        "optimize_elapsed_s": 0.0,
+
+                        "protected": bool(
+                            segment.get(
+                                "protected",
+                                False,
+                            )
+                        ),
+
+                        "blendR": blend_r,
+                        "vel_scale": vel_scale,
+                        "acc_scale": acc_scale,
+
+                        "optimization_deferred": bool(
+                            defer_optimization
+                        ),
+                    }
+
+                #
+                # The C++ PTP helper returns an untimed geometric
+                # joint trajectory.
+                #
+                raw_joint_trajectory = (
+                    response.trajectory
+                )
+
+                if not getattr(
+                        raw_joint_trajectory,
+                        "points",
+                        None,
+                ):
+                    raise RuntimeError(
+                        f"Ordered PTP segment "
+                        f"{label!r} returned an "
+                        "empty trajectory"
+                    )
+
+                #
+                # CRITICAL FOR BLENDING
+                #
+                # If this trajectory will be blended with another
+                # trajectory, do NOT time-parameterize it now.
+                #
+                # We need:
+                #
+                #     raw A
+                #       +
+                #     blend
+                #       +
+                #     raw B
+                #
+                # and THEN one optimizer pass over the whole path.
+                #
+                if defer_optimization:
+                    final_joint_trajectory = (
+                        raw_joint_trajectory
+                    )
+
+                    optimize_elapsed = 0.0
+
+                else:
+                    moveit_trajectory = (
+                        RobotTrajectory()
+                    )
+
+                    moveit_trajectory.joint_trajectory = (
+                        raw_joint_trajectory
+                    )
+
+                    optimized, optimize_elapsed = (
+                        _optimize_sync(
+                            planning_node,
+                            moveit_trajectory,
+                            vel_scale,
+                            acc_scale,
+                            optimizer_name=(
+                                selected_optimizer
+                            ),
+                        )
+                    )
+
+                    final_joint_trajectory = (
+                        optimized.joint_trajectory
+                    )
+
+                    if not getattr(
+                            final_joint_trajectory,
+                            "points",
+                            None,
+                    ):
+                        raise RuntimeError(
+                            f"Ordered PTP segment "
+                            f"{label!r} optimizer "
+                            "returned an empty trajectory"
+                        )
+
+                plan_elapsed = (
+                        perf_counter() -
+                        plan_started
+                )
+
+                mark_motion_timing(
+                    self.node,
+                    "ordered_segment_plan_done",
+                    index=index + 1,
+                    label=label,
+                    segment_type=segment_type,
+                    duration_s=plan_elapsed,
+                    points=len(
+                        final_joint_trajectory.points
                     ),
                     native_ptp_ms=float(
                         response.total_time_ms
@@ -1052,46 +1275,108 @@ class MoveItRobotBackend(IRobotBackend):
                     optimize_s=float(
                         optimize_elapsed
                     ),
+                    blendR=blend_r,
+                    deferred=bool(
+                        defer_optimization
+                    ),
                 )
 
                 planning_node.get_logger().info(
-                    f"[OrderedChain][PTP] Planned '{label}' "
-                    f"points={len(optimized_joint_trajectory.points)} "
-                    f"native={response.total_time_ms:.2f}ms "
-                    f"IK={response.ik_time_ms:.2f}ms "
-                    f"validation={response.validation_time_ms:.2f}ms "
-                    f"optimize={optimize_elapsed:.3f}s "
-                    f"total={plan_elapsed:.3f}s"
+                    f"[OrderedChain][PTP] "
+                    f"Planned '{label}' "
+                    f"points="
+                    f"{len(final_joint_trajectory.points)} "
+                    f"native="
+                    f"{response.total_time_ms:.2f}ms "
+                    f"IK="
+                    f"{response.ik_time_ms:.2f}ms "
+                    f"validation="
+                    f"{response.validation_time_ms:.2f}ms "
+                    f"optimize="
+                    f"{optimize_elapsed:.3f}s "
+                    f"deferred="
+                    f"{bool(defer_optimization)} "
+                    f"blendR="
+                    f"{blend_r:.3f}mm "
+                    f"total="
+                    f"{plan_elapsed:.3f}s"
                 )
 
                 return {
                     "type": segment_type,
                     "label": label,
+
+                    "start_position": list(current_cartesian[:6]),
+
                     "target_position": list(
                         target_base[:6]
                     ),
+
+                    #
+                    # Even an untimed trajectory has the correct
+                    # final joint positions, so this remains valid
+                    # as the seed for planning the next move.
+                    #
                     "final_state":
                         _robot_state_from_trajectory_end(
-                            optimized_joint_trajectory
+                            final_joint_trajectory
                         ),
+
                     "trajectory":
-                        optimized_joint_trajectory,
+                        final_joint_trajectory,
+
                     "plan_elapsed_s":
                         plan_elapsed,
+
                     "optimize_elapsed_s":
                         optimize_elapsed,
+
                     "protected": bool(
                         segment.get(
                             "protected",
                             False,
                         )
                     ),
+
+                    "blendR": blend_r,
+                    "vel_scale": vel_scale,
+                    "acc_scale": acc_scale,
+
+                    "optimization_deferred": bool(
+                        defer_optimization
+                    ),
                 }
+
+            # ============================================================
+            # PATH
+            # ============================================================
             if segment_type == "path":
+                #
+                # Version 1:
+                #
+                # Path blending is intentionally NOT supported.
+                #
+                # The existing path builder currently plans AND
+                # time-parameterizes internally, so leave it unchanged.
+                #
+                if blend_r > 0.0:
+                    raise RuntimeError(
+                        f"Ordered path segment "
+                        f"{label!r} has blendR="
+                        f"{blend_r:.3f}, but path "
+                        "blending is not supported yet"
+                    )
+
                 path_base = []
-                for waypoint in segment.get("path") or []:
+
+                for waypoint in (
+                        segment.get("path") or []
+                ):
                     if len(waypoint) >= 6:
-                        wp_full = list(waypoint[:6])
+                        wp_full = list(
+                            waypoint[:6]
+                        )
+
                     else:
                         wp_full = [
                             waypoint[0],
@@ -1101,33 +1386,78 @@ class MoveItRobotBackend(IRobotBackend):
                             current_cartesian[4],
                             current_cartesian[5],
                         ]
-                    path_base.append(list(self.apply_workobject(wp_full, user_id=user)[:6]))
+
+                    path_base.append(
+                        list(
+                            self.apply_workobject(
+                                wp_full,
+                                user_id=user,
+                            )[:6]
+                        )
+                    )
+
                 if not path_base:
-                    raise RuntimeError(f"Ordered-chain path segment {label!r} is empty")
-                planning_path = [list(current_cartesian[:6])]
-                planning_path.extend(path_base)
+                    raise RuntimeError(
+                        f"Ordered-chain path "
+                        f"segment {label!r} is empty"
+                    )
+
+                planning_path = [
+                    list(current_cartesian[:6])
+                ]
+
+                planning_path.extend(
+                    path_base
+                )
+
                 start_gap_mm = math.sqrt(
-                    (float(path_base[0][0]) - float(current_cartesian[0])) ** 2
-                    + (float(path_base[0][1]) - float(current_cartesian[1])) ** 2
-                    + (float(path_base[0][2]) - float(current_cartesian[2])) ** 2
+                    (
+                            float(path_base[0][0]) -
+                            float(current_cartesian[0])
+                    ) ** 2
+                    +
+                    (
+                            float(path_base[0][1]) -
+                            float(current_cartesian[1])
+                    ) ** 2
+                    +
+                    (
+                            float(path_base[0][2]) -
+                            float(current_cartesian[2])
+                    ) ** 2
                 )
+
                 planning_node.get_logger().info(
-                    f"[OrderedChain] Planning path segment '{label}' from previous target: "
-                    f"start_gap_mm={start_gap_mm:.3f} path_waypoints={len(path_base)} "
-                    f"planning_waypoints={len(planning_path)}"
+                    f"[OrderedChain] Planning "
+                    f"path segment '{label}' "
+                    f"from previous target: "
+                    f"start_gap_mm="
+                    f"{start_gap_mm:.3f} "
+                    f"path_waypoints="
+                    f"{len(path_base)} "
+                    f"planning_waypoints="
+                    f"{len(planning_path)}"
                 )
-                vel_scale = max(0.0, min(1.0, float(segment.get("vel", config.DEFAULT_VEL_PERCENT)) / 100.0))
-                acc_scale = max(0.0, min(1.0, float(segment.get("acc", config.DEFAULT_ACC_PERCENT)) / 100.0))
-                joint_trajectory = _build_follow_path_trajectory(
-                    planning_node,
-                    command_path=planning_path,
-                    start_state=current_state,
-                    tool_transform=tool_transform,
-                    vel_scaling=vel_scale,
-                    acc_scaling=acc_scale,
-                    trajectory_optimizer_name=selected_optimizer,
+
+                joint_trajectory = (
+                    _build_follow_path_trajectory(
+                        planning_node,
+                        command_path=planning_path,
+                        start_state=current_state,
+                        tool_transform=tool_transform,
+                        vel_scaling=vel_scale,
+                        acc_scaling=acc_scale,
+                        trajectory_optimizer_name=(
+                            selected_optimizer
+                        ),
+                    )
                 )
-                plan_elapsed = perf_counter() - plan_started
+
+                plan_elapsed = (
+                        perf_counter() -
+                        plan_started
+                )
+
                 mark_motion_timing(
                     self.node,
                     "ordered_segment_plan_done",
@@ -1135,141 +1465,708 @@ class MoveItRobotBackend(IRobotBackend):
                     label=label,
                     segment_type=segment_type,
                     duration_s=plan_elapsed,
-                    points=len(getattr(joint_trajectory, "points", []) or []),
-                    waypoints=len(planning_path),
+                    points=len(
+                        getattr(
+                            joint_trajectory,
+                            "points",
+                            [],
+                        )
+                        or []
+                    ),
+                    waypoints=len(
+                        planning_path
+                    ),
                 )
+
                 return {
                     "type": segment_type,
                     "label": label,
-                    "target_position": list(path_base[-1][:6]),
-                    "final_state": _robot_state_from_trajectory_end(joint_trajectory),
-                    "trajectory": joint_trajectory,
-                    "plan_elapsed_s": plan_elapsed,
-                    "protected": bool(segment.get("protected", False)),
+
+                    "target_position": list(
+                        path_base[-1][:6]
+                    ),
+
+                    "final_state":
+                        _robot_state_from_trajectory_end(
+                            joint_trajectory
+                        ),
+
+                    "trajectory":
+                        joint_trajectory,
+
+                    "plan_elapsed_s":
+                        plan_elapsed,
+
+                    "optimize_elapsed_s": 0.0,
+
+                    "protected": bool(
+                        segment.get(
+                            "protected",
+                            False,
+                        )
+                    ),
+
+                    "blendR": 0.0,
+                    "vel_scale": vel_scale,
+                    "acc_scale": acc_scale,
+
+                    "optimization_deferred":
+                        False,
                 }
+
+            # ============================================================
+            # UNWIND J6
+            # ============================================================
             if segment_type == "unwind_joint6":
-                joint_names = list(getattr(config, "JOINT_NAMES", []) or [])
-                joint_name = str(getattr(config, "EXECUTOR_POST_UNWIND_JOINT_NAME", "Joint_6")).strip()
+                #
+                # Unwind must never participate in blending.
+                #
+                if blend_r > 0.0:
+                    raise RuntimeError(
+                        f"Ordered unwind segment "
+                        f"{label!r} cannot use blendR"
+                    )
+
+                joint_names = list(
+                    getattr(
+                        config,
+                        "JOINT_NAMES",
+                        [],
+                    )
+                    or []
+                )
+
+                joint_name = str(
+                    getattr(
+                        config,
+                        "EXECUTOR_POST_UNWIND_JOINT_NAME",
+                        "Joint_6",
+                    )
+                ).strip()
+
                 if joint_name not in joint_names:
-                    raise RuntimeError(f"Joint {joint_name!r} is not configured")
+                    raise RuntimeError(
+                        f"Joint {joint_name!r} "
+                        "is not configured"
+                    )
+
                 if (
                         index == len(segments) - 1
-                        and bool(getattr(config, "EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION", True))
+                        and bool(
+                    getattr(
+                        config,
+                        "EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION",
+                        True,
+                    )
+                )
                 ):
                     planning_node.get_logger().info(
-                        "[UNWIND_J6] Ordered final unwind will be planned live during execution"
+                        "[UNWIND_J6] Ordered final "
+                        "unwind will be planned live "
+                        "during execution"
                     )
+
                     return {
                         "type": segment_type,
                         "label": label,
-                        "target_position": list(current_cartesian[:6]),
-                        "final_state": current_state,
+
+                        "target_position": list(
+                            current_cartesian[:6]
+                        ),
+
+                        "final_state":
+                            current_state,
+
                         "runtime_unwind": True,
-                        "vel": segment.get("vel", config.DEFAULT_VEL_PERCENT),
-                        "acc": segment.get("acc", config.DEFAULT_ACC_PERCENT),
+
+                        "vel": segment.get(
+                            "vel",
+                            config.DEFAULT_VEL_PERCENT,
+                        ),
+
+                        "acc": segment.get(
+                            "acc",
+                            config.DEFAULT_ACC_PERCENT,
+                        ),
+
                         "trajectories": [],
                         "trajectory_checks": [],
                         "check": None,
-                        "plan_elapsed_s": perf_counter() - plan_started,
-                        "protected": bool(segment.get("protected", False)),
+
+                        "plan_elapsed_s":
+                            perf_counter() -
+                            plan_started,
+
+                        "protected": bool(
+                            segment.get(
+                                "protected",
+                                False,
+                            )
+                        ),
+
+                        "blendR": 0.0,
                     }
-                axis_index = int(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX", 5))
-                joint_index = joint_names.index(joint_name)
-                by_name = _joint_positions_by_name(current_state)
-                current_value = float(by_name[joint_name])
-                final_target = self.node.trajectory_executor._canonical_angle(current_value)
-                min_delta = float(getattr(config, "EXECUTOR_POST_UNWIND_MIN_DELTA_RAD", 0.5))
-                remaining = final_target - current_value
+
+                axis_index = int(
+                    getattr(
+                        config,
+                        "EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX",
+                        5,
+                    )
+                )
+
+                joint_index = (
+                    joint_names.index(
+                        joint_name
+                    )
+                )
+
+                by_name = (
+                    _joint_positions_by_name(
+                        current_state
+                    )
+                )
+
+                current_value = float(
+                    by_name[joint_name]
+                )
+
+                final_target = (
+                    self.node
+                    .trajectory_executor
+                    ._canonical_angle(
+                        current_value
+                    )
+                )
+
+                min_delta = float(
+                    getattr(
+                        config,
+                        "EXECUTOR_POST_UNWIND_MIN_DELTA_RAD",
+                        0.5,
+                    )
+                )
+
+                remaining = (
+                        final_target -
+                        current_value
+                )
+
                 if abs(remaining) < min_delta:
-                    planning_node.get_logger().info("[UNWIND_J6] Ordered-chain unwind skipped - no unwind needed")
+                    planning_node.get_logger().info(
+                        "[UNWIND_J6] "
+                        "Ordered-chain unwind skipped "
+                        "- no unwind needed"
+                    )
+
                     return {
                         "type": segment_type,
                         "label": label,
-                        "target_position": list(current_cartesian[:6]),
-                        "final_state": current_state,
+
+                        "target_position": list(
+                            current_cartesian[:6]
+                        ),
+
+                        "final_state":
+                            current_state,
+
                         "trajectories": [],
                         "trajectory_checks": [],
                         "check": None,
-                        "plan_elapsed_s": perf_counter() - plan_started,
-                        "protected": bool(segment.get("protected", False)),
+
+                        "plan_elapsed_s":
+                            perf_counter() -
+                            plan_started,
+
+                        "protected": bool(
+                            segment.get(
+                                "protected",
+                                False,
+                            )
+                        ),
+
+                        "blendR": 0.0,
                     }
-                vel_percent = self.node.trajectory_executor._clamp_percentage(
-                    segment.get("vel", config.DEFAULT_VEL_PERCENT))
-                acc_percent = self.node.trajectory_executor._clamp_percentage(
-                    segment.get("acc", config.DEFAULT_ACC_PERCENT))
-                vel_scale = vel_percent / 100.0
-                acc_scale = acc_percent / 100.0
-                sign = float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN", 1.0))
+
+                vel_percent_unwind = (
+                    self.node
+                    .trajectory_executor
+                    ._clamp_percentage(
+                        segment.get(
+                            "vel",
+                            config.DEFAULT_VEL_PERCENT,
+                        )
+                    )
+                )
+
+                acc_percent_unwind = (
+                    self.node
+                    .trajectory_executor
+                    ._clamp_percentage(
+                        segment.get(
+                            "acc",
+                            config.DEFAULT_ACC_PERCENT,
+                        )
+                    )
+                )
+
+                vel_scale_unwind = (
+                        vel_percent_unwind /
+                        100.0
+                )
+
+                acc_scale_unwind = (
+                        acc_percent_unwind /
+                        100.0
+                )
+
+                sign = float(
+                    getattr(
+                        config,
+                        "EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN",
+                        1.0,
+                    )
+                )
+
                 if abs(sign) < 1e-9:
                     sign = 1.0
-                max_step_deg = max(1.0,
-                                   abs(float(getattr(config, "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG", 180.0))))
-                total_delta_deg = math.degrees(remaining) * sign
-                segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
-                planning_node.get_logger().info(
-                    "[UNWIND_J6] Planning ordered-chain rotational unwind: "
-                    f"{joint_name} {current_value:.3f} -> {final_target:.3f} rad "
-                    f"delta={remaining:.3f} rad cart_axis={axis_index} cart_delta={total_delta_deg:.3f}deg "
-                    f"segments={segment_count} max_segment={max_step_deg:.1f}deg "
-                    f"vel={vel_percent:.1f}% acc={acc_percent:.1f}%"
+
+                max_step_deg = max(
+                    1.0,
+                    abs(
+                        float(
+                            getattr(
+                                config,
+                                "EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG",
+                                180.0,
+                            )
+                        )
+                    ),
                 )
+
+                total_delta_deg = (
+                        math.degrees(
+                            remaining
+                        )
+                        * sign
+                )
+
+                segment_count = max(
+                    1,
+                    int(
+                        math.ceil(
+                            abs(
+                                total_delta_deg
+                            )
+                            / max_step_deg
+                        )
+                    ),
+                )
+
+                planning_node.get_logger().info(
+                    "[UNWIND_J6] Planning "
+                    "ordered-chain rotational unwind: "
+                    f"{joint_name} "
+                    f"{current_value:.3f} -> "
+                    f"{final_target:.3f} rad "
+                    f"delta={remaining:.3f} rad "
+                    f"cart_axis={axis_index} "
+                    f"cart_delta="
+                    f"{total_delta_deg:.3f}deg "
+                    f"segments={segment_count} "
+                    f"max_segment="
+                    f"{max_step_deg:.1f}deg "
+                    f"vel="
+                    f"{vel_percent_unwind:.1f}% "
+                    f"acc="
+                    f"{acc_percent_unwind:.1f}%"
+                )
+
                 trajectories = []
                 trajectory_checks = []
-                planning_state = current_state
-                planning_cartesian = list(current_cartesian[:6])
-                planning_value = current_value
-                for unwind_index in range(1, segment_count + 1):
-                    remaining = final_target - planning_value
-                    remaining_deg = math.degrees(remaining) * sign
+
+                planning_state = (
+                    current_state
+                )
+
+                planning_cartesian = list(
+                    current_cartesian[:6]
+                )
+
+                planning_value = (
+                    current_value
+                )
+
+                for unwind_index in range(
+                        1,
+                        segment_count + 1,
+                ):
+                    remaining = (
+                            final_target -
+                            planning_value
+                    )
+
+                    remaining_deg = (
+                            math.degrees(
+                                remaining
+                            )
+                            * sign
+                    )
+
                     if abs(remaining) < min_delta:
                         break
-                    segment_delta_deg = math.copysign(min(abs(remaining_deg), max_step_deg), remaining_deg)
-                    segment_joint_target = planning_value + math.radians(segment_delta_deg) / sign
-                    target_cartesian = list(planning_cartesian[:6])
-                    target_cartesian[axis_index] = float(target_cartesian[axis_index]) + segment_delta_deg
+
+                    segment_delta_deg = (
+                        math.copysign(
+                            min(
+                                abs(
+                                    remaining_deg
+                                ),
+                                max_step_deg,
+                            ),
+                            remaining_deg,
+                        )
+                    )
+
+                    segment_joint_target = (
+                            planning_value
+                            +
+                            math.radians(
+                                segment_delta_deg
+                            )
+                            / sign
+                    )
+
+                    target_cartesian = list(
+                        planning_cartesian[:6]
+                    )
+
+                    target_cartesian[
+                        axis_index
+                    ] = (
+                            float(
+                                target_cartesian[
+                                    axis_index
+                                ]
+                            )
+                            + segment_delta_deg
+                    )
+
                     planning_node.get_logger().info(
-                        f"[UNWIND_J6] Planning ordered unwind segment {unwind_index}/{segment_count}: "
-                        f"{planning_value:.3f} -> {segment_joint_target:.3f} rad "
-                        f"(final={final_target:.3f}), cart_delta={segment_delta_deg:.3f}deg"
+                        f"[UNWIND_J6] Planning "
+                        f"ordered unwind segment "
+                        f"{unwind_index}/"
+                        f"{segment_count}: "
+                        f"{planning_value:.3f} -> "
+                        f"{segment_joint_target:.3f} "
+                        f"rad "
+                        f"(final="
+                        f"{final_target:.3f}), "
+                        f"cart_delta="
+                        f"{segment_delta_deg:.3f}deg"
                     )
-                    joint_trajectory = _plan_unwind_direct_ik_trajectory(
-                        planning_cartesian,
-                        target_cartesian,
-                        axis_index,
-                        vel_scale,
-                        acc_scale,
-                        planning_state,
-                        joint_name=joint_name,
-                        joint_start=planning_value,
-                        joint_target=segment_joint_target,
+
+                    joint_trajectory = (
+                        _plan_unwind_direct_ik_trajectory(
+                            planning_cartesian,
+                            target_cartesian,
+                            axis_index,
+                            vel_scale_unwind,
+                            acc_scale_unwind,
+                            planning_state,
+                            joint_name=joint_name,
+                            joint_start=planning_value,
+                            joint_target=(
+                                segment_joint_target
+                            ),
+                        )
                     )
-                    trajectories.append(joint_trajectory)
+
+                    trajectories.append(
+                        joint_trajectory
+                    )
+
                     trajectory_checks.append({
-                        "joint_names": joint_names,
-                        "joint_name": joint_name,
-                        "joint_index": joint_index,
-                        "target_value": segment_joint_target,
+                        "joint_names":
+                            joint_names,
+
+                        "joint_name":
+                            joint_name,
+
+                        "joint_index":
+                            joint_index,
+
+                        "target_value":
+                            segment_joint_target,
                     })
-                    planning_state = _robot_state_from_trajectory_end(joint_trajectory)
-                    planning_cartesian = target_cartesian
-                    planning_value = float(_joint_positions_by_name(planning_state).get(joint_name, planning_value))
+
+                    planning_state = (
+                        _robot_state_from_trajectory_end(
+                            joint_trajectory
+                        )
+                    )
+
+                    planning_cartesian = (
+                        target_cartesian
+                    )
+
+                    planning_value = float(
+                        _joint_positions_by_name(
+                            planning_state
+                        ).get(
+                            joint_name,
+                            planning_value,
+                        )
+                    )
+
                 return {
                     "type": segment_type,
                     "label": label,
-                    "target_position": list(planning_cartesian[:6]),
-                    "final_state": planning_state,
-                    "trajectories": trajectories,
-                    "trajectory_checks": trajectory_checks,
+
+                    "target_position": list(
+                        planning_cartesian[:6]
+                    ),
+
+                    "final_state":
+                        planning_state,
+
+                    "trajectories":
+                        trajectories,
+
+                    "trajectory_checks":
+                        trajectory_checks,
+
                     "check": {
-                        "joint_names": joint_names,
-                        "joint_name": joint_name,
-                        "joint_index": joint_index,
-                        "target_value": final_target,
+                        "joint_names":
+                            joint_names,
+
+                        "joint_name":
+                            joint_name,
+
+                        "joint_index":
+                            joint_index,
+
+                        "target_value":
+                            final_target,
                     },
-                    "plan_elapsed_s": perf_counter() - plan_started,
-                    "protected": bool(segment.get("protected", False)),
+
+                    "plan_elapsed_s":
+                        perf_counter() -
+                        plan_started,
+
+                    "protected": bool(
+                        segment.get(
+                            "protected",
+                            False,
+                        )
+                    ),
+
+                    "blendR": 0.0,
                 }
-            raise RuntimeError(f"Unsupported ordered-chain segment type: {segment_type!r}")
+
+            raise RuntimeError(
+                f"Unsupported ordered-chain "
+                f"segment type: "
+                f"{segment_type!r}"
+            )
+
+        def _xyz_distance_mm(a, b):
+            return math.sqrt(
+                (float(b[0]) - float(a[0])) ** 2
+                + (float(b[1]) - float(a[1])) ** 2
+                + (float(b[2]) - float(a[2])) ** 2
+            )
+
+        def _wait_state_validity(joint_names, joint_positions, timeout_s=2.0):
+            from moveit_msgs.srv import GetStateValidity
+            from sensor_msgs.msg import JointState
+
+            client = planning_node.get_state_validity_client()
+            if client is None or not client.wait_for_service(timeout_sec=1.0):
+                raise TimeoutError("MoveIt state-validity service unavailable")
+
+            request = GetStateValidity.Request()
+            joint_state = JointState()
+            joint_state.name = list(joint_names)
+            joint_state.position = [float(value) for value in joint_positions]
+            request.robot_state.joint_state = joint_state
+            request.robot_state.is_diff = True
+            request.group_name = str(config.PLANNING_GROUP)
+
+            future = client.call_async(request)
+            deadline = time.monotonic() + float(timeout_s)
+            while time.monotonic() < deadline:
+                if future.done():
+                    return future.result()
+                time.sleep(0.001)
+
+            raise TimeoutError("MoveIt state-validity request timed out")
+
+        def _build_blended_pair(first, second, requested_blend_r_mm):
+            """
+            Build one raw joint path for two already-planned LIN/PTP moves.
+
+            Version 1 intentionally supports one junction at a time:
+                A.blendR > 0
+                B.blendR == 0
+
+            The public radius is Cartesian millimetres.  We use the commanded
+            Cartesian lengths to choose approximate entry/exit fractions along
+            the already-selected joint paths, then build a quadratic joint-space
+            Bezier through the original waypoint.  The newly-created samples are
+            checked through MoveIt's live state-validity service before retiming.
+            """
+            from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+            first_traj = first.get("trajectory")
+            second_traj = second.get("trajectory")
+
+            if first_traj is None or second_traj is None:
+                raise RuntimeError("Cannot blend a no-op/empty trajectory")
+
+            first_points = list(getattr(first_traj, "points", []) or [])
+            second_points = list(getattr(second_traj, "points", []) or [])
+
+            if len(first_points) < 3 or len(second_points) < 3:
+                raise RuntimeError(
+                    "Blend requires at least 3 trajectory points on each side"
+                )
+
+            first_names = list(getattr(first_traj, "joint_names", []) or [])
+            second_names = list(getattr(second_traj, "joint_names", []) or [])
+            if first_names != second_names or not first_names:
+                raise RuntimeError("Blend joint-name/order mismatch")
+
+            q_waypoint_a = list(first_points[-1].positions)
+            q_waypoint_b = list(second_points[0].positions)
+            junction_tol = float(
+                getattr(config, "ORDERED_BLEND_JUNCTION_TOL_RAD", 0.02)
+            )
+            junction_error = max(
+                abs(float(a) - float(b))
+                for a, b in zip(q_waypoint_a, q_waypoint_b)
+            )
+            if junction_error > junction_tol:
+                raise RuntimeError(
+                    f"Blend junction mismatch: {junction_error:.6f}rad "
+                    f"> {junction_tol:.6f}rad"
+                )
+
+            incoming_len_mm = _xyz_distance_mm(
+                first["start_position"],
+                first["target_position"],
+            )
+            outgoing_len_mm = _xyz_distance_mm(
+                second["start_position"],
+                second["target_position"],
+            )
+            if incoming_len_mm <= 1e-6 or outgoing_len_mm <= 1e-6:
+                raise RuntimeError("Cannot blend zero-length Cartesian segment")
+
+            requested = max(0.0, float(requested_blend_r_mm))
+            effective = min(
+                requested,
+                0.45 * incoming_len_mm,
+                0.45 * outgoing_len_mm,
+            )
+            min_radius = float(
+                getattr(config, "ORDERED_BLEND_MIN_RADIUS_MM", 0.5)
+            )
+            if effective < min_radius:
+                raise RuntimeError(
+                    f"Effective blend radius too small: {effective:.3f}mm"
+                )
+
+            entry_fraction = max(
+                0.0,
+                min(1.0, 1.0 - effective / incoming_len_mm),
+            )
+            exit_fraction = max(
+                0.0,
+                min(1.0, effective / outgoing_len_mm),
+            )
+
+            entry_index = int(round(entry_fraction * (len(first_points) - 1)))
+            exit_index = int(round(exit_fraction * (len(second_points) - 1)))
+
+            entry_index = max(1, min(entry_index, len(first_points) - 2))
+            exit_index = max(1, min(exit_index, len(second_points) - 2))
+
+            q0 = [float(v) for v in first_points[entry_index].positions]
+            q1 = [float(v) for v in q_waypoint_a]
+            q2 = [float(v) for v in second_points[exit_index].positions]
+
+            sample_count = max(
+                6,
+                int(getattr(config, "ORDERED_BLEND_SAMPLES", 12)),
+            )
+
+            blend_positions = []
+            for sample in range(sample_count + 1):
+                u = float(sample) / float(sample_count)
+                a = (1.0 - u) ** 2
+                b = 2.0 * (1.0 - u) * u
+                c = u ** 2
+                q = [
+                    a * q0[j] + b * q1[j] + c * q2[j]
+                    for j in range(len(q0))
+                ]
+                blend_positions.append(q)
+
+            validation_started = perf_counter()
+            for sample_index, q in enumerate(blend_positions):
+                validity = _wait_state_validity(first_names, q)
+                if not bool(getattr(validity, "valid", False)):
+                    contacts = []
+                    for contact in list(getattr(validity, "contacts", []) or []):
+                        body_1 = str(
+                            getattr(contact, "contact_body_1", "")
+                            or getattr(contact, "body_name_1", "")
+                        )
+                        body_2 = str(
+                            getattr(contact, "contact_body_2", "")
+                            or getattr(contact, "body_name_2", "")
+                        )
+                        if body_1 or body_2:
+                            contacts.append(
+                                f"{body_1}<->{body_2}" if body_1 and body_2
+                                else body_1 or body_2
+                            )
+                    detail = f" contacts={contacts}" if contacts else ""
+                    raise RuntimeError(
+                        f"Blend sample {sample_index}/{sample_count} is invalid"
+                        f"{detail}"
+                    )
+
+            merged = JointTrajectory()
+            merged.joint_names = list(first_names)
+
+            def append_positions(positions):
+                point = JointTrajectoryPoint()
+                point.positions = [float(v) for v in positions]
+                merged.points.append(point)
+
+            for point in first_points[:entry_index + 1]:
+                append_positions(point.positions)
+
+            for q in blend_positions[1:-1]:
+                append_positions(q)
+
+            for point in second_points[exit_index:]:
+                append_positions(point.positions)
+
+            planning_node.get_logger().info(
+                f"[OrderedBlend] Built raw pair '{first['label']}' -> "
+                f"'{second['label']}' requested={requested:.3f}mm "
+                f"effective={effective:.3f}mm "
+                f"entry={entry_index}/{len(first_points)-1} "
+                f"exit={exit_index}/{len(second_points)-1} "
+                f"blend_samples={sample_count + 1} "
+                f"merged_points={len(merged.points)} "
+                f"validation_s={perf_counter() - validation_started:.3f}"
+            )
+
+            return merged, effective
 
         def _execute_planned_segment(index, total, planned, preplanned_ready_count=0):
             exec_started = perf_counter()
@@ -1295,7 +2192,7 @@ class MoveItRobotBackend(IRobotBackend):
                 preplanned_ready_count=int(preplanned_ready_count),
                 result=None,
             )
-            if segment_type in {"linear", "ptp", "path"}:
+            if segment_type in {"linear", "ptp", "path", "blended"}:
 
                 if bool(planned.get("noop", False)):
                     planning_node.get_logger().info(
@@ -1367,6 +2264,14 @@ class MoveItRobotBackend(IRobotBackend):
                                     "end",
                             ):
                                 result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+            elif segment_type == "blend_consumed":
+                planning_node.get_logger().info(
+                    f"[OrderedChain] Segment {index}/{total} "
+                    f"label='{planned['label']}' was executed inside the "
+                    "previous blended controller trajectory"
+                )
+                result = 0
+
             elif segment_type == "unwind_joint6":
                 if bool(planned.get("runtime_unwind", False)):
                     planning_node.get_logger().info(
@@ -1480,11 +2385,19 @@ class MoveItRobotBackend(IRobotBackend):
 
         def _planning_worker():
             worker_started = perf_counter()
-            mark_motion_timing(self.node, "ordered_planning_worker_start", segments=len(segments))
+            mark_motion_timing(
+                self.node,
+                "ordered_planning_worker_start",
+                segments=len(segments),
+            )
+
             previous_target = start_cartesian
             previous_state = start_state
+
             try:
-                for index, segment in enumerate(segments):
+                index = 0
+
+                while index < len(segments):
                     if stop_planning.is_set():
                         mark_motion_timing(
                             self.node,
@@ -1493,8 +2406,188 @@ class MoveItRobotBackend(IRobotBackend):
                             duration_s=perf_counter() - worker_started,
                         )
                         break
-                    planned_segment = _plan_ordered_segment(index, segment, previous_target, previous_state)
-                    planned_queue.put((index, planned_segment, None))
+
+                    segment = segments[index]
+                    segment_type = str(segment.get("type") or "").strip().lower()
+                    blend_r = max(
+                        0.0,
+                        float(segment.get("blendR", 0.0) or 0.0),
+                    )
+
+                    wants_blend = blend_r > 0.0
+
+                    if wants_blend:
+                        if segment_type not in {"linear", "ptp"}:
+                            raise RuntimeError(
+                                f"blendR is currently supported only for LIN/PTP; "
+                                f"segment {index + 1} is {segment_type!r}"
+                            )
+
+                        if index + 1 >= len(segments):
+                            raise RuntimeError(
+                                f"Segment {index + 1} requests blendR={blend_r:.3f} "
+                                "but there is no next segment"
+                            )
+
+                        next_segment = segments[index + 1]
+                        next_type = str(
+                            next_segment.get("type") or ""
+                        ).strip().lower()
+
+                        if next_type not in {"linear", "ptp"}:
+                            raise RuntimeError(
+                                f"Blend target segment {index + 2} must be LIN/PTP; "
+                                f"got {next_type!r}"
+                            )
+
+                        if max(
+                            0.0,
+                            float(next_segment.get("blendR", 0.0) or 0.0),
+                        ) > 0.0:
+                            raise RuntimeError(
+                                "Version-1 ordered blending supports non-overlapping "
+                                "pairs only. Set the second segment blendR to 0."
+                            )
+
+                        first = _plan_ordered_segment(
+                            index,
+                            segment,
+                            previous_target,
+                            previous_state,
+                            defer_optimization=True,
+                        )
+
+                        if bool(first.get("noop", False)):
+                            raise RuntimeError(
+                                f"Cannot blend no-op segment {first['label']!r}"
+                            )
+
+                        second = _plan_ordered_segment(
+                            index + 1,
+                            next_segment,
+                            first["target_position"],
+                            first["final_state"],
+                            defer_optimization=True,
+                        )
+
+                        if bool(second.get("noop", False)):
+                            raise RuntimeError(
+                                f"Cannot blend into no-op segment {second['label']!r}"
+                            )
+
+                        raw_blended, effective_blend_r = _build_blended_pair(
+                            first,
+                            second,
+                            blend_r,
+                        )
+
+                        moveit_trajectory = RobotTrajectory()
+                        moveit_trajectory.joint_trajectory = raw_blended
+
+                        #
+                        # Conservative V1 rule: one blended controller trajectory
+                        # uses the slower velocity/acceleration of the pair.
+                        #
+                        blend_vel_scale = min(
+                            float(first.get("vel_scale", 1.0)),
+                            float(second.get("vel_scale", 1.0)),
+                        )
+                        blend_acc_scale = min(
+                            float(first.get("acc_scale", 1.0)),
+                            float(second.get("acc_scale", 1.0)),
+                        )
+
+                        optimized, optimize_elapsed = _optimize_sync(
+                            planning_node,
+                            moveit_trajectory,
+                            blend_vel_scale,
+                            blend_acc_scale,
+                            optimizer_name=selected_optimizer,
+                        )
+
+                        optimized_joint_trajectory = optimized.joint_trajectory
+                        if not getattr(optimized_joint_trajectory, "points", None):
+                            raise RuntimeError(
+                                "Optimizer returned empty blended trajectory"
+                            )
+
+                        combined = {
+                            "type": "blended",
+                            "label": f"{first['label']} -> {second['label']}",
+                            "start_position": list(first["start_position"]),
+                            "target_position": list(second["target_position"]),
+                            "final_state": _robot_state_from_trajectory_end(
+                                optimized_joint_trajectory
+                            ),
+                            "trajectory": optimized_joint_trajectory,
+                            "plan_elapsed_s": (
+                                float(first.get("plan_elapsed_s", 0.0) or 0.0)
+                                + float(second.get("plan_elapsed_s", 0.0) or 0.0)
+                                + float(optimize_elapsed)
+                            ),
+                            "optimize_elapsed_s": float(optimize_elapsed),
+                            "protected": bool(first.get("protected", False))
+                            or bool(second.get("protected", False)),
+                            "blendR": float(blend_r),
+                            "effective_blendR": float(effective_blend_r),
+                            "vel_scale": blend_vel_scale,
+                            "acc_scale": blend_acc_scale,
+                        }
+
+                        planned_queue.put((index, combined, None))
+                        mark_motion_timing(
+                            self.node,
+                            "ordered_segment_queued",
+                            index=index + 1,
+                            label=combined.get("label"),
+                            segment_type="blended",
+                            blendR=blend_r,
+                            effective_blendR=effective_blend_r,
+                            duration_s=perf_counter() - worker_started,
+                        )
+                        _mark_planned(index, combined)
+
+                        #
+                        # Preserve the existing one-planned-item-per-logical-
+                        # segment consumer/status contract.  Segment B has
+                        # already physically executed inside the combined goal.
+                        #
+                        consumed = {
+                            "type": "blend_consumed",
+                            "label": str(
+                                second.get("label")
+                                or f"segment_{index + 2}"
+                            ),
+                            "start_position": list(second["start_position"]),
+                            "target_position": list(second["target_position"]),
+                            "final_state": combined["final_state"],
+                            "trajectory": None,
+                            "plan_elapsed_s": 0.0,
+                            "optimize_elapsed_s": 0.0,
+                            "protected": bool(second.get("protected", False)),
+                            "blendR": 0.0,
+                        }
+
+                        planned_queue.put((index + 1, consumed, None))
+                        _mark_planned(index + 1, consumed)
+
+                        previous_target = list(second["target_position"])
+                        previous_state = combined["final_state"]
+
+                        index += 2
+                        continue
+
+                    planned_segment = _plan_ordered_segment(
+                        index,
+                        segment,
+                        previous_target,
+                        previous_state,
+                    )
+
+                    planned_queue.put(
+                        (index, planned_segment, None)
+                    )
+
                     mark_motion_timing(
                         self.node,
                         "ordered_segment_queued",
@@ -1502,15 +2595,32 @@ class MoveItRobotBackend(IRobotBackend):
                         label=planned_segment.get("label"),
                         duration_s=perf_counter() - worker_started,
                     )
-                    _mark_planned(index, planned_segment)
-                    previous_target = planned_segment["target_position"]
-                    previous_state = planned_segment["final_state"]
-                planned_queue.put((None, None, None))
+
+                    _mark_planned(
+                        index,
+                        planned_segment,
+                    )
+
+                    previous_target = (
+                        planned_segment["target_position"]
+                    )
+
+                    previous_state = (
+                        planned_segment["final_state"]
+                    )
+
+                    index += 1
+
+                planned_queue.put(
+                    (None, None, None)
+                )
+
                 mark_motion_timing(
                     self.node,
                     "ordered_planning_worker_done",
                     duration_s=perf_counter() - worker_started,
                 )
+
             except Exception as exc:
                 mark_motion_timing(
                     self.node,
@@ -1518,7 +2628,10 @@ class MoveItRobotBackend(IRobotBackend):
                     duration_s=perf_counter() - worker_started,
                     error=str(exc),
                 )
-                planned_queue.put((None, None, exc))
+
+                planned_queue.put(
+                    (None, None, exc)
+                )
 
         mark_motion_timing(self.node, "ordered_planner_submit_start")
         planner_future = executor.submit(_planning_worker)

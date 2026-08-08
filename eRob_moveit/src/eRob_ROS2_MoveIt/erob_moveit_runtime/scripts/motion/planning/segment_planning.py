@@ -296,6 +296,7 @@ def _plan_segment(
     start_cartesian: list[float],
     start_state: RobotState | None,
     tool_transform,
+    defer_optimization=False,
 ) -> _PlannedSegment:
     started = perf_counter()
     target = list(segment["position"])
@@ -370,6 +371,46 @@ def _plan_segment(
     if fraction < config.CARTESIAN_MIN_FRACTION or point_count <= 1:
         raise RuntimeError(f"cartesian planning failed: fraction={fraction:.4f} points={point_count}")
 
+    #
+    # DEFER TIME OPTIMIZATION FOR SEGMENT BLENDING
+    #
+    if defer_optimization:
+        #
+        # The blend layer needs geometry only.
+        #
+        # Do not preserve per-segment timing because the complete:
+        #
+        #     A + blend + B
+        #
+        # trajectory will be time-parameterized once afterward.
+        #
+        for point in joint_trajectory.points:
+            point.velocities = []
+            point.accelerations = []
+            point.effort = []
+
+            point.time_from_start.sec = 0
+            point.time_from_start.nanosec = 0
+
+        rc.get_logger().info(
+            f"[SegmentPlan] Returning raw trajectory "
+            f"for blend: segment={index + 1} "
+            f"label='{label}' "
+            f"points={len(joint_trajectory.points)}"
+        )
+
+        return _PlannedSegment(
+            index=index,
+            label=label,
+            target_position=target,
+            joint_trajectory=joint_trajectory,
+            final_state=_robot_state_from_trajectory_end(
+                joint_trajectory
+            ),
+            plan_elapsed_s=plan_elapsed,
+            optimize_elapsed_s=0.0,
+        )
+
     optimize_started = perf_counter()
     optimized, optimize_elapsed = _optimize_sync(rc, trajectory, vel_scaling, acc_scaling)
     optimize_total_elapsed = perf_counter() - optimize_started
@@ -378,6 +419,7 @@ def _plan_segment(
         f"reported_s={optimize_elapsed:.3f} optimizer_total_s={optimize_total_elapsed:.3f} "
         f"segment_total_s={perf_counter() - started:.3f}"
     )
+
     optimized_joint_trajectory = optimized.joint_trajectory
     return _PlannedSegment(
         index=index,

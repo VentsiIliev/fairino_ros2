@@ -185,10 +185,28 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
             position = raw_segment.get("position")
             if not position or len(position) != 6:
                 raise ValueError(f"Invalid segment {index}: linear position must have 6 values")
+            blend_r = float(raw_segment.get("blendR", 0.0) or 0.0)
+
+            if blend_r < 0.0:
+                raise ValueError(
+                    f"Invalid segment {index}: blendR must be >= 0"
+                )
+
             segment.update({
                 "position": deepcopy(position),
-                "vel": float(raw_segment.get("vel", config.DEFAULT_VEL_PERCENT)),
-                "acc": float(raw_segment.get("acc", config.DEFAULT_ACC_PERCENT)),
+                "vel": float(
+                    raw_segment.get(
+                        "vel",
+                        config.DEFAULT_VEL_PERCENT,
+                    )
+                ),
+                "acc": float(
+                    raw_segment.get(
+                        "acc",
+                        config.DEFAULT_ACC_PERCENT,
+                    )
+                ),
+                "blendR": blend_r,
             })
         elif segment_type == "path":
             path = raw_segment.get("path")
