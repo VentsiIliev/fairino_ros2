@@ -2044,7 +2044,25 @@ class MoveItRobotBackend(IRobotBackend):
                 float(cartesian_length_mm),
             )
 
-            if cartesian_length_mm > 1.0:
+            #
+            # A segment can move a millimetre or two in XYZ while being
+            # predominantly rotational.  Treat those micro-translations as
+            # rotation-dominant; otherwise a large blendR (for example 20 mm)
+            # gets clamped to a 45% trim on BOTH ends of the short segment and
+            # consumes the whole middle trajectory.
+            #
+            rotation_dominant_xyz_mm = max(
+                1.0,
+                float(
+                    getattr(
+                        config,
+                        "ORDERED_BLEND_ROTATION_DOMINANT_XYZ_MM",
+                        5.0,
+                    )
+                ),
+            )
+
+            if cartesian_length_mm > rotation_dominant_xyz_mm:
                 return min(
                     0.45,
                     radius_mm / cartesian_length_mm,
@@ -2134,11 +2152,82 @@ class MoveItRobotBackend(IRobotBackend):
                     or []
                 )
 
-                if len(points) < 3:
+                if len(points) < 2:
                     raise RuntimeError(
                         f"Blend segment {planned.get('label')!r} "
-                        f"requires at least 3 trajectory points; "
+                        f"requires at least 2 trajectory points; "
                         f"got {len(points)}"
+                    )
+
+                #
+                # Very short raw trajectories do not contain enough interior
+                # samples for a middle segment to be trimmed independently at
+                # both ends.  Resample them to seven evenly spaced joint-space
+                # points before computing blend entry/exit indices.
+                #
+                # Seven points gives:
+                #
+                #   0%, 16.7%, 33.3%, 50%, 66.7%, 83.3%, 100%
+                #
+                # so a conservative 25% trim leaves a clear middle region.
+                #
+                if len(points) < 7:
+                    from trajectory_msgs.msg import JointTrajectoryPoint
+
+                    first_positions = [
+                        float(value)
+                        for value in points[0].positions
+                    ]
+
+                    last_positions = [
+                        float(value)
+                        for value in points[-1].positions
+                    ]
+
+                    if len(first_positions) != len(last_positions):
+                        raise RuntimeError(
+                            f"Blend segment {planned.get('label')!r} "
+                            "has mismatched joint dimensions"
+                        )
+
+                    original_count = len(points)
+                    densified_points = []
+
+                    for sample_index in range(7):
+                        fraction = (
+                            float(sample_index)
+                            / 6.0
+                        )
+
+                        point = JointTrajectoryPoint()
+                        point.positions = [
+                            start_value
+                            + (
+                                end_value
+                                - start_value
+                            )
+                            * fraction
+                            for start_value, end_value
+                            in zip(
+                                first_positions,
+                                last_positions,
+                            )
+                        ]
+                        point.velocities = []
+                        point.accelerations = []
+                        point.effort = []
+                        point.time_from_start.sec = 0
+                        point.time_from_start.nanosec = 0
+
+                        densified_points.append(point)
+
+                    trajectory.points = densified_points
+                    points = list(trajectory.points)
+
+                    planning_node.get_logger().info(
+                        "[OrderedBlend] Densified short segment "
+                        f"{planned.get('label')!r} "
+                        f"from {original_count} to 7 joint-space points"
                     )
 
                 trajectories.append(trajectory)
@@ -2440,13 +2529,70 @@ class MoveItRobotBackend(IRobotBackend):
                 )
 
                 if start_index >= end_index:
-                    raise RuntimeError(
-                        f"Blend regions overlap in segment "
-                        f"{segment_index + 1} "
-                        f"{planned_segments[segment_index].get('label')!r}: "
-                        f"start={start_index} "
-                        f"end={end_index}"
+                    points = list(
+                        trajectories[
+                            segment_index
+                        ].points
                     )
+
+                    #
+                    # The requested radii consume too much of this middle
+                    # segment.  Shrink both blend regions symmetrically in
+                    # index space rather than rejecting the whole chain.
+                    #
+                    fallback_start = max(
+                        1,
+                        int(
+                            round(
+                                0.25
+                                * (len(points) - 1)
+                            )
+                        ),
+                    )
+
+                    fallback_end = min(
+                        len(points) - 2,
+                        int(
+                            round(
+                                0.75
+                                * (len(points) - 1)
+                            )
+                        ),
+                    )
+
+                    if fallback_start >= fallback_end:
+                        raise RuntimeError(
+                            f"Blend regions overlap in segment "
+                            f"{segment_index + 1} "
+                            f"{planned_segments[segment_index].get('label')!r}: "
+                            f"start={start_index} end={end_index}; "
+                            f"cannot create safe fallback with "
+                            f"{len(points)} points"
+                        )
+
+                    planning_node.get_logger().warning(
+                        "[OrderedBlend] Shrinking overlapping blend regions "
+                        f"for segment {segment_index + 1} "
+                        f"{planned_segments[segment_index].get('label')!r}: "
+                        f"requested start={start_index} end={end_index} "
+                        f"-> fallback start={fallback_start} "
+                        f"end={fallback_end}"
+                    )
+
+                    #
+                    # Incoming junction exits into this segment.
+                    #
+                    exit_indices[
+                        segment_index - 1
+                    ] = fallback_start
+
+                    #
+                    # Outgoing junction starts blending before this segment
+                    # reaches its exact endpoint.
+                    #
+                    entry_indices[
+                        segment_index
+                    ] = fallback_end
 
             # ----------------------------------------------------------
             # Generate a joint-space quadratic Bezier at each junction.
