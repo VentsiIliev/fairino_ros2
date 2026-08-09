@@ -50,10 +50,38 @@ ROBOT_ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID:-42}"
 ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
 ROBOT_ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY:-1}"
 ZEROERR_KEEP_ETHERCAT_RUNNING="${ZEROERR_KEEP_ETHERCAT_RUNNING:-1}"
+ZEROERR_USE_FAKE_HARDWARE="${ZEROERR_USE_FAKE_HARDWARE:-0}"
 ZEROERR_ROS_PID=""
 ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
 ZEROERR_RUNTIME_PID_FILE="/tmp/zeroerr_runtime.pid"
 FAIRINO_ROS_PID=""
+
+
+# Command-line options.
+# --fake is intentionally only meaningful for the ZeroErr stack.
+# It switches ros2_control to mock_components/GenericSystem and skips all
+# EtherCAT preparation / post-start / slave-monitor work.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fake)
+      ZEROERR_USE_FAKE_HARDWARE=1
+      shift
+      ;;
+    --real)
+      ZEROERR_USE_FAKE_HARDWARE=0
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Supported arguments: --fake, --real" >&2
+      exit 2
+      ;;
+  esac
+done
 
 kill_pid_file_process() {
   local pid_file="$1"
@@ -310,14 +338,24 @@ launch_zeroerr() {
   fi
 
   local launch_args=()
+  local fake_hardware="false"
+
+  if [[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]]; then
+    fake_hardware="true"
+  fi
+
   if [[ "${profile}" != "ethercat_only" ]]; then
     launch_args+=("use_rviz:=${USE_RVIZ}")
+    launch_args+=("use_fake_hardware:=${fake_hardware}")
   fi
 
   echo "Preparing ZeroErr stack (${profile}): ${package} ${launch_file}"
+  echo "ZeroErr hardware mode: $([[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]] && echo fake || echo real)"
   cleanup_stale_zeroerr_processes
 
-  if [[ -n "${ethercat_script}" ]]; then
+  if [[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]]; then
+    echo "Fake hardware enabled: skipping ZeroErr EtherCAT master preparation."
+  elif [[ -n "${ethercat_script}" ]]; then
     if [[ -x "${ethercat_script}" ]]; then
       echo "Preparing ZeroErr EtherCAT master: ${ethercat_script}"
       ZEROERR_ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}" \
@@ -343,7 +381,9 @@ launch_zeroerr() {
   ZEROERR_ROS_PID=$!
   trap cleanup_zeroerr EXIT INT TERM HUP
 
-  if [[ -n "${ethercat_script}" && -x "${ethercat_script}" ]]; then
+  if [[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]]; then
+    echo "Fake hardware enabled: skipping ZeroErr EtherCAT RT post-start setup."
+  elif [[ -n "${ethercat_script}" && -x "${ethercat_script}" ]]; then
     echo "Applying ZeroErr RT setup: ${ethercat_script}"
     ZEROERR_ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}" \
     ZEROERR_ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-}" \
@@ -358,7 +398,9 @@ launch_zeroerr() {
     POSTSTART_ONLY=1 "${ethercat_script}" || true
   fi
 
-  if [[ -n "${slave_monitor_script}" ]]; then
+  if [[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]]; then
+    echo "Fake hardware enabled: skipping ZeroErr EtherCAT slave monitor."
+  elif [[ -n "${slave_monitor_script}" ]]; then
     if [[ -x "${slave_monitor_script}" ]]; then
       echo "Opening ZeroErr slave monitor: ${slave_monitor_script}"
       MONITOR_PID_FILE="${ZEROERR_MONITOR_PID_FILE}" "${slave_monitor_script}" || true

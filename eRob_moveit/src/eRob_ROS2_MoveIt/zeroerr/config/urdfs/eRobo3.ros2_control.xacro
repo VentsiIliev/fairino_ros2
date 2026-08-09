@@ -1,130 +1,165 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-    <xacro:macro name="eRobo3_ros2_control" params="name initial_positions_file">
+    <xacro:macro name="eRobo3_ros2_control" params="name initial_positions_file use_fake_hardware:=false">
         <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
 
-        <ros2_control name="EthercatDriver" type="system">
+        <ros2_control name="${name}" type="system">
             <hardware>
-                <!-- By default, set up controllers for simulation. This won't work on real hardware -->
-                <plugin>ethercat_driver/EthercatDriver</plugin>
-                <param name="master_id">0</param>
-                <param name="control_frequency">1000</param>
-                <param name="freeze_on_slave_fault">true</param>
-                <param name="timeout">1000000000</param>
+                <xacro:if value="${use_fake_hardware}">
+                    <plugin>mock_components/GenericSystem</plugin>
+                </xacro:if>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <plugin>ethercat_driver/EthercatDriver</plugin>
+                    <param name="master_id">0</param>
+                    <param name="control_frequency">1000</param>
+                    <param name="freeze_on_slave_fault">true</param>
+                    <param name="timeout">1000000000</param>
+                </xacro:unless>
             </hardware>
+
             <joint name="Joint_1">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_1']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err1">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">0</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err1">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">0</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
+
             <joint name="Joint_2">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_2']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err2">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">1</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err2">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">1</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
+
             <joint name="Joint_3">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_3']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err3">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">2</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err3">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">2</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
+
             <joint name="Joint_4">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_4']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err4">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">3</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err4">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">3</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr1.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
+
             <joint name="Joint_5">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_5']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err5">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">4</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err5">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">4</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
+
             <joint name="Joint_6">
-                <command_interface name="position">
-                </command_interface>
-                <command_interface name="reset_fault"/>
-                <command_interface name="enable_set"/>
-                <command_interface name="disable_set"/>
-                <state_interface name="position"/>
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['Joint_6']}</param>
+                </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
-                <state_interface name="statusword"/>
-                <state_interface name="error_code"/>
-                <state_interface name="mode_display"/>
-                <ec_module name="zero_err6">
-		  <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
-		  <param name="alias">0</param>
-		  <param name="position">5</param>
-		  <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
-		</ec_module>
+
+                <xacro:unless value="${use_fake_hardware}">
+                    <command_interface name="reset_fault"/>
+                    <command_interface name="enable_set"/>
+                    <command_interface name="disable_set"/>
+                    <state_interface name="statusword"/>
+                    <state_interface name="error_code"/>
+                    <state_interface name="mode_display"/>
+                    <ec_module name="zero_err6">
+                        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+                        <param name="alias">0</param>
+                        <param name="position">5</param>
+                        <param name="slave_config">$(find zeroerr)/config/zeroErr.yaml</param>
+                    </ec_module>
+                </xacro:unless>
             </joint>
         </ros2_control>
     </xacro:macro>

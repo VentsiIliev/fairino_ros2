@@ -160,14 +160,19 @@ def _load_state_publisher_params(package_path: str) -> dict:
     except Exception as exc:
         raise RuntimeError(f"Failed to read profile state publisher config: {profile_yaml}: {exc}")
     return _deep_merge(params, profile_params)
-from launch.actions import ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.event_handlers import OnProcessExit
+from launch.substitutions import LaunchConfiguration
+from launch.conditions import UnlessCondition
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_demo_launch
 
 
 def generate_launch_description():
+    use_fake_hardware = LaunchConfiguration("use_fake_hardware")
+    use_fake_hardware_value = os.environ.get("ZEROERR_USE_FAKE_HARDWARE", "").strip().lower()
+    default_fake_hardware = "true" if use_fake_hardware_value in ("1", "true", "yes", "on") else "false"
     os.environ["DISPLAY"] = os.environ.get("DISPLAY", ":1")
     ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
     non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
@@ -182,7 +187,10 @@ def generate_launch_description():
         MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
         .robot_description(
             file_path="config/urdfs/eRobo3.urdf.xacro",
-            mappings={"robot_urdf": urdf_path},
+            mappings={
+                "robot_urdf": urdf_path,
+                "use_fake_hardware": use_fake_hardware,
+            },
         )
         .robot_description_semantic(file_path=_srdf_path_from_runtime(package_path))
         .planning_pipelines(pipelines=["pilz_industrial_motion_planner","ompl","stomp"])
@@ -190,6 +198,14 @@ def generate_launch_description():
     )
 
     demo_ld = generate_demo_launch(moveit_config)
+
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "use_fake_hardware",
+            default_value=default_fake_hardware,
+            description="Use ros2_control mock hardware instead of ZeroErr EtherCAT hardware",
+        )
+    )
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
     state_publisher_params = _load_state_publisher_params(package_path)
@@ -217,6 +233,7 @@ def generate_launch_description():
 
     wait_for_op_process = ExecuteProcess(
         cmd=[wait_for_slaves_op],
+        condition=UnlessCondition(use_fake_hardware),
         output="screen",
         additional_env={
             "EXPECTED_SLAVES": "6",
@@ -228,6 +245,7 @@ def generate_launch_description():
 
     ethercat_sdo_server = Node(
         package="ethercat_manager",
+        condition=UnlessCondition(use_fake_hardware),
         executable="ethercat_sdo_srv_server",
         name="ethercat_sdo_srv_server",
         output="screen",
@@ -237,6 +255,7 @@ def generate_launch_description():
     """USED FOR DEBUG TO READ MOTOR ERROR CODES"""
     zeroerr_error_monitor = Node(
         package="zeroerr",
+        condition=UnlessCondition(use_fake_hardware),
         executable="zeroerr_error_monitor.py",
         name="zeroerr_error_monitor",
         output="screen",
@@ -252,6 +271,7 @@ def generate_launch_description():
 
     zeroerr_drive_diagnostics = Node(
         package="zeroerr",
+        condition=UnlessCondition(use_fake_hardware),
         executable="zeroerr_drive_diagnostics.py",
         name="zeroerr_drive_diagnostics",
         output="screen",
@@ -271,10 +291,12 @@ def generate_launch_description():
 
     drive_enable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
+        condition=UnlessCondition(use_fake_hardware),
         output="screen",
     )
     drive_disable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
+        condition=UnlessCondition(use_fake_hardware),
         output="screen",
     )
     demo_ld.add_action(TimerAction(period=3.0, actions=[drive_enable_set_spawner]))
@@ -411,7 +433,8 @@ def generate_launch_description():
             OnProcessExit(
                 target_action=wait_for_op_process,
                 on_exit=delayed_zeroerr_actions,
-            )
+            ),
+            condition=UnlessCondition(use_fake_hardware),
         )
     )
 
