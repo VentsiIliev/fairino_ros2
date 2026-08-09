@@ -136,7 +136,10 @@ class PlannerContext:
 
     @property
     def current_joint_state(self):
-        return self._state_store.get_current_joint_state()
+        state = self._state_store.get_current_joint_state()
+        if state is not None:
+            return state
+        return getattr(self._node, "current_joint_state", None)
 
     @current_joint_state.setter
     def current_joint_state(self, value):
