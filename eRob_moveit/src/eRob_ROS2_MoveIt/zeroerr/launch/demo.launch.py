@@ -315,7 +315,16 @@ def generate_launch_description():
     ros2_controllers_yaml = os.path.join(
         package_path,
         "config",
-        "ros2_controllers.yaml",
+        (
+            "ros2_controllers_fake.yaml"
+            if default_fake_hardware == "true"
+            else "ros2_controllers.yaml"
+        ),
+    )
+
+    print(
+        f"[ZEROERR] ros2_control config: {ros2_controllers_yaml}",
+        flush=True,
     )
     ros2_control_node = Node(
         package="controller_manager",
