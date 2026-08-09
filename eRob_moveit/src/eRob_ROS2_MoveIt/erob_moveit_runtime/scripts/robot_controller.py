@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import subprocess
 import threading
 import time
@@ -97,6 +98,12 @@ class RobotController(Node):
 
         super().__init__('velocity_monitor')
         self.get_logger().info('[Init] RobotController starting...')
+
+        self._fake_hardware = os.environ.get('ZEROERR_USE_FAKE_HARDWARE', '').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
+        if self._fake_hardware:
+            self.get_logger().info('[FakeHardware] Runtime EtherCAT and drive-enable logic disabled')
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -237,7 +244,7 @@ class RobotController(Node):
         )
         self._last_runtime_joint_input_ts = 0.0
         self._last_runtime_dynamic_input_ts = 0.0
-        self._ethercat_watchdog_enabled = bool(ETHERCAT_WATCHDOG_ENABLED)
+        self._ethercat_watchdog_enabled = bool(ETHERCAT_WATCHDOG_ENABLED) and not self._fake_hardware
         self._ethercat_watchdog_running = False
         self._ethercat_watchdog_thread = None
         if self._ethercat_watchdog_enabled:
@@ -250,7 +257,10 @@ class RobotController(Node):
             self._ethercat_watchdog_thread.start()
             self.get_logger().info('[EtherCAT] Runtime OP watchdog enabled')
         else:
-            self.get_logger().info('[EtherCAT] Runtime OP watchdog disabled for this robot backend')
+            if self._fake_hardware:
+                self.get_logger().info('[EtherCAT] Runtime OP watchdog disabled in fake hardware mode')
+            else:
+                self.get_logger().info('[EtherCAT] Runtime OP watchdog disabled for this robot backend')
 
         self.runtime_adapter.initialize_runtime_controller(self)
 
@@ -260,13 +270,15 @@ class RobotController(Node):
 
         self.get_logger().info(f'[Init] RobotController ready ({time.time() - start_time:.2f}s total)')
 
-        if bool(STARTUP_AUTO_ENABLE_DRIVES):
+        if bool(STARTUP_AUTO_ENABLE_DRIVES) and not self._fake_hardware:
             self._startup_auto_enable_thread = threading.Thread(
                 target=self._startup_auto_enable_drives_loop,
                 daemon=True,
                 name="StartupAutoEnableDrives",
             )
             self._startup_auto_enable_thread.start()
+        elif self._fake_hardware:
+            self.get_logger().info('[DriveEnable] Startup auto-enable skipped in fake hardware mode')
 
     def _delayed_safety_init(self):
         """Publish safety walls after a short delay to speed up startup."""
@@ -274,7 +286,6 @@ class RobotController(Node):
         self.get_logger().info('[Init] Safety walls published')
         self._publish_active_tool_collision()
 
-        # Cancel this timer after first execution (one-shot behavior)
         if hasattr(self, '_safety_init_timer'):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
@@ -342,7 +353,6 @@ class RobotController(Node):
             self.get_logger().warning(f"[ActiveToolCollision] Failed to publish attached cylinder: {exc}")
 
     def _publish_active_tool_visualization(self):
-        """Publish the current active TCP as a TF frame and RViz marker."""
         if self.monitor is None:
             return
         pose = self.monitor.get_cartesian_position()
@@ -388,25 +398,60 @@ class RobotController(Node):
             marker_array.markers.append(self._make_source_to_tcp_marker(stamp, source_origin, origin))
         marker_array.markers.append(self._make_tcp_sphere_marker(stamp, origin, quaternion))
         marker_array.markers.extend(self._make_tcp_axis_markers(stamp, origin, rotation))
-        collision_marker = self._make_active_tool_collision_marker(stamp, T_tcp, T_source)
+        collision_marker = self._make_active_tool_collision_marker(stamp)
         if collision_marker is not None:
             marker_array.markers.append(collision_marker)
-        marker_array.markers.append(self._make_tcp_text_marker(stamp, origin, source_origin))
         self.active_tool_marker_pub.publish(marker_array)
 
-    def _base_marker(self, stamp, marker_id: int, marker_type: int) -> Marker:
+    def _make_source_sphere_marker(self, stamp, origin):
         marker = Marker()
-        marker.header.stamp = stamp
         marker.header.frame_id = BASE_LINK
-        marker.ns = "active_tcp"
-        marker.id = marker_id
-        marker.type = marker_type
+        marker.header.stamp = stamp
+        marker.ns = "active_tool"
+        marker.id = 90
+        marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.lifetime = Duration(sec=0, nanosec=500_000_000)
+        marker.pose.position.x = float(origin[0])
+        marker.pose.position.y = float(origin[1])
+        marker.pose.position.z = float(origin[2])
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.012
+        marker.scale.y = 0.012
+        marker.scale.z = 0.012
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
         return marker
 
-    def _make_tcp_sphere_marker(self, stamp, origin, quaternion) -> Marker:
-        marker = self._base_marker(stamp, 0, Marker.SPHERE)
+    def _make_source_to_tcp_marker(self, stamp, source_origin, tcp_origin):
+        marker = Marker()
+        marker.header.frame_id = BASE_LINK
+        marker.header.stamp = stamp
+        marker.ns = "active_tool"
+        marker.id = 91
+        marker.type = Marker.LINE_LIST
+        marker.action = Marker.ADD
+        marker.scale.x = 0.002
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        p0 = Point()
+        p0.x, p0.y, p0.z = map(float, source_origin)
+        p1 = Point()
+        p1.x, p1.y, p1.z = map(float, tcp_origin)
+        marker.points = [p0, p1]
+        return marker
+
+    def _make_tcp_sphere_marker(self, stamp, origin, quaternion):
+        marker = Marker()
+        marker.header.frame_id = BASE_LINK
+        marker.header.stamp = stamp
+        marker.ns = "active_tool"
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
         marker.pose.position.x = float(origin[0])
         marker.pose.position.y = float(origin[1])
         marker.pose.position.z = float(origin[2])
@@ -418,97 +463,84 @@ class RobotController(Node):
         marker.scale.y = 0.018
         marker.scale.z = 0.018
         marker.color.r = 1.0
-        marker.color.g = 0.85
-        marker.color.b = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 1.0
         marker.color.a = 1.0
         return marker
 
-    def _make_source_sphere_marker(self, stamp, origin) -> Marker:
-        marker = self._base_marker(stamp, 5, Marker.SPHERE)
-        marker.pose.position.x = float(origin[0])
-        marker.pose.position.y = float(origin[1])
-        marker.pose.position.z = float(origin[2])
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.012
-        marker.scale.y = 0.012
-        marker.scale.z = 0.012
-        marker.color.r = 0.85
-        marker.color.g = 0.85
-        marker.color.b = 0.85
-        marker.color.a = 1.0
-        return marker
-
-    def _make_source_to_tcp_marker(self, stamp, source_origin, tcp_origin) -> Marker:
-        marker = self._base_marker(stamp, 6, Marker.LINE_STRIP)
-        marker.points = [
-            Point(x=float(source_origin[0]), y=float(source_origin[1]), z=float(source_origin[2])),
-            Point(x=float(tcp_origin[0]), y=float(tcp_origin[1]), z=float(tcp_origin[2])),
-        ]
-        marker.scale.x = 0.003
-        marker.color.r = 1.0
-        marker.color.g = 0.85
-        marker.color.b = 0.0
-        marker.color.a = 1.0
-        return marker
-
-    def _make_tcp_axis_markers(self, stamp, origin, rotation) -> list[Marker]:
-        colors = (
-            (1.0, 0.1, 0.1),
-            (0.1, 0.9, 0.1),
-            (0.2, 0.4, 1.0),
-        )
+    def _make_tcp_axis_markers(self, stamp, origin, rotation):
         markers = []
-        for index, color in enumerate(colors):
-            marker = self._base_marker(stamp, index + 1, Marker.LINE_STRIP)
-            start = Point(x=float(origin[0]), y=float(origin[1]), z=float(origin[2]))
-            end_vec = origin + rotation[:, index] * 0.06
-            end = Point(x=float(end_vec[0]), y=float(end_vec[1]), z=float(end_vec[2]))
-            marker.points = [start, end]
+        colors = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        axis_length = 0.06
+        for idx in range(3):
+            marker = Marker()
+            marker.header.frame_id = BASE_LINK
+            marker.header.stamp = stamp
+            marker.ns = "active_tool"
+            marker.id = idx + 1
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
             marker.scale.x = 0.004
-            marker.color.r = color[0]
-            marker.color.g = color[1]
-            marker.color.b = color[2]
+            marker.scale.y = 0.008
+            marker.scale.z = 0.012
+            marker.color.r, marker.color.g, marker.color.b = colors[idx]
             marker.color.a = 1.0
+
+            start = Point()
+            start.x = float(origin[0])
+            start.y = float(origin[1])
+            start.z = float(origin[2])
+            end = Point()
+            end_vec = origin + rotation[:, idx] * axis_length
+            end.x = float(end_vec[0])
+            end.y = float(end_vec[1])
+            end.z = float(end_vec[2])
+            marker.points = [start, end]
             markers.append(marker)
         return markers
 
-    def _make_active_tool_collision_marker(self, stamp, T_tcp, T_source=None):
+    def _make_active_tool_collision_marker(self, stamp):
         if not self._active_tool_collision_enabled():
             return None
-
         origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
         if len(origin_values) != 6:
             origin_values = [0, 0, 0, 0, 0, 0]
-        T_offset = TransformationUtils.pose_to_transform(origin_values)
+        T_collision = TransformationUtils.pose_to_transform(origin_values)
         if bool(getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)):
-            if T_source is not None:
-                T_marker = T_source @ self.T_tool @ T_offset
-            else:
-                T_marker = T_tcp @ T_offset
-        else:
-            T_marker = (T_source if T_source is not None else T_tcp) @ T_offset
+            T_collision = self.T_tool @ T_collision
+        quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
 
-        quat = TransformationUtils.matrix_to_quaternion(T_marker[:3, :3])
-        marker = self._base_marker(stamp, 7, Marker.CYLINDER)
-        marker.pose.position.x = float(T_marker[0, 3])
-        marker.pose.position.y = float(T_marker[1, 3])
-        marker.pose.position.z = float(T_marker[2, 3])
+        marker = Marker()
+        marker.header.frame_id = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+        marker.header.stamp = stamp
+        marker.ns = "active_tool_collision"
+        marker.id = 200
+        marker.type = Marker.CYLINDER
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(T_collision[0, 3])
+        marker.pose.position.y = float(T_collision[1, 3])
+        marker.pose.position.z = float(T_collision[2, 3])
         marker.pose.orientation.x = float(quat[0])
         marker.pose.orientation.y = float(quat[1])
         marker.pose.orientation.z = float(quat[2])
         marker.pose.orientation.w = float(quat[3])
-        radius = float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
-        marker.scale.x = radius * 2.0
-        marker.scale.y = radius * 2.0
+        marker.scale.x = 2.0 * float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
+        marker.scale.y = 2.0 * float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
         marker.scale.z = float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17))
-        marker.color.r = 0.0
-        marker.color.g = 0.75
-        marker.color.b = 1.0
-        marker.color.a = 0.45
+        marker.color.r = 1.0
+        marker.color.g = 0.5
+        marker.color.b = 0.0
+        marker.color.a = 0.35
         return marker
 
-    def _make_tcp_text_marker(self, stamp, origin, source_origin=None) -> Marker:
-        marker = self._base_marker(stamp, 4, Marker.TEXT_VIEW_FACING)
+    def _make_tcp_label_marker(self, stamp, origin, source_origin=None):
+        marker = Marker()
+        marker.header.frame_id = BASE_LINK
+        marker.header.stamp = stamp
+        marker.ns = "active_tool"
+        marker.id = 10
+        marker.type = Marker.TEXT_VIEW_FACING
+        marker.action = Marker.ADD
         marker.pose.position.x = float(origin[0])
         marker.pose.position.y = float(origin[1])
         marker.pose.position.z = float(origin[2] + 0.04)
@@ -526,21 +558,17 @@ class RobotController(Node):
         return marker
 
     def enable_safety_walls(self) -> dict:
-        """Enable safety walls and republish them to MoveIt/RViz."""
         self.safety_manager.enable_safety()
         return self.safety_manager.get_status()
 
     def disable_safety_walls(self) -> dict:
-        """Disable safety walls and remove them from MoveIt/RViz."""
         self.safety_manager.disable_safety()
         return self.safety_manager.get_status()
 
     def get_safety_walls_status(self) -> dict:
-        """Return current safety wall status."""
         return self.safety_manager.get_status()
 
     def wait_for_monitor(self, timeout_sec=5.0):
-        """Wait until RobotMonitor (TCP) is initialized."""
         import time
         start_time = time.time()
         while self.monitor is None:
@@ -551,7 +579,6 @@ class RobotController(Node):
         return True
 
     def _get_monitor_tcp_transform(self):
-        """Return the transform RobotMonitor should apply on /cartesian_position."""
         return self.runtime_adapter.get_monitor_tcp_transform(self)
 
     def _build_registry_tool_transform(self, tool_name):
@@ -565,15 +592,6 @@ class RobotController(Node):
         return T_tool
 
     def get_tool_transform(self, tool_id):
-        """
-        Get tool transform matrix from tool ID.
-
-        Args:
-            tool_id (int): Tool ID (0, 1, etc.)
-
-        Returns:
-            4x4 tool transform matrix (ee_link → TCP)
-        """
         tool_name = tool_id_map.get(tool_id, "TOOL_0")
         if tool_name not in tool_registry:
             self.get_logger().warning(f"Tool {tool_name} not found in registry, using TOOL_0")
@@ -583,10 +601,6 @@ class RobotController(Node):
         return self.runtime_adapter.get_planning_tool_transform(self, registry_transform)
 
     def set_tool(self, tool_name):
-        """
-        Switch the active TCP/tool.
-        Composes ee_link offset (from URDF) with tool offset (from registry).
-        """
         if tool_name not in tool_registry:
             self.get_logger().warning(f"Tool {tool_name} not found in registry")
             return
@@ -597,7 +611,6 @@ class RobotController(Node):
         self.planner_context.T_tool = self.T_tool
         self.active_tool_name = tool_name
 
-        # Monitor transform depends on the backend's /cartesian_position source frame.
         if self.monitor is not None:
             self.monitor.set_tcp_transform(self._get_monitor_tcp_transform())
             self.get_logger().info(f"Switched active tool to {tool_name}")
@@ -607,11 +620,10 @@ class RobotController(Node):
 
     def load_tcp_transform(self):
         if self.tcp_loaded:
-            return  # Already loaded
+            return
 
         if self.tf_buffer.can_transform(WRIST_LINK, EE_LINK, rclpy.time.Time()):
             try:
-                # Load the wrist3 -> ee_link fixed transform from TF/URDF.
                 self.T_ee_link = self.get_tcp_transform(WRIST_LINK, EE_LINK)
                 print(f"[RobotController] Loaded ee_link transform:\n{self.T_ee_link}")
                 if self.active_tool_name in tool_registry:
@@ -620,9 +632,6 @@ class RobotController(Node):
                     self.T_tool = self.runtime_adapter.get_planning_tool_transform(self, registry_transform)
                     self.planner_context.T_tool = self.T_tool
 
-                # Monitor receives backend-specific Cartesian source frames:
-                # - ZeroErr/generic: ee_link pose
-                # - Fairino: flange pose from native controller state
                 self.monitor = RobotMonitor(
                     ros_node=self,
                     tcp_transform=self._get_monitor_tcp_transform(),
@@ -634,7 +643,6 @@ class RobotController(Node):
                 self.get_logger().info("TCP transform loaded and RobotMonitor initialized")
                 self._publish_active_tool_collision()
 
-                # Destroy timer to prevent further callbacks
                 if hasattr(self, 'tcp_load_timer'):
                     self.tcp_load_timer.cancel()
                     self.destroy_timer(self.tcp_load_timer)
@@ -643,15 +651,13 @@ class RobotController(Node):
                 self.get_logger().warning(f"TCP transform lookup failed: {e}")
 
     def get_tcp_transform(self, from_frame=WRIST_LINK, to_frame=EE_LINK):
-        """Get 4x4 TCP transform from tf2 (base->tcp)."""
         try:
             trans: TransformStamped = self.tf_buffer.lookup_transform(
-                from_frame,  # target_frame
-                to_frame,  # source_frame
-                rclpy.time.Time(),  # latest
+                from_frame,
+                to_frame,
+                rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=1.0)
             )
-            # Convert TF2 TransformStamped to 4x4 homogeneous matrix
             T = TransformationUtils.tf2_to_transform(trans)
             print(f"[RobotController] Loaded TCP transform:\n{T}")
             return T
@@ -687,16 +693,9 @@ class RobotController(Node):
             avoid_collisions=resolve_avoid_collisions(avoid_collisions)), queue_if_busy=queue_if_busy)
 
     def _controller_status_callback(self, msg):
-        """Monitor controller action status for side effects only.
-
-        Normal motion lifecycle cleanup is owned by the trajectory result callback.
-        Clearing active goal state here races with the async result future and makes
-        successful completions look like stale/cancelled goals.
-        """
         return
 
     def joint_state_callback(self, msg):
-        """Process joint states and store for trajectory planning."""
         if self._runtime_joint_input_period > 0.0:
             now = time.monotonic()
             if now - self._last_runtime_joint_input_ts < self._runtime_joint_input_period:
@@ -709,32 +708,24 @@ class RobotController(Node):
             if len(msg.position) < 6:
                 return
 
-            # Joint-state caching must not depend on RobotMonitor readiness.
             self.current_joint_state = msg
 
             if self.monitor is None:
-                return  # RobotMonitor not initialized yet
+                return
 
-            # Get latest data from RobotMonitor (updated via topic subscriptions)
             data = self.monitor.get_latest_data()
 
             if data is not None:
-                # Update previous Cartesian for jogging
                 self.prev_cartesian = data['cartesian']
-                self.latest_data = data  # Store latest data
+                self.latest_data = data
 
-                # Also store efforts in monitor data
                 if len(msg.effort) >= 6:
                     data['efforts'] = np.array(msg.effort[:6])
                     self.latest_data = data
 
-            # Send data to UI
-            # self.ui_callback(data)
-
         self.runtime_adapter.log_drive_state_snapshot(self, 'startup')
 
     def get_latest_data(self):
-        """Return a copy of the latest joint/cartesian data."""
         data = self.state_store.get_latest_data()
         if data is not None:
             return data
@@ -743,7 +734,6 @@ class RobotController(Node):
         return None
 
     def _handle_monitor_update(self, data):
-        """Persist RobotMonitor stable snapshots into the shared planner/status store."""
         if data is None:
             return
         self.latest_data = data
@@ -811,18 +801,45 @@ class RobotController(Node):
         return self._motion.stop_motion()
 
     def set_drive_operation_enabled(self, enabled: bool) -> dict:
+        if self._fake_hardware:
+            return {
+                'success': True,
+                'supported': False,
+                'enabled': True,
+                'requested_enabled': bool(enabled),
+                'actual_enabled': True,
+                'motion_allowed_by_drive_enable': True,
+                'state': 'NOT_REQUIRED_FAKE_HARDWARE',
+            }
         return self.runtime_adapter.set_drive_operation_enabled(self, enabled)
 
     def is_drive_operation_enabled_for_motion(self) -> bool:
+        if self._fake_hardware:
+            return True
         return self.runtime_adapter.is_drive_operation_enabled_for_motion(self)
 
     def get_drive_enable_fault_reason(self) -> str:
+        if self._fake_hardware:
+            return 'drive enable is not required in fake hardware mode'
         return self.runtime_adapter.get_drive_enable_fault_reason(self)
 
     def get_drive_operation_status(self) -> dict:
+        if self._fake_hardware:
+            return {
+                'success': True,
+                'supported': False,
+                'requested_enabled': False,
+                'actual_enabled': True,
+                'motion_allowed_by_drive_enable': True,
+                'state': 'NOT_REQUIRED_FAKE_HARDWARE',
+            }
         return self.runtime_adapter.get_drive_operation_status(self)
 
     def _startup_auto_enable_drives_loop(self):
+        if self._fake_hardware:
+            self.get_logger().info('[DriveEnable] Startup auto-enable bypassed in fake hardware mode')
+            return
+
         timeout_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_TIMEOUT_S), 0.1)
         retry_period_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_RETRY_PERIOD_S), 0.1)
         verify_timeout_s = max(float(STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S), 0.1)
@@ -912,6 +929,9 @@ class RobotController(Node):
         return result["value"]
 
     def is_hardware_ready_for_motion(self) -> bool:
+        if self._fake_hardware:
+            with self._motion_interlock_lock:
+                return not self._motion_interlock_active
         with self._motion_interlock_lock:
             if self._motion_interlock_active:
                 return False
@@ -922,6 +942,8 @@ class RobotController(Node):
         with self._motion_interlock_lock:
             if self._motion_interlock_active:
                 return self._motion_interlock_reason or 'motion interlock active'
+        if self._fake_hardware:
+            return 'fake hardware mode'
         with self._ethercat_fault_lock:
             return self._ethercat_fault_reason or 'EtherCAT hardware fault'
 
@@ -932,7 +954,8 @@ class RobotController(Node):
                 return
             self._motion_interlock_active = True
             self._motion_interlock_reason = reason
-        self.runtime_adapter.reset_drive_operation_request(self)
+        if not self._fake_hardware:
+            self.runtime_adapter.reset_drive_operation_request(self)
         self.get_logger().error(f'[MotionInterlock] Motion interlock active: {reason}')
 
     def reset_motion_interlock(self) -> dict:
@@ -997,11 +1020,9 @@ class RobotController(Node):
         return 'motion stack not ready'
 
     def is_motion_active(self):
-        """Return True if any motion goal is active."""
         return self._motion.is_motion_active()
 
     def has_pending_motion(self):
-        """Return True if any queued motion is waiting to execute."""
         return self._motion.has_pending_motion()
 
     def destroy_node(self):
@@ -1009,18 +1030,29 @@ class RobotController(Node):
         watchdog = getattr(self, '_ethercat_watchdog_thread', None)
         if watchdog is not None and watchdog.is_alive():
             watchdog.join(timeout=1.0)
+        startup_enable = getattr(self, '_startup_auto_enable_thread', None)
+        if startup_enable is not None and startup_enable.is_alive():
+            startup_enable.join(timeout=1.0)
         return super().destroy_node()
 
     def _format_drive_state_snapshot(self, label: str):
+        if self._fake_hardware:
+            return None
         return self.runtime_adapter.format_drive_state_snapshot(self, label)
 
     def log_drive_state_before_first_motion(self):
+        if self._fake_hardware:
+            return
         self.runtime_adapter.log_drive_state_before_first_motion(self)
 
     def get_unwind_drive_state(self, unwind_check):
+        if self._fake_hardware:
+            return None
         return self.runtime_adapter.get_unwind_drive_state(self, unwind_check)
 
     def get_all_drive_states(self):
+        if self._fake_hardware:
+            return []
         return self.runtime_adapter.get_all_drive_states(self)
 
     def _send_hold_position_trajectory(
@@ -1080,11 +1112,15 @@ class RobotController(Node):
         return True
 
     def _ethercat_watchdog_loop(self):
+        if self._fake_hardware:
+            return
         while self._ethercat_watchdog_running:
             self._poll_ethercat_health_once()
             time.sleep(ETHERCAT_WATCHDOG_POLL_S)
 
     def _poll_ethercat_health_once(self):
+        if self._fake_hardware:
+            return
         try:
             result = subprocess.run(
                 ['ethercat', 'slaves'],
@@ -1100,166 +1136,100 @@ class RobotController(Node):
             )
             return
 
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         if result.returncode != 0:
+            stderr = result.stderr.strip()
             self._set_ethercat_fault(
                 True,
-                f'ethercat slaves exited with code {result.returncode}',
+                f'ethercat slaves failed rc={result.returncode}: {stderr or "unknown error"}',
             )
             return
 
-        slave_lines = [
-            line for line in result.stdout.splitlines()
-            if line.strip() and line.lstrip()[:1].isdigit()
-        ]
-        total_count = len(slave_lines)
-        op_count = sum(1 for line in slave_lines if ' OP ' in f' {line} ')
-        if total_count != ETHERCAT_EXPECTED_SLAVES or op_count != ETHERCAT_EXPECTED_SLAVES:
+        if len(lines) != ETHERCAT_EXPECTED_SLAVES:
             self._set_ethercat_fault(
                 True,
-                f'EtherCAT not fully OP ({op_count}/{total_count} OP, expected {ETHERCAT_EXPECTED_SLAVES})',
+                f'expected {ETHERCAT_EXPECTED_SLAVES} EtherCAT slaves, found {len(lines)}',
+            )
+            return
+
+        non_op = [line for line in lines if ' OP ' not in f' {line} ']
+        if non_op:
+            self._set_ethercat_fault(
+                True,
+                'EtherCAT slaves not OP: ' + '; '.join(non_op),
             )
             return
 
         self._set_ethercat_fault(False, '')
 
     def _set_ethercat_fault(self, faulted: bool, reason: str):
-        should_stop_motion = False
+        if self._fake_hardware:
+            return
         with self._ethercat_fault_lock:
-            previous_faulted = self._ethercat_motion_fault
+            previous_fault = self._ethercat_motion_fault
             previous_reason = self._ethercat_fault_reason
-            self._ethercat_motion_fault = faulted
-            self._ethercat_fault_reason = reason
-            if faulted:
-                should_stop_motion = not self._ethercat_fault_stop_issued
-                self._ethercat_fault_stop_issued = True
-                self.runtime_adapter.reset_drive_operation_request(self)
-            else:
+            self._ethercat_motion_fault = bool(faulted)
+            self._ethercat_fault_reason = str(reason or '')
+            if not faulted:
                 self._ethercat_fault_stop_issued = False
 
-        if faulted and (not previous_faulted or previous_reason != reason):
-            self.get_logger().error(f'[EtherCAT] Motion interlock active: {reason}')
-        elif not faulted and previous_faulted:
-            self.get_logger().info('[EtherCAT] All slaves back in OP — motion interlock cleared')
-
-        if faulted and should_stop_motion:
-            try:
-                stop_result = self.stop_motion()
-                self.get_logger().error(
-                    f'[EtherCAT] Issued emergency motion stop due to slave state fault: {stop_result}'
-                )
-            except Exception as exc:
-                self.get_logger().error(
-                    f'[EtherCAT] Failed to stop motion after slave state fault: {exc}'
-                )
         if faulted:
-            self._maybe_attempt_ethercat_recovery(reason)
+            if not previous_fault or previous_reason != self._ethercat_fault_reason:
+                self.get_logger().error(f'[EtherCAT] Motion fault active: {self._ethercat_fault_reason}')
+            self._attempt_ethercat_recovery()
+            should_stop = False
+            with self._ethercat_fault_lock:
+                if not self._ethercat_fault_stop_issued:
+                    self._ethercat_fault_stop_issued = True
+                    should_stop = True
+            if should_stop:
+                try:
+                    self.stop_motion()
+                except Exception as exc:
+                    self.get_logger().error(f'[EtherCAT] Failed to stop motion after EtherCAT fault: {exc}')
+        elif previous_fault:
+            self.get_logger().info('[EtherCAT] Motion fault cleared; all slaves are OP')
 
-    def _maybe_attempt_ethercat_recovery(self, reason: str):
-        if not bool(ETHERCAT_RECOVERY_ENABLED):
+    def _attempt_ethercat_recovery(self):
+        if self._fake_hardware:
+            return
+        if not ETHERCAT_RECOVERY_ENABLED:
             return
         now = time.monotonic()
-        min_interval = max(float(ETHERCAT_RECOVERY_MIN_INTERVAL_S), 0.1)
         with self._ethercat_fault_lock:
-            if now - self._ethercat_last_recovery_attempt_ts < min_interval:
+            if now - self._ethercat_last_recovery_attempt_ts < ETHERCAT_RECOVERY_MIN_INTERVAL_S:
                 return
             self._ethercat_last_recovery_attempt_ts = now
 
+        self.get_logger().warning('[EtherCAT] Attempting one recovery pass')
         try:
-            self.get_logger().warning(
-                f'[EtherCAT] Requesting slave recovery to OP after fault: {reason}'
-            )
-            result = subprocess.run(
-                ['ethercat', 'states', 'OP'],
+            subprocess.run(
+                ['ethercat', 'states', '-p', '0-5', 'INIT'],
                 capture_output=True,
                 text=True,
-                timeout=max(float(ETHERCAT_RECOVERY_CMD_TIMEOUT_S), 0.1),
+                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+                check=False,
+            )
+            subprocess.run(
+                ['ethercat', 'states', '-p', '0-5', 'PREOP'],
+                capture_output=True,
+                text=True,
+                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+                check=False,
+            )
+            subprocess.run(
+                ['ethercat', 'states', '-p', '0-5', 'SAFEOP'],
+                capture_output=True,
+                text=True,
+                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+                check=False,
+            )
+            subprocess.run(
+                ['ethercat', 'states', '-p', '0-5', 'OP'],
+                capture_output=True,
+                text=True,
+                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
                 check=False,
             )
         except Exception as exc:
-            self.get_logger().error(f'[EtherCAT] Recovery command failed: {exc}')
-            return
-
-        stdout = (result.stdout or '').strip()
-        stderr = (result.stderr or '').strip()
-        if result.returncode == 0:
-            detail = f' stdout={stdout!r}' if stdout else ''
-            self.get_logger().warning(
-                f'[EtherCAT] Recovery command issued: ethercat states OP{detail}'
-            )
-        else:
-            self.get_logger().error(
-                '[EtherCAT] Recovery command failed: '
-                f'code={result.returncode} stdout={stdout!r} stderr={stderr!r}'
-            )
-
-    @property
-    def active_execute_send_future(self):
-        return self._motion.active_execute_send_future
-
-    @active_execute_send_future.setter
-    def active_execute_send_future(self, value):
-        self._motion.active_execute_send_future = value
-
-    @property
-    def active_controller_goal(self):
-        return self._motion.active_controller_goal
-
-    @active_controller_goal.setter
-    def active_controller_goal(self, value):
-        self._motion.active_controller_goal = value
-
-    @property
-    def is_executing(self):
-        return self._motion.is_executing
-
-    @is_executing.setter
-    def is_executing(self, value):
-        self._motion.is_executing = value
-
-    @property
-    def plan_generation(self):
-        return self._motion.plan_generation
-
-    @plan_generation.setter
-    def plan_generation(self, value):
-        self._motion.plan_generation = value
-
-    @property
-    def last_move_result(self):
-        return self._motion.last_move_result
-
-    @last_move_result.setter
-    def last_move_result(self, value):
-        self._motion.last_move_result = value
-
-    @property
-    def last_submitted_task_id(self):
-        return self._motion.last_submitted_task_id
-
-    @last_submitted_task_id.setter
-    def last_submitted_task_id(self, value):
-        self._motion.last_submitted_task_id = value
-
-    @property
-    def prev_cartesian(self):
-        return self.state_store.get_prev_cartesian()
-
-    @prev_cartesian.setter
-    def prev_cartesian(self, value):
-        self.state_store.set_prev_cartesian(value)
-
-    @property
-    def current_joint_state(self):
-        return self.state_store.get_current_joint_state()
-
-    @current_joint_state.setter
-    def current_joint_state(self, value):
-        self.state_store.set_current_joint_state(value)
-
-    @property
-    def latest_data(self):
-        return self.state_store.get_latest_data()
-
-    @latest_data.setter
-    def latest_data(self, value):
-        self.state_store.set_latest_data(value)
+            self.get_logger().warning(f'[EtherCAT] Recovery command failed: {exc}')
