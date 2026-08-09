@@ -56,7 +56,6 @@ ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
 ZEROERR_RUNTIME_PID_FILE="/tmp/zeroerr_runtime.pid"
 FAIRINO_ROS_PID=""
 
-
 # Command-line options.
 # --fake is intentionally only meaningful for the ZeroErr stack.
 # It switches ros2_control to mock_components/GenericSystem and skips all
@@ -83,7 +82,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Make the selected hardware mode available to demo.launch.py.
+# Make the selected hardware mode visible to demo.launch.py.
 export ZEROERR_USE_FAKE_HARDWARE
 
 kill_pid_file_process() {
@@ -107,6 +106,24 @@ kill_pid_file_process() {
     fi
   fi
   rm -f "${pid_file}"
+}
+
+terminate_process_group() {
+  local pgid="${1:-}"
+  [[ -n "${pgid}" ]] || return 0
+
+  # ros2 launch is started with setsid, so its PID is also the process-group
+  # ID. Signal the group even if the ros2-launch leader has already exited.
+  kill -TERM -- "-${pgid}" 2>/dev/null || true
+
+  for _ in $(seq 1 30); do
+    if ! kill -0 -- "-${pgid}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  kill -KILL -- "-${pgid}" 2>/dev/null || true
 }
 
 kill_matching_processes() {
@@ -174,6 +191,11 @@ cleanup_stale_zeroerr_processes() {
     "ethercat_sdo_srv_server"
     "ethercat slaves"
     "ros2cli.daemon.daemonize"
+    "spawner_manipulator_controller"
+    "spawner_joint_state_broadcaster"
+    "spawner_drive_enable_set_controller"
+    "spawner_drive_disable_set_controller"
+    "/controller_manager/spawner"
   )
   kill_matching_processes "${patterns[@]}"
 }
@@ -220,15 +242,18 @@ cleanup_zeroerr() {
     rm -f "${ZEROERR_MONITOR_PID_FILE}"
   fi
 
-  if [[ -n "${ZEROERR_ROS_PID}" ]] && kill -0 "${ZEROERR_ROS_PID}" 2>/dev/null; then
-    kill -- -"${ZEROERR_ROS_PID}" 2>/dev/null || kill "${ZEROERR_ROS_PID}" 2>/dev/null || true
+  if [[ -n "${ZEROERR_ROS_PID}" ]]; then
+    terminate_process_group "${ZEROERR_ROS_PID}"
     wait "${ZEROERR_ROS_PID}" 2>/dev/null || true
   fi
 
-  if [[ "${ZEROERR_KEEP_ETHERCAT_RUNNING}" != "1" && -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
-    STOP_ONLY=1 "${ZEROERR_ETHERCAT_SCRIPT}" 2>/dev/null || true
-  elif [[ -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
-    echo "Leaving EtherCAT master running."
+  # Fake mode must never start/stop/touch EtherCAT.
+  if [[ "${ZEROERR_USE_FAKE_HARDWARE}" != "1" ]]; then
+    if [[ "${ZEROERR_KEEP_ETHERCAT_RUNNING}" != "1" && -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
+      STOP_ONLY=1 "${ZEROERR_ETHERCAT_SCRIPT}" 2>/dev/null || true
+    elif [[ -n "${ZEROERR_ETHERCAT_SCRIPT:-}" && -x "${ZEROERR_ETHERCAT_SCRIPT}" ]]; then
+      echo "Leaving EtherCAT master running."
+    fi
   fi
 
   cleanup_stale_zeroerr_processes
@@ -295,11 +320,6 @@ export ROS_DOMAIN_ID="${ROBOT_ROS_DOMAIN_ID}"
 export ROS_AUTOMATIC_DISCOVERY_RANGE="${ROBOT_ROS_AUTOMATIC_DISCOVERY_RANGE}"
 export ROS_LOCALHOST_ONLY="${ROBOT_ROS_LOCALHOST_ONLY}"
 
-# Keep NumPy/SciPy numerical backends from creating one worker per CPU in
-# latency-sensitive ROS processes.  The runtime primarily operates on small
-# robot transforms and Jacobians, where a multi-threaded BLAS pool adds more
-# scheduling overhead than useful parallelism.  Preserve explicit caller
-# overrides for machines/workloads that benefit from a different limit.
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
