@@ -194,9 +194,6 @@ def generate_launch_description():
             file_path="config/urdfs/eRobo3.urdf.xacro",
             mappings={
                 "robot_urdf": urdf_path,
-                # MoveItConfigsBuilder expands this xacro while the launch
-                # description is being generated, so this must be a concrete
-                # string rather than a LaunchConfiguration substitution.
                 "use_fake_hardware": default_fake_hardware,
             },
         )
@@ -218,17 +215,6 @@ def generate_launch_description():
         flush=True,
     )
 
-    # IMPORTANT:
-    # Do not use generate_demo_launch(moveit_config) here.
-    #
-    # generate_demo_launch() includes this package's rsp.launch.py,
-    # move_group.launch.py and spawn_controllers.launch.py as separate launch
-    # files. Those launch files rebuild MoveItConfigsBuilder from package
-    # defaults, which loses the runtime use_fake_hardware mapping. The result is
-    # that robot_state_publisher publishes an EtherCAT robot_description even
-    # though the MoveIt config built above correctly contains GenericSystem.
-    #
-    # Build the demo directly from the already-expanded moveit_config instead.
     demo_ld = LaunchDescription()
 
     demo_ld.add_action(
@@ -246,8 +232,6 @@ def generate_launch_description():
         )
     )
 
-    # Publish the exact robot_description built above. This is the critical
-    # piece that guarantees fake mode reaches ros2_control.
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -261,12 +245,10 @@ def generate_launch_description():
     )
     demo_ld.add_action(robot_state_publisher)
 
-    # Broadcast any virtual joints from the already-built SRDF.
     virtual_joint_ld = generate_static_virtual_joint_tfs_launch(moveit_config)
     for action in virtual_joint_ld.entities:
         demo_ld.add_action(action)
 
-    # Start MoveGroup directly with the same in-memory MoveIt config.
     move_group_configuration = {
         "publish_robot_description_semantic": True,
         "allow_trajectory_execution": True,
@@ -290,7 +272,6 @@ def generate_launch_description():
     )
     demo_ld.add_action(move_group)
 
-    # Start RViz without reloading the package's MoveIt config.
     rviz_config = os.path.join(package_path, "config", "moveit.rviz")
     rviz = Node(
         package="rviz2",
@@ -310,8 +291,6 @@ def generate_launch_description():
     )
     demo_ld.add_action(rviz)
 
-    # Start ros2_control. It subscribes to /robot_description, which is now
-    # guaranteed to come from the robot_state_publisher above.
     ros2_controllers_yaml = os.path.join(
         package_path,
         "config",
@@ -338,7 +317,6 @@ def generate_launch_description():
     )
     demo_ld.add_action(ros2_control_node)
 
-    # Spawn the controllers used by this robot.
     manipulator_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -399,7 +377,6 @@ def generate_launch_description():
         prefix=low_priority_non_rt_prefix,
     )
 
-    """USED FOR DEBUG TO READ MOTOR ERROR CODES"""
     zeroerr_error_monitor = Node(
         package="zeroerr",
         condition=UnlessCondition(use_fake_hardware),
@@ -505,8 +482,6 @@ def generate_launch_description():
         ],
     )
 
-    # ZeroErr-specific state publisher: TCP position via TF2 lookup (URDF-consistent)
-    # (joint vel/acc + Cartesian vel/acc from shared base class)
     zeroerr_state_publisher = Node(
         package="zeroerr",
         executable="zeroerr_state_publisher.py",
@@ -524,23 +499,6 @@ def generate_launch_description():
         ],
     )
 
-    """PLOT JUGGLER IS ONLY USED FOR DEBUG"""
-    # plotjuggler_node = ExecuteProcess(
-    #     cmd=[
-    #         "plotjuggler",
-    #         "--disable_opengl",
-    #     ],
-    #     output="screen",
-    # )
-    # demo_ld.add_action(
-    #     RegisterEventHandler(
-    #         OnProcessExit(
-    #             target_action=wait_for_op_process,
-    #             on_exit=[TimerAction(period=16.0, actions=[plotjuggler_node])],
-    #         )
-    #     )
-    # )
-
     zeroerr_runtime = Node(
         package="zeroerr",
         executable="zeroerr_runtime.py",
@@ -552,8 +510,50 @@ def generate_launch_description():
         },
         prefix=non_rt_prefix,
     )
-    demo_ld.add_action(TimerAction(period=1.0, actions=[zeroerr_runtime]))
+
+    # Real hardware keeps the existing startup order unchanged.
+    demo_ld.add_action(
+        TimerAction(
+            period=1.0,
+            actions=[zeroerr_runtime],
+            condition=UnlessCondition(use_fake_hardware),
+        )
+    )
     demo_ld.add_action(TimerAction(period=2.0, actions=[zeroerr_state_publisher]))
+
+    # Fake hardware must first produce a real Cartesian state from
+    # GenericSystem -> /joint_states -> TF -> /cartesian_position. Start the
+    # normal runtime only after one Cartesian sample has actually arrived so
+    # the production runtime code does not need fake-specific motion logic.
+    fake_cartesian_ready = ExecuteProcess(
+        cmd=[
+            "bash",
+            "-lc",
+            "timeout 15s ros2 topic echo /cartesian_position --once >/dev/null 2>&1",
+        ],
+        condition=IfCondition(use_fake_hardware),
+        output="screen",
+    )
+    demo_ld.add_action(
+        TimerAction(
+            period=2.1,
+            actions=[fake_cartesian_ready],
+            condition=IfCondition(use_fake_hardware),
+        )
+    )
+    demo_ld.add_action(
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=fake_cartesian_ready,
+                on_exit=[
+                    LogInfo(msg="[ZEROERR] Fake Cartesian state is available; starting runtime"),
+                    zeroerr_runtime,
+                ],
+            ),
+            condition=IfCondition(use_fake_hardware),
+        )
+    )
+
     demo_ld.add_action(TimerAction(period=5.0, actions=[ipp_helper_node]))
     demo_ld.add_action(TimerAction(period=6.5, actions=[ruckig_helper_node]))
     demo_ld.add_action(TimerAction(period=8.0, actions=[contour_ik_helper_node]))
@@ -571,10 +571,6 @@ def generate_launch_description():
             TimerAction(period=50.0, actions=[zeroerr_error_monitor])
         )
 
-    # Keep SDO diagnostics behind the OP monitor, but start HTTP and the
-    # non-hardware model-loading helpers from launch-time timers above. That
-    # gives the frontend progress data early and avoids adding the full OP wait
-    # duration to helper startup.
     demo_ld.add_action(
         RegisterEventHandler(
             OnProcessExit(
