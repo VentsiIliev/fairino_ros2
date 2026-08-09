@@ -160,13 +160,14 @@ def _load_state_publisher_params(package_path: str) -> dict:
     except Exception as exc:
         raise RuntimeError(f"Failed to read profile state publisher config: {profile_yaml}: {exc}")
     return _deep_merge(params, profile_params)
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
-from moveit_configs_utils.launches import generate_demo_launch
+from moveit_configs_utils.launches import generate_static_virtual_joint_tfs_launch
 
 
 def generate_launch_description():
@@ -204,7 +205,31 @@ def generate_launch_description():
         .to_moveit_configs()
     )
 
-    demo_ld = generate_demo_launch(moveit_config)
+    robot_description_xml = moveit_config.robot_description["robot_description"]
+    selected_hardware = (
+        "GenericSystem"
+        if "mock_components/GenericSystem" in robot_description_xml
+        else "EthercatDriver"
+        if "ethercat_driver/EthercatDriver" in robot_description_xml
+        else "UNKNOWN"
+    )
+    print(
+        f"[ZEROERR] Expanded robot_description hardware: {selected_hardware}",
+        flush=True,
+    )
+
+    # IMPORTANT:
+    # Do not use generate_demo_launch(moveit_config) here.
+    #
+    # generate_demo_launch() includes this package's rsp.launch.py,
+    # move_group.launch.py and spawn_controllers.launch.py as separate launch
+    # files. Those launch files rebuild MoveItConfigsBuilder from package
+    # defaults, which loses the runtime use_fake_hardware mapping. The result is
+    # that robot_state_publisher publishes an EtherCAT robot_description even
+    # though the MoveIt config built above correctly contains GenericSystem.
+    #
+    # Build the demo directly from the already-expanded moveit_config instead.
+    demo_ld = LaunchDescription()
 
     demo_ld.add_action(
         DeclareLaunchArgument(
@@ -213,6 +238,112 @@ def generate_launch_description():
             description="Use ros2_control mock hardware instead of ZeroErr EtherCAT hardware",
         )
     )
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "use_rviz",
+            default_value="true",
+            description="Start RViz",
+        )
+    )
+
+    # Publish the exact robot_description built above. This is the critical
+    # piece that guarantees fake mode reaches ros2_control.
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="robot_state_publisher",
+        output="screen",
+        respawn=True,
+        parameters=[
+            moveit_config.robot_description,
+            {"publish_frequency": 15.0},
+        ],
+    )
+    demo_ld.add_action(robot_state_publisher)
+
+    # Broadcast any virtual joints from the already-built SRDF.
+    virtual_joint_ld = generate_static_virtual_joint_tfs_launch(moveit_config)
+    for action in virtual_joint_ld.entities:
+        demo_ld.add_action(action)
+
+    # Start MoveGroup directly with the same in-memory MoveIt config.
+    move_group_configuration = {
+        "publish_robot_description_semantic": True,
+        "allow_trajectory_execution": True,
+        "publish_planning_scene": True,
+        "publish_geometry_updates": True,
+        "publish_state_updates": True,
+        "publish_transforms_updates": True,
+        "monitor_dynamics": False,
+    }
+    move_group = Node(
+        package="moveit_ros_move_group",
+        executable="move_group",
+        name="move_group",
+        output="screen",
+        prefix=non_rt_prefix,
+        parameters=[
+            moveit_config.to_dict(),
+            move_group_configuration,
+        ],
+        additional_env={"DISPLAY": os.environ.get("DISPLAY", "")},
+    )
+    demo_ld.add_action(move_group)
+
+    # Start RViz without reloading the package's MoveIt config.
+    rviz_config = os.path.join(package_path, "config", "moveit.rviz")
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz",
+        output="log",
+        prefix=non_rt_prefix,
+        arguments=["-d", rviz_config],
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.planning_pipelines,
+            moveit_config.joint_limits,
+        ],
+        condition=IfCondition(LaunchConfiguration("use_rviz")),
+    )
+    demo_ld.add_action(rviz)
+
+    # Start ros2_control. It subscribes to /robot_description, which is now
+    # guaranteed to come from the robot_state_publisher above.
+    ros2_controllers_yaml = os.path.join(
+        package_path,
+        "config",
+        "ros2_controllers.yaml",
+    )
+    ros2_control_node = Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        name="controller_manager",
+        output="screen",
+        parameters=[ros2_controllers_yaml],
+        remappings=[
+            ("/controller_manager/robot_description", "/robot_description"),
+        ],
+    )
+    demo_ld.add_action(ros2_control_node)
+
+    # Spawn the controllers used by this robot.
+    manipulator_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["manipulator_controller"],
+        output="screen",
+    )
+    joint_state_broadcaster_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_state_broadcaster"],
+        output="screen",
+    )
+    demo_ld.add_action(manipulator_controller_spawner)
+    demo_ld.add_action(joint_state_broadcaster_spawner)
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
     state_publisher_params = _load_state_publisher_params(package_path)
