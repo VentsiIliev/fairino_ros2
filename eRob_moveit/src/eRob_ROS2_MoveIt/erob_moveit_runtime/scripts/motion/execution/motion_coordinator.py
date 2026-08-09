@@ -19,6 +19,21 @@ class MotionCoordinator:
         self.last_move_result = 0
         self.last_submitted_task_id = None
 
+    def _set_last_submitted_task_id(self, task_id):
+        """Keep coordinator and owning node task IDs in sync.
+
+        MoveItRobotBackend waits for queued blocking moves through
+        ``node.last_submitted_task_id``.  MotionCoordinator previously kept the
+        task ID only on itself, causing a positive queue position (for example
+        ``1``) to escape back through the REST API as a failure even though the
+        queued trajectory subsequently executed successfully.
+        """
+        self.last_submitted_task_id = task_id
+        try:
+            self._node.last_submitted_task_id = task_id
+        except Exception:
+            pass
+
     def execute(self, strategy, queue_if_busy=True):
         queueable = bool(getattr(strategy, 'queueable', True))
         with self.lock:
@@ -31,7 +46,7 @@ class MotionCoordinator:
             )
             if isinstance(result, tuple):
                 task_id, position = result
-                self.last_submitted_task_id = task_id
+                self._set_last_submitted_task_id(task_id)
                 self._node.get_logger().info(
                     f'[Queue] Queued {strategy.__class__.__name__} at position {position} (task #{task_id})')
                 return position
@@ -45,7 +60,7 @@ class MotionCoordinator:
             return -1
 
         task_id = self._motion_queue.allocate_task_id()
-        self.last_submitted_task_id = task_id
+        self._set_last_submitted_task_id(task_id)
         self._motion_queue.start_immediate_task(task_id)
         result = strategy.execute(self._node)
         if result != 0:
