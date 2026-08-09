@@ -83,6 +83,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Make the selected hardware mode available to demo.launch.py.
+export ZEROERR_USE_FAKE_HARDWARE
+
 kill_pid_file_process() {
   local pid_file="$1"
   local pid=""

@@ -172,7 +172,11 @@ from moveit_configs_utils.launches import generate_demo_launch
 def generate_launch_description():
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     use_fake_hardware_value = os.environ.get("ZEROERR_USE_FAKE_HARDWARE", "").strip().lower()
-    default_fake_hardware = "true" if use_fake_hardware_value in ("1", "true", "yes", "on") else "false"
+    default_fake_hardware = (
+        "true"
+        if use_fake_hardware_value in ("1", "true", "yes", "on")
+        else "false"
+    )
     os.environ["DISPLAY"] = os.environ.get("DISPLAY", ":1")
     ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
     non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
@@ -189,7 +193,10 @@ def generate_launch_description():
             file_path="config/urdfs/eRobo3.urdf.xacro",
             mappings={
                 "robot_urdf": urdf_path,
-                "use_fake_hardware": use_fake_hardware,
+                # MoveItConfigsBuilder expands this xacro while the launch
+                # description is being generated, so this must be a concrete
+                # string rather than a LaunchConfiguration substitution.
+                "use_fake_hardware": default_fake_hardware,
             },
         )
         .robot_description_semantic(file_path=_srdf_path_from_runtime(package_path))
@@ -216,7 +223,7 @@ def generate_launch_description():
                 "========================================\n"
                 "  ZeroErr MoveIt2 System Starting Up\n"
                 "========================================\n"
-                "Using Fairino-style demo launch with ZeroErr EtherCAT wait\n"
+                f"Hardware mode: {'FAKE / GenericSystem' if default_fake_hardware == 'true' else 'REAL / EtherCAT'}\n"
                 "========================================\n"
         )
     )
