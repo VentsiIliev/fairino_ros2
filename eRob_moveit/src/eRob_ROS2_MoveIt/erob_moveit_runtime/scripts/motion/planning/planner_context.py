@@ -128,7 +128,10 @@ class PlannerContext:
 
     @property
     def prev_cartesian(self):
-        return self._state_store.get_prev_cartesian()
+        value = self._state_store.get_prev_cartesian()
+        if value is not None:
+            return value
+        return getattr(self._node, "prev_cartesian", None)
 
     @prev_cartesian.setter
     def prev_cartesian(self, value):

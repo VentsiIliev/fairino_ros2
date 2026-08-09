@@ -562,6 +562,16 @@ class RuntimeApi:
                 "error": f"unexpected drive command result type: {type(command_result).__name__}",
             }, 500)
         command_accepted = bool(command_result.get("success", False))
+        if command_result.get("state") == "NOT_REQUIRED_FAKE_HARDWARE":
+            return ApiResponse({
+                **command_result,
+                "success": True,
+                "command_accepted": True,
+                "desired_enabled": bool(desired_enabled),
+                "verified": True,
+                "verification_skipped": True,
+                "message": "Drive enable verification is not required in fake hardware mode",
+            }, 200)
         verify_timeout_s = max(float(getattr(config, "STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S", 5.0)), 0.1)
         verify_deadline = time.monotonic() + verify_timeout_s
         drive_status = as_dict(self.node.get_drive_operation_status(), "unexpected drive status result type")
