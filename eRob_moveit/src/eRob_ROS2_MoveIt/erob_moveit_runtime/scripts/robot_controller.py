@@ -280,8 +280,32 @@ class RobotController(Node):
         elif self._fake_hardware:
             self.get_logger().info('[DriveEnable] Startup auto-enable skipped in fake hardware mode')
 
+    @property
+    def is_executing(self):
+        return self._motion.is_executing
+
+    @is_executing.setter
+    def is_executing(self, value):
+        self._motion.is_executing = bool(value)
+
+    @property
+    def last_move_result(self):
+        return self._motion.last_move_result
+
+    @last_move_result.setter
+    def last_move_result(self, value):
+        self._motion.last_move_result = value
+
+    @property
+    def last_submitted_task_id(self):
+        return self._motion.last_submitted_task_id
+
+    @last_submitted_task_id.setter
+    def last_submitted_task_id(self, value):
+        self._motion.last_submitted_task_id = value
+
     def _delayed_safety_init(self):
-        """Publish safety walls after a short delay to speed up startup."""
+        """Publish safety walls after a short delay to speed up initialization."""
         self.safety_manager.force_update()
         self.get_logger().info('[Init] Safety walls published')
         self._publish_active_tool_collision()
