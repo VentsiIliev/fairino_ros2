@@ -175,6 +175,48 @@ double computeJointSpan(
     return result;
 }
 
+double jointDeltaNorm(
+    const std::vector<double>& a,
+    const std::vector<double>& b)
+{
+    double sum_sq = 0.0;
+    const std::size_t count = std::min(a.size(), b.size());
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const double delta = b[i] - a[i];
+        sum_sq += delta * delta;
+    }
+    return std::sqrt(sum_sq);
+}
+
+double jointDirectionCosine(
+    const std::vector<double>& previous,
+    const std::vector<double>& middle,
+    const std::vector<double>& next,
+    double& previous_norm,
+    double& next_norm)
+{
+    double dot = 0.0;
+    double previous_sum_sq = 0.0;
+    double next_sum_sq = 0.0;
+    const std::size_t count = std::min({previous.size(), middle.size(), next.size()});
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const double d_previous = middle[i] - previous[i];
+        const double d_next = next[i] - middle[i];
+        dot += d_previous * d_next;
+        previous_sum_sq += d_previous * d_previous;
+        next_sum_sq += d_next * d_next;
+    }
+    previous_norm = std::sqrt(previous_sum_sq);
+    next_norm = std::sqrt(next_sum_sq);
+    if (previous_norm <= 1e-12 || next_norm <= 1e-12)
+    {
+        return 1.0;
+    }
+    return std::clamp(dot / (previous_norm * next_norm), -1.0, 1.0);
+}
+
 }  // namespace
 
 class LinkedLinHelperNode : public rclcpp::Node
@@ -408,6 +450,110 @@ private:
         return true;
     }
 
+    void canonicalizeMicroscopicJointArtifacts(
+        std::vector<std::shared_ptr<moveit::core::RobotState>>& path,
+        const moveit::core::JointModelGroup* group,
+        const ComputeLinkedLin::Request& request,
+        std::shared_ptr<ComputeLinkedLin::Response> response)
+    {
+        if (!request.micro_reversal_cleanup_enabled || path.size() < 2)
+        {
+            return;
+        }
+
+        const double min_angle_deg = std::clamp(
+            request.micro_reversal_min_angle_deg,
+            90.0,
+            180.0);
+        const double max_cos = std::cos(min_angle_deg * M_PI / 180.0);
+        const double max_leg_rad = std::max(0.0, request.micro_reversal_max_leg_rad);
+        const double max_endpoint_rad = std::max(0.0, request.micro_reversal_max_endpoint_rad);
+        const double near_duplicate_rad = std::max(0.0, request.near_duplicate_rad);
+
+        const std::size_t original_count = path.size();
+        uint32_t removed_reversals = 0;
+        uint32_t removed_duplicates = 0;
+
+        auto positions = [group](
+            const std::shared_ptr<moveit::core::RobotState>& item)
+        {
+            std::vector<double> result;
+            item->copyJointGroupPositions(group, result);
+            return result;
+        };
+
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+
+            std::size_t index = 1;
+            while (index < path.size())
+            {
+                const auto previous = positions(path[index - 1]);
+                const auto current = positions(path[index]);
+                if (jointDeltaNorm(previous, current) <= near_duplicate_rad)
+                {
+                    path.erase(path.begin() + index);
+                    ++removed_duplicates;
+                    changed = true;
+                    continue;
+                }
+                ++index;
+            }
+
+            index = 1;
+            while (index + 1 < path.size())
+            {
+                const auto previous = positions(path[index - 1]);
+                const auto middle = positions(path[index]);
+                const auto next = positions(path[index + 1]);
+
+                double previous_norm = 0.0;
+                double next_norm = 0.0;
+                const double cosine = jointDirectionCosine(
+                    previous,
+                    middle,
+                    next,
+                    previous_norm,
+                    next_norm);
+                const double endpoint_norm = jointDeltaNorm(previous, next);
+
+                if (
+                    previous_norm > 1e-12
+                    && next_norm > 1e-12
+                    && previous_norm <= max_leg_rad
+                    && next_norm <= max_leg_rad
+                    && endpoint_norm <= max_endpoint_rad
+                    && cosine <= max_cos)
+                {
+                    path.erase(path.begin() + index);
+                    ++removed_reversals;
+                    changed = true;
+                    continue;
+                }
+                ++index;
+            }
+        }
+
+        response->removed_micro_reversal_points = removed_reversals;
+        response->removed_near_duplicate_points = removed_duplicates;
+
+        if (path.size() != original_count)
+        {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Linked LIN canonicalized microscopic joint artifacts: reversals=%u duplicates=%u points=%zu->%zu min_angle=%.1fdeg max_leg=%.6frad max_endpoint=%.6frad",
+                removed_reversals,
+                removed_duplicates,
+                original_count,
+                path.size(),
+                min_angle_deg,
+                max_leg_rad,
+                max_endpoint_rad);
+        }
+    }
+
     void handleRequest(
         const std::shared_ptr<ComputeLinkedLin::Request> request,
         std::shared_ptr<ComputeLinkedLin::Response> response)
@@ -426,6 +572,8 @@ private:
         response->max_joint_step_rad = 0.0;
         response->max_joint_span_rad = 0.0;
         response->max_endpoint_delta_rad = 0.0;
+        response->removed_micro_reversal_points = 0;
+        response->removed_near_duplicate_points = 0;
         response->planning_time_s = 0.0;
         response->validation_time_s = 0.0;
         response->total_time_s = 0.0;
@@ -554,6 +702,18 @@ private:
             return;
         }
 
+        canonicalizeMicroscopicJointArtifacts(
+            path,
+            group,
+            *request,
+            response);
+        if (path.empty())
+        {
+            fail(response, ERROR_TRAJECTORY_VALIDATION, "linked LIN cleanup removed entire path");
+            response->total_time_s = steadySeconds() - total_started_s;
+            return;
+        }
+
         response->trajectory.joint_trajectory.points.reserve(path.size());
         std::vector<double> previous = start;
         const double validation_started_s = steadySeconds();
@@ -647,9 +807,11 @@ private:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "Linked LIN success: poses=%u points=%zu total=%.3fs planning=%.3fs validation=%.3fs",
+            "Linked LIN success: poses=%u points=%zu cleanup_rev=%u cleanup_dup=%u total=%.3fs planning=%.3fs validation=%.3fs",
             response->requested_pose_count,
             response->trajectory.joint_trajectory.points.size(),
+            response->removed_micro_reversal_points,
+            response->removed_near_duplicate_points,
             response->total_time_s,
             response->planning_time_s,
             response->validation_time_s);
