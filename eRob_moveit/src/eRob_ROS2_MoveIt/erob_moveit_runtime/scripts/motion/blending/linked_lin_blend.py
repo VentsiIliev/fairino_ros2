@@ -25,9 +25,12 @@ def build_linked_lin_blend_poses(
     """Build a sparse blended TCP waypoint stream for a contiguous LIN group.
 
     Each internal target is trimmed on both adjacent LIN segments according to
-    ``blendR`` and replaced with a quadratic Bezier transition. Orientation is
-    interpolated through the requested junction orientation so rotation-only
-    LIN segments keep their intended orientation change.
+    ``blendR`` and replaced with a quadratic Bezier transition. Translation
+    uses the junction pose as the quadratic control point. Orientation uses the
+    spherical De Casteljau equivalent, so the junction orientation influences
+    the blend without forcing the blended TCP path to pass exactly through it.
+    This avoids an artificial orientation out-and-back cusp when the entry and
+    exit orientations are close but the original junction orientation differs.
 
     Straight LIN sections are represented only by their endpoint. The C++
     linked-LIN helper owns Cartesian densification via ``cartesian_step_m``;
@@ -151,10 +154,17 @@ def build_linked_lin_blend_poses(
                 + c * exit_transform[:3, 3]
             )
 
-            if u <= 0.5:
-                rotation = entry_to_corner([2.0 * u])[0]
-            else:
-                rotation = corner_to_exit([2.0 * u - 1.0])[0]
+            # Spherical quadratic Bezier (De Casteljau): unlike the previous
+            # piecewise entry->corner->exit interpolation this does not force
+            # u=0.5 to equal the corner orientation. For a blended junction the
+            # corner is a control pose, not a pose that must be traversed.
+            first_arc = entry_to_corner([u])[0]
+            second_arc = corner_to_exit([u])[0]
+            blend_arc = Slerp(
+                [0.0, 1.0],
+                Rotation.concatenate([first_arc, second_arc]),
+            )
+            rotation = blend_arc([u])[0]
             transform[:3, :3] = rotation.as_matrix()
             _append_pose_if_distinct(poses, _pose_from_transform(transform))
 
