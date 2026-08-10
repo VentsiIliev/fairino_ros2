@@ -74,11 +74,10 @@ STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S: 5.0
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 
-# The C++ linked-LIN helper currently treats every LIN target as an exact
-# Cartesian waypoint and does not preserve ordered blendR geometry. Keep this
-# disabled for ZeroErr until blend semantics are carried across the Python/C++
-# boundary; otherwise a blended LIN group can expose a 180-degree turn to TOTG.
-LINKED_LIN_HELPER_ENABLED: false
+# Route contiguous ordered LIN blend groups through one C++ linked-LIN request.
+# Python constructs the lightweight Cartesian blend geometry first so blendR
+# semantics are preserved without the previous exact-waypoint 180-degree turn.
+LINKED_LIN_HELPER_ENABLED: true
 
 # Shared Cartesian path defaults. Profiles can override these for process-
 # specific dense paths such as paint contours.
