@@ -6,6 +6,64 @@ historical drafts.
 
 ## Implementation Handoff Log
 
+### 2026-08-10 - Slice 68: restore proven LIN blend routing
+
+Status: completed and build checked. Ordered LIN blend groups now use the same
+individually planned trajectory -> `BlendBuilder` -> optimizer path as PTP.
+
+Files changed:
+
+```text
+eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/scheduling/ordered_planning_worker.py
+eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/linked_lin_client.py
+eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/config/runtime.yaml
+```
+
+What was done:
+
+- Removed the ordered-planning worker fork that sent all-LIN blend groups
+  through Python Cartesian blend-pose generation and `/compute_linked_lin`.
+- Removed the Python post-helper closed-loop cleanup pass that was compensating
+  for CartesianInterpolator joint loops.
+- Disabled `LINKED_LIN_HELPER_ENABLED` in the ZeroErr runtime config.
+
+Reason:
+
+- Successful PTP blending and the previously working LIN path both rely on
+  already-valid per-segment trajectories plus the existing `BlendBuilder`.
+- The experimental linked-LIN path changed behavior by creating a single
+  anonymous Cartesian pose stream before IK, which exposed IK branch reversals
+  that the optimizer rejects.
+
+Next pickup point:
+
+1. Redesign `ComputeLinkedLin.srv` around per-segment LIN targets, labels,
+   velocities, accelerations and blend radii.
+2. In C++, plan each LIN segment sequentially with the previous segment's final
+   joint state as the next seed.
+3. Return validated per-segment trajectories or a concatenated trajectory with
+   exact segment boundary indices.
+4. Feed the returned segment trajectories/boundaries into the existing
+   `BlendBuilder`; do not generate Cartesian blend geometry before IK.
+
+Verification:
+
+```text
+python3 -m py_compile \
+  eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/scheduling/ordered_planning_worker.py \
+  eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/linked_lin_client.py
+
+/bin/bash -lc "env -i HOME=\"$HOME\" TERM=\"${TERM:-xterm}\" PATH=\"/usr/bin:/bin:/usr/sbin:/sbin\" bash --noprofile --norc -lc 'source /opt/ros/rolling/setup.bash; source /home/ilv/ros2_ws/install/setup.bash; cd /home/ilv/ros2_ws/eRob_moveit; colcon build --packages-select erob_moveit_runtime zeroerr'"
+```
+
+Verification notes:
+
+- Python compile passed.
+- `colcon build --packages-select erob_moveit_runtime zeroerr` passed.
+- The build still prints the existing missing `/opt/ros/rolling/setup.bash`
+  warning before using the Jazzy underlay, and the existing Jazzy
+  `tl_expected` deprecation warning from MoveIt dependencies.
+
 ### 2026-08-10 - Slice 1: typed models and ordered-chain adapter
 
 Status: completed and compile-checked. No runtime behavior is intentionally

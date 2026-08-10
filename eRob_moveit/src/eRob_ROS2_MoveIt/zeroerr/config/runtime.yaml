@@ -74,15 +74,13 @@ STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S: 5.0
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 
-# Route contiguous ordered LIN blend groups through one C++ linked-LIN request.
-# Python constructs only the sparse Cartesian blend geometry; C++ owns the
-# actual Cartesian densification/IK pass.
-LINKED_LIN_HELPER_ENABLED: true
+# Disabled until the linked-LIN helper preserves per-segment LIN trajectories
+# and returns boundaries for the existing BlendBuilder path.
+LINKED_LIN_HELPER_ENABLED: false
 LINKED_LIN_CARTESIAN_STEP_M: 0.020
 
-# TOTG cannot accept an instantaneous 180-degree joint-space turn. Permit only
-# extremely small numerical A->B->A artifacts from Cartesian IK to be removed
-# at the linked-LIN boundary; real reversals remain untouched and will fail.
+# Legacy helper cleanup knobs are inactive while LINKED_LIN_HELPER_ENABLED is
+# false. Keep them here only so a future helper redesign has explicit limits.
 LINKED_LIN_MICRO_REVERSAL_CLEANUP_ENABLED: true
 LINKED_LIN_MICRO_REVERSAL_MIN_ANGLE_DEG: 175.0
 LINKED_LIN_MICRO_REVERSAL_MAX_LEG_RAD: 0.002

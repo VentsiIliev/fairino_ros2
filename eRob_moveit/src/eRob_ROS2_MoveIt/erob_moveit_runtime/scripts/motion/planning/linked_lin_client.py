@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from time import perf_counter, sleep, time
 from typing import Iterable
@@ -179,37 +178,6 @@ def request_linked_lin_trajectory(
         description="linked LIN helper request",
     )
 
-    # CartesianInterpolator can produce a short *closed* joint-space loop near
-    # a singular/ill-conditioned configuration. The C++ cleaner deliberately
-    # removes only tiny local A->B->A triplets. Repeated triplet removal can
-    # expose the same returning loop at a wider scale (as seen by TOTG), so do
-    # one bounded closure-aware pass on the returned joint trajectory.
-    #
-    # This is intentionally stricter than simply raising max_leg_rad: a loop is
-    # removed only when it returns to essentially the same joint state, contains
-    # a near-180deg reversal, and its entire excursion is at most 2x the normal
-    # microscopic leg limit. The closing endpoint is removed with the loop so a
-    # tiny A->A' segment is not left behind for TOTG.
-    post_removed = 0
-    if bool(getattr(response, "success", False)) and request.micro_reversal_cleanup_enabled:
-        post_removed = _canonicalize_returning_micro_loops(
-            response.trajectory,
-            min_angle_deg=request.micro_reversal_min_angle_deg,
-            max_leg_rad=request.micro_reversal_max_leg_rad,
-            max_endpoint_rad=request.micro_reversal_max_endpoint_rad,
-        )
-        if post_removed:
-            response.removed_micro_reversal_points = int(
-                getattr(response, "removed_micro_reversal_points", 0)
-            ) + post_removed
-            robot_controller.get_logger().info(
-                "[LINKED_LIN] collapsed closed micro-loop(s) after helper "
-                f"removed_points={post_removed} "
-                f"points={len(response.trajectory.joint_trajectory.points)} "
-                f"max_excursion_rad={min(0.01, 2.0 * max(0.0, request.micro_reversal_max_leg_rad)):.6f} "
-                f"max_endpoint_rad={max(0.0, request.micro_reversal_max_endpoint_rad):.6f}"
-            )
-
     report = _report_from_response(response)
     report.timings["service_call_s"] = perf_counter() - started_at
     if report.ok:
@@ -231,120 +199,6 @@ def request_linked_lin_trajectory(
             f"{report.details}"
         )
     return LinkedLinPlanningResult(response.trajectory, report)
-
-
-def _joint_distance(a, b) -> float:
-    return math.sqrt(
-        sum((float(y) - float(x)) ** 2 for x, y in zip(a, b))
-    )
-
-
-def _direction_cosine(previous, middle, next_) -> float:
-    left = [float(m) - float(p) for p, m in zip(previous, middle)]
-    right = [float(n) - float(m) for m, n in zip(middle, next_)]
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm <= 1e-12 or right_norm <= 1e-12:
-        return 1.0
-    return max(
-        -1.0,
-        min(
-            1.0,
-            sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm),
-        ),
-    )
-
-
-def _canonicalize_returning_micro_loops(
-    trajectory,
-    *,
-    min_angle_deg: float,
-    max_leg_rad: float,
-    max_endpoint_rad: float,
-) -> int:
-    """Excise bounded closed joint loops left by CartesianInterpolator.
-
-    Unlike the C++ triplet cleaner this operates on a short window. That lets
-    it remove a multi-sample A->...->A' excursion in one operation instead of
-    repeatedly peeling the center and exposing a progressively wider 180-degree
-    turn to TOTG.
-    """
-
-    points = list(getattr(trajectory.joint_trajectory, "points", []) or [])
-    if len(points) < 3:
-        return 0
-
-    max_leg_rad = max(0.0, float(max_leg_rad))
-    max_endpoint_rad = max(0.0, float(max_endpoint_rad))
-    if max_leg_rad <= 0.0 or max_endpoint_rad <= 0.0:
-        return 0
-
-    # The wider allowance is valid only for a *closed* loop. Keep a hard cap so
-    # a bad configuration value can never turn this into generic path pruning.
-    max_excursion_rad = min(0.01, 2.0 * max_leg_rad)
-    max_cosine = math.cos(
-        math.radians(max(90.0, min(180.0, float(min_angle_deg))))
-    )
-    max_window_span = 7
-    removed_points = 0
-
-    changed = True
-    while changed and len(points) >= 3:
-        changed = False
-        for start in range(0, len(points) - 2):
-            start_q = list(points[start].positions)
-            furthest_end = min(len(points) - 1, start + max_window_span)
-
-            # Prefer the widest closed window so an entire nested loop is
-            # removed at once rather than exposing the next outer triplet.
-            for end in range(furthest_end, start + 1, -1):
-                end_q = list(points[end].positions)
-                endpoint_norm = _joint_distance(start_q, end_q)
-                if endpoint_norm > max_endpoint_rad:
-                    continue
-
-                interior = range(start + 1, end)
-                max_excursion = max(
-                    (_joint_distance(start_q, points[index].positions) for index in interior),
-                    default=0.0,
-                )
-                if max_excursion <= max_leg_rad or max_excursion > max_excursion_rad:
-                    continue
-
-                strongest_reversal_cosine = 1.0
-                for middle in range(start + 1, end):
-                    strongest_reversal_cosine = min(
-                        strongest_reversal_cosine,
-                        _direction_cosine(
-                            points[middle - 1].positions,
-                            points[middle].positions,
-                            points[middle + 1].positions,
-                        ),
-                    )
-                if strongest_reversal_cosine > max_cosine:
-                    continue
-
-                travelled = sum(
-                    _joint_distance(points[index - 1].positions, points[index].positions)
-                    for index in range(start + 1, end + 1)
-                )
-                if travelled < 1.5 * max_excursion:
-                    continue
-
-                # Remove the complete returning excursion including its closing
-                # A' point. Keeping both A and A' would leave an almost-zero
-                # segment whose tangent can itself upset TOTG.
-                removed_points += end - start
-                del points[start + 1 : end + 1]
-                changed = True
-                break
-
-            if changed:
-                break
-
-    if removed_points:
-        trajectory.joint_trajectory.points = points
-    return removed_points
 
 
 def _report_from_response(response) -> LinkedLinReport:

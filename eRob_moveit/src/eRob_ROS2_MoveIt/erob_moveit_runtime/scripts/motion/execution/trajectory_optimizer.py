@@ -2,10 +2,16 @@
 """Strategy seam for trajectory time parameterization."""
 
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 import config
+
+_DIAG_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="totg_path_diag",
+)
 
 
 def _log_joint_path_geometry(robot_controller, trajectory, *, label="TOTG"):
@@ -40,6 +46,45 @@ def _log_joint_path_geometry(robot_controller, trajectory, *, label="TOTG"):
 
     if not np.all(np.isfinite(positions)):
         logger.warning(f"[{label}_PATH_DIAG] trajectory contains non-finite joint positions")
+        return
+
+    if bool(getattr(config, "TOTG_PATH_DIAG_ASYNC", True)):
+        _DIAG_EXECUTOR.submit(
+            _run_joint_path_geometry_diagnostics,
+            logger,
+            positions.copy(),
+            list(joint_names),
+            label,
+        )
+        return
+
+    _log_joint_path_geometry_from_snapshot(
+        logger,
+        positions,
+        joint_names,
+        label,
+    )
+
+
+def _run_joint_path_geometry_diagnostics(logger, positions, joint_names, label):
+    try:
+        _log_joint_path_geometry_from_snapshot(
+            logger,
+            positions,
+            joint_names,
+            label,
+        )
+    except Exception as exc:
+        logger.debug(f"[{label}_PATH_DIAG] background diagnostics failed: {exc}")
+
+
+def _log_joint_path_geometry_from_snapshot(logger, positions, joint_names, label):
+    """Log joint-space path diagnostics from copied primitive data."""
+    if positions.ndim != 2 or positions.shape[0] < 2 or positions.shape[1] != len(joint_names):
+        logger.warning(
+            f"[{label}_PATH_DIAG] malformed trajectory snapshot shape={positions.shape} "
+            f"joints={len(joint_names)}"
+        )
         return
 
     steps = np.diff(positions, axis=0)
