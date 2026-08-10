@@ -75,9 +75,19 @@ STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S: 5.0
 TRAJECTORY_OPTIMIZER: RUCKIG
 
 # Route contiguous ordered LIN blend groups through one C++ linked-LIN request.
-# Python constructs the lightweight Cartesian blend geometry first so blendR
-# semantics are preserved without the previous exact-waypoint 180-degree turn.
+# Python constructs only the sparse Cartesian blend geometry; C++ owns the
+# actual Cartesian densification/IK pass.
 LINKED_LIN_HELPER_ENABLED: true
+LINKED_LIN_CARTESIAN_STEP_M: 0.020
+
+# TOTG cannot accept an instantaneous 180-degree joint-space turn. Permit only
+# extremely small numerical A->B->A artifacts from Cartesian IK to be removed
+# at the linked-LIN boundary; real reversals remain untouched and will fail.
+LINKED_LIN_MICRO_REVERSAL_CLEANUP_ENABLED: true
+LINKED_LIN_MICRO_REVERSAL_MIN_ANGLE_DEG: 175.0
+LINKED_LIN_MICRO_REVERSAL_MAX_LEG_RAD: 0.002
+LINKED_LIN_MICRO_REVERSAL_MAX_ENDPOINT_RAD: 0.0001
+LINKED_LIN_NEAR_DUPLICATE_RAD: 0.00001
 
 # Shared Cartesian path defaults. Profiles can override these for process-
 # specific dense paths such as paint contours.
