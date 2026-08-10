@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from time import perf_counter, sleep, time
 from typing import Iterable
 
@@ -161,6 +162,17 @@ def request_linked_lin_trajectory(
         description="linked LIN helper request",
     )
 
+    # Cartesian interpolation can occasionally produce a microscopic numerical
+    # A->B->A joint excursion around a singular/flat region. MoveIt's TOTG
+    # rejects even sub-milliradian 180-degree turns, so canonicalize only these
+    # tightly bounded artifacts before the trajectory crosses the optimizer
+    # boundary. This deliberately does not touch real reversals.
+    if bool(getattr(response, "success", False)):
+        _canonicalize_microscopic_joint_artifacts(
+            robot_controller,
+            response.trajectory,
+        )
+
     report = _report_from_response(response)
     report.timings["service_call_s"] = perf_counter() - started_at
     if report.ok:
@@ -180,6 +192,113 @@ def request_linked_lin_trajectory(
             f"{report.details}"
         )
     return LinkedLinPlanningResult(response.trajectory, report)
+
+
+def _canonicalize_microscopic_joint_artifacts(robot_controller, trajectory) -> None:
+    if not bool(getattr(config, "LINKED_LIN_MICRO_REVERSAL_CLEANUP_ENABLED", True)):
+        return
+
+    points = list(getattr(trajectory.joint_trajectory, "points", []) or [])
+    if len(points) < 2:
+        return
+
+    min_angle_deg = max(
+        90.0,
+        min(180.0, float(getattr(config, "LINKED_LIN_MICRO_REVERSAL_MIN_ANGLE_DEG", 175.0))),
+    )
+    max_leg_rad = max(
+        0.0,
+        float(getattr(config, "LINKED_LIN_MICRO_REVERSAL_MAX_LEG_RAD", 0.002)),
+    )
+    max_endpoint_rad = max(
+        0.0,
+        float(getattr(config, "LINKED_LIN_MICRO_REVERSAL_MAX_ENDPOINT_RAD", 0.0001)),
+    )
+    duplicate_rad = max(
+        0.0,
+        float(getattr(config, "LINKED_LIN_NEAR_DUPLICATE_RAD", 0.00001)),
+    )
+    max_cos = math.cos(math.radians(min_angle_deg))
+
+    original_count = len(points)
+    removed_reversals = 0
+    removed_duplicates = 0
+
+    # Iterate to stability because removing A->B->A can expose an adjacent
+    # near-duplicate or another microscopic reversal.
+    while True:
+        changed = False
+
+        index = 1
+        while index < len(points):
+            if _joint_delta_norm(
+                points[index - 1].positions,
+                points[index].positions,
+            ) <= duplicate_rad:
+                del points[index]
+                removed_duplicates += 1
+                changed = True
+                continue
+            index += 1
+
+        index = 1
+        while index < len(points) - 1:
+            previous = points[index - 1].positions
+            middle = points[index].positions
+            following = points[index + 1].positions
+            d_prev = _joint_delta(previous, middle)
+            d_next = _joint_delta(middle, following)
+            prev_norm = _vector_norm(d_prev)
+            next_norm = _vector_norm(d_next)
+            endpoint_norm = _joint_delta_norm(previous, following)
+
+            if (
+                prev_norm > 1e-12
+                and next_norm > 1e-12
+                and prev_norm <= max_leg_rad
+                and next_norm <= max_leg_rad
+                and endpoint_norm <= max_endpoint_rad
+            ):
+                cosine = _dot(d_prev, d_next) / (prev_norm * next_norm)
+                cosine = max(-1.0, min(1.0, cosine))
+                if cosine <= max_cos:
+                    del points[index]
+                    removed_reversals += 1
+                    changed = True
+                    continue
+            index += 1
+
+        if not changed:
+            break
+
+    if len(points) != original_count:
+        trajectory.joint_trajectory.points = points
+        robot_controller.get_logger().info(
+            "[LINKED_LIN] canonicalized microscopic joint artifacts "
+            f"reversals={removed_reversals} "
+            f"near_duplicates={removed_duplicates} "
+            f"points={original_count}->{len(points)} "
+            f"min_angle_deg={min_angle_deg:.1f} "
+            f"max_leg_rad={max_leg_rad:.6f} "
+            f"max_endpoint_rad={max_endpoint_rad:.6f}"
+        )
+
+
+def _joint_delta(a, b) -> list[float]:
+    count = min(len(a), len(b))
+    return [float(b[index]) - float(a[index]) for index in range(count)]
+
+
+def _vector_norm(values) -> float:
+    return math.sqrt(sum(float(value) * float(value) for value in values))
+
+
+def _joint_delta_norm(a, b) -> float:
+    return _vector_norm(_joint_delta(a, b))
+
+
+def _dot(a, b) -> float:
+    return sum(float(x) * float(y) for x, y in zip(a, b))
 
 
 def _report_from_response(response) -> LinkedLinReport:
