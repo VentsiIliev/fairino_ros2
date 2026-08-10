@@ -1,10 +1,15 @@
 # Linked LIN planning request.
 #
-# This service is the Python/C++ boundary for replacing several compatible
-# sequential LIN segments with one C++ planning request.
+# Python keeps the logical LIN segment boundaries and blend semantics. C++
+# computes the expensive sequential Cartesian paths in one request and returns
+# one validated raw joint trajectory plus the exact segment boundaries.
 
 sensor_msgs/JointState seed_state
-geometry_msgs/Pose[] poses
+geometry_msgs/Pose[] target_poses
+string[] labels
+float64[] velocities
+float64[] accelerations
+float64[] blend_radii
 
 string group_name
 string link_name
@@ -14,8 +19,6 @@ geometry_msgs/Transform tool_transform
 geometry_msgs/Transform workobject_transform
 bool use_workobject_transform
 
-float64 max_velocity_scaling
-float64 max_acceleration_scaling
 float64 cartesian_step_m
 float64 jump_threshold
 bool avoid_collisions
@@ -30,14 +33,6 @@ string[] full_turn_joint_names
 float64 full_turn_max_joint_span_rad
 float64 full_turn_max_endpoint_delta_rad
 
-# Strict cleanup for microscopic numerical A->B->A joint excursions that
-# MoveIt TOTG cannot parameterize. Real reversals remain untouched.
-bool micro_reversal_cleanup_enabled
-float64 micro_reversal_min_angle_deg
-float64 micro_reversal_max_leg_rad
-float64 micro_reversal_max_endpoint_rad
-float64 near_duplicate_rad
-
 ---
 bool success
 int32 error_code
@@ -45,6 +40,16 @@ string message
 
 moveit_msgs/RobotTrajectory trajectory
 
+# Inclusive end index of each logical LIN segment in trajectory.joint_trajectory.
+uint32[] segment_boundary_indices
+uint32[] segment_point_counts
+float64[] segment_planning_time_s
+
+uint32 requested_segment_count
+uint32 solved_segment_count
+uint32 failed_segment_index
+
+# Compatibility/diagnostic aliases: one target pose per logical segment.
 uint32 requested_pose_count
 uint32 solved_pose_count
 uint32 failed_index
@@ -54,9 +59,6 @@ float64 max_fk_orientation_error_deg
 float64 max_joint_step_rad
 float64 max_joint_span_rad
 float64 max_endpoint_delta_rad
-
-uint32 removed_micro_reversal_points
-uint32 removed_near_duplicate_points
 
 float64 planning_time_s
 float64 validation_time_s

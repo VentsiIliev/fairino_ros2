@@ -8,7 +8,6 @@ from time import perf_counter
 from typing import Any, Callable, Sequence
 
 import config
-from motion.blending.linked_lin_blend import build_linked_lin_blend_poses
 from motion.planning.linked_lin_client import request_linked_lin_trajectory
 
 
@@ -352,6 +351,8 @@ def _plan_linked_lin_group(
     selected_optimizer: str | None,
     worker_started: float,
 ) -> tuple[int, list[float], Any]:
+    """Plan LIN members in one C++ request, then reuse the proven BlendBuilder."""
+
     plan_started = perf_counter()
     planned_members = []
 
@@ -361,6 +362,7 @@ def _plan_linked_lin_group(
             list(segment["position"][:6]),
             user_id=hooks.user,
         )
+        _check_cartesian_target_safety(hooks.node, target_base, group_index)
         planned_members.append(
             {
                 "type": "linear",
@@ -382,51 +384,15 @@ def _plan_linked_lin_group(
             }
         )
 
-    target_positions = [
-        list(member["target_position"][:6])
-        for member in planned_members
-    ]
-    blend_radii = [
-        float(member["blendR"])
-        for member in planned_members[:-1]
-    ]
-    poses, effective_radii = build_linked_lin_blend_poses(
-        previous_target,
-        target_positions,
-        blend_radii,
-        max_translation_mm=float(
-            getattr(config, "LINKED_LIN_DENSIFY_MAX_TRANSLATION_MM", 8.0)
-        ),
-        max_orientation_deg=float(
-            getattr(config, "LINKED_LIN_DENSIFY_MAX_ORIENTATION_DEG", 2.0)
-        ),
-        rotation_dominant_xyz_mm=float(
-            getattr(config, "ORDERED_BLEND_ROTATION_DOMINANT_XYZ_MM", 5.0)
-        ),
-        sample_count=int(getattr(config, "ORDERED_BLEND_SAMPLES", 12)),
-    )
-
-    for pose in poses:
-        _check_tcp_safety(hooks.node, pose, start_index)
-
-    hooks.node.get_logger().info(
-        "[LINKED_LIN_BLEND] Built Cartesian blend "
-        f"segments={len(planned_members)} "
-        f"requested_radii={[round(value, 3) for value in blend_radii]} "
-        f"effective_radii={[round(value, 3) for value in effective_radii]} "
-        f"poses={len(poses)}"
-    )
-
-    group_vel_scale = min(float(member["vel_scale"]) for member in planned_members)
-    group_acc_scale = min(float(member["acc_scale"]) for member in planned_members)
-
     result = request_linked_lin_trajectory(
         hooks.node,
-        poses,
+        [member["target_position"] for member in planned_members],
+        labels=[member["label"] for member in planned_members],
+        velocities=[member["vel_scale"] for member in planned_members],
+        accelerations=[member["acc_scale"] for member in planned_members],
+        blend_radii=[member["blendR"] for member in planned_members],
         seed_state=previous_state,
         tool_transform=hooks.tool_transform,
-        vel_scaling=group_vel_scale,
-        acc_scaling=group_acc_scale,
     )
     if result is None:
         raise RuntimeError(
@@ -437,16 +403,48 @@ def _plan_linked_lin_group(
             f"linked-LIN helper rejected group {start_index + 1}-{group_end + 1}: "
             f"{result.report.failure_reason} {result.report.details}"
         )
+    if len(result.segment_trajectories) != len(planned_members):
+        raise RuntimeError(
+            "linked-LIN helper returned wrong segment count: "
+            f"expected={len(planned_members)} got={len(result.segment_trajectories)}"
+        )
+
+    for member, trajectory in zip(planned_members, result.segment_trajectories):
+        member["trajectory"] = trajectory
+
+    hooks.node.get_logger().info(
+        "[LINKED_LIN] Raw segment trajectories ready "
+        f"segments={len(planned_members)} "
+        f"segment_points={result.report.segment_point_counts} "
+        f"helper_s={result.report.timings.get('helper_total_s', 0.0):.3f}"
+    )
+
+    # Preserve the existing, proven LIN/PTP blending semantics. C++ only
+    # replaces the expensive repeated LIN planning calls; it does not invent a
+    # different Cartesian blend geometry.
+    raw_blended, effective_radii = hooks.blend_builder.build(planned_members)
+
+    from moveit_msgs.msg import RobotTrajectory
+
+    moveit_trajectory = RobotTrajectory()
+    moveit_trajectory.joint_trajectory = raw_blended
+
+    group_vel_scale = min(
+        float(member.get("vel_scale", 1.0)) for member in planned_members
+    )
+    group_acc_scale = min(
+        float(member.get("acc_scale", 1.0)) for member in planned_members
+    )
 
     optimized, optimize_elapsed = hooks.optimize_sync(
-        result.trajectory,
+        moveit_trajectory,
         group_vel_scale,
         group_acc_scale,
         optimizer_name=selected_optimizer,
     )
     optimized_joint_trajectory = optimized.joint_trajectory
     if not getattr(optimized_joint_trajectory, "points", None):
-        raise RuntimeError("Optimizer returned empty linked-LIN trajectory")
+        raise RuntimeError("Optimizer returned empty linked-LIN blended trajectory")
 
     first = planned_members[0]
     last = planned_members[-1]
@@ -470,6 +468,9 @@ def _plan_linked_lin_group(
         "vel_scale": group_vel_scale,
         "acc_scale": group_acc_scale,
         "logical_segment_count": len(planned_members),
+        "linked_lin_segment_point_counts": list(result.report.segment_point_counts),
+        "linked_lin_segment_boundaries": list(result.report.segment_boundary_indices),
+        "linked_lin_segment_planning_s": list(result.report.segment_planning_time_s),
     }
 
     hooks.mark_motion_timing(
@@ -478,10 +479,14 @@ def _plan_linked_lin_group(
         index=start_index + 1,
         label=combined.get("label"),
         group_size=len(planned_members),
-        input_poses=len(poses),
-        points=len(getattr(optimized_joint_trajectory, "points", []) or []),
+        raw_points=sum(result.report.segment_point_counts),
+        segment_points=list(result.report.segment_point_counts),
+        segment_boundaries=list(result.report.segment_boundary_indices),
         effective_blend_radii=[float(value) for value in effective_radii],
         helper_s=float(result.report.timings.get("helper_total_s", 0.0)),
+        blend_and_optimize_s=(perf_counter() - plan_started) - float(
+            result.report.timings.get("service_call_s", 0.0)
+        ),
         optimize_s=float(optimize_elapsed),
         duration_s=perf_counter() - worker_started,
     )
@@ -518,11 +523,19 @@ def _plan_linked_lin_group(
     return group_end + 1, list(last["target_position"]), combined["final_state"]
 
 
-def _check_tcp_safety(node: Any, pose: Any, group_index: int) -> None:
+def _check_cartesian_target_safety(
+    node: Any,
+    target_position: Sequence[float],
+    group_index: int,
+) -> None:
     check = getattr(node, "check_position_safety", None)
     if check is None:
         return
-    is_safe, message = check(pose.position.x, pose.position.y, pose.position.z)
+    # Existing Cartesian positions are millimetres while safety checks use m.
+    x_m = float(target_position[0]) / 1000.0
+    y_m = float(target_position[1]) / 1000.0
+    z_m = float(target_position[2]) / 1000.0
+    is_safe, message = check(x_m, y_m, z_m)
     if not is_safe:
         raise RuntimeError(
             f"linked-LIN target {group_index + 1} rejected by safety walls: {message}"
