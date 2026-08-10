@@ -30,6 +30,14 @@ string[] full_turn_joint_names
 float64 full_turn_max_joint_span_rad
 float64 full_turn_max_endpoint_delta_rad
 
+# Strict cleanup for microscopic numerical A->B->A joint excursions that
+# MoveIt TOTG cannot parameterize. Real reversals remain untouched.
+bool micro_reversal_cleanup_enabled
+float64 micro_reversal_min_angle_deg
+float64 micro_reversal_max_leg_rad
+float64 micro_reversal_max_endpoint_rad
+float64 near_duplicate_rad
+
 ---
 bool success
 int32 error_code
@@ -46,6 +54,9 @@ float64 max_fk_orientation_error_deg
 float64 max_joint_step_rad
 float64 max_joint_span_rad
 float64 max_endpoint_delta_rad
+
+uint32 removed_micro_reversal_points
+uint32 removed_near_duplicate_points
 
 float64 planning_time_s
 float64 validation_time_s
