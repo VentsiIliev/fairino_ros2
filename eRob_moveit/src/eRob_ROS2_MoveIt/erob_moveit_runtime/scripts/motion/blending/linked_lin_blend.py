@@ -17,22 +17,30 @@ def build_linked_lin_blend_poses(
     targets_base: Sequence[Sequence[float]],
     blend_radii_mm: Sequence[float],
     *,
-    max_translation_mm: float = 8.0,
-    max_orientation_deg: float = 2.0,
+    max_translation_mm: float | None = None,
+    max_orientation_deg: float | None = None,
     rotation_dominant_xyz_mm: float = 5.0,
     sample_count: int = 12,
 ) -> tuple[list[Pose], list[float]]:
-    """Build one blended TCP waypoint stream for a contiguous LIN group.
+    """Build a sparse blended TCP waypoint stream for a contiguous LIN group.
 
-    This mirrors the legacy ordered BlendBuilder semantics at Cartesian level:
-    each internal target is trimmed on both adjacent LIN segments according to
+    Each internal target is trimmed on both adjacent LIN segments according to
     ``blendR`` and replaced with a quadratic Bezier transition. Orientation is
     interpolated through the requested junction orientation so rotation-only
     LIN segments keep their intended orientation change.
 
+    Straight LIN sections are represented only by their endpoint. The C++
+    linked-LIN helper owns Cartesian densification via ``cartesian_step_m``;
+    avoiding Python pre-densification keeps the service request small and
+    avoids solving substantially the same geometry twice.
+
     Returned poses exclude the start pose because the C++ linked-LIN helper
     starts from the supplied seed joint state.
     """
+
+    # Kept as keyword-only compatibility inputs for existing callers. Straight
+    # section densification now belongs exclusively to the C++ helper.
+    _ = max_translation_mm, max_orientation_deg
 
     targets = [list(target[:6]) for target in targets_base]
     if len(targets) < 2:
@@ -106,25 +114,17 @@ def build_linked_lin_blend_poses(
         )
         effective_radii.append(effective)
 
-    max_translation_mm = max(0.1, float(max_translation_mm))
-    max_orientation_deg = max(0.1, float(max_orientation_deg))
     sample_count = max(6, int(sample_count))
-
     poses: list[Pose] = []
-    current = transforms[0]
 
     for junction in range(len(entries)):
-        for pose in _poses_between_transforms(
-            current,
-            entries[junction],
-            max_translation_mm=max_translation_mm,
-            max_orientation_deg=max_orientation_deg,
-        ):
-            _append_pose_if_distinct(poses, pose)
-
         entry = entries[junction]
         corner = transforms[junction + 1]
         exit_transform = exits[junction]
+
+        # Straight sections need only the endpoint. The C++ helper interpolates
+        # from the preceding state/waypoint according to cartesian_step_m.
+        _append_pose_if_distinct(poses, _pose_from_transform(entry))
 
         entry_rotation = Rotation.from_matrix(entry[:3, :3])
         corner_rotation = Rotation.from_matrix(corner[:3, :3])
@@ -158,15 +158,8 @@ def build_linked_lin_blend_poses(
             transform[:3, :3] = rotation.as_matrix()
             _append_pose_if_distinct(poses, _pose_from_transform(transform))
 
-        current = exit_transform
-
-    for pose in _poses_between_transforms(
-        current,
-        transforms[-1],
-        max_translation_mm=max_translation_mm,
-        max_orientation_deg=max_orientation_deg,
-    ):
-        _append_pose_if_distinct(poses, pose)
+    # The final straight section is likewise represented by its endpoint.
+    _append_pose_if_distinct(poses, _pose_from_transform(transforms[-1]))
 
     if not poses:
         raise RuntimeError("linked-LIN blended pose construction produced no poses")
@@ -205,45 +198,6 @@ def _interpolate_transform(start, target, ratio: float):
     )
     transform[:3, :3] = slerp([ratio])[0].as_matrix()
     return transform
-
-
-def _poses_between_transforms(
-    start,
-    target,
-    *,
-    max_translation_mm: float,
-    max_orientation_deg: float,
-) -> list[Pose]:
-    distance_mm = _translation_distance_mm(start, target)
-    start_rotation = Rotation.from_matrix(start[:3, :3])
-    target_rotation = Rotation.from_matrix(target[:3, :3])
-    orientation_delta_deg = float(
-        (start_rotation.inv() * target_rotation).magnitude() * 180.0 / math.pi
-    )
-
-    if distance_mm <= 1e-9 and orientation_delta_deg <= 1e-9:
-        return []
-
-    steps = max(
-        1,
-        int(math.ceil(distance_mm / max_translation_mm)),
-        int(math.ceil(orientation_delta_deg / max_orientation_deg)),
-    )
-    slerp = Slerp(
-        [0.0, 1.0],
-        Rotation.concatenate([start_rotation, target_rotation]),
-    )
-
-    poses = []
-    for step in range(1, steps + 1):
-        ratio = float(step) / float(steps)
-        transform = start.copy()
-        transform[:3, 3] = (
-            start[:3, 3] + (target[:3, 3] - start[:3, 3]) * ratio
-        )
-        transform[:3, :3] = slerp([ratio])[0].as_matrix()
-        poses.append(_pose_from_transform(transform))
-    return poses
 
 
 def _append_pose_if_distinct(poses: list[Pose], pose: Pose) -> None:
