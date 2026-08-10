@@ -44,16 +44,23 @@ def execution_payload(robot: IRobotBackend | None, node: RobotController | None,
         payload.update({
             "success": False,
             "runtime_ready": False,
+            "runtime_initialized": False,
+            "motion_stack_ready": False,
+            "motion_stack_fault": "robot runtime is still starting",
             "unavailable_fields": ["runtime"],
         })
         return payload
 
+    motion_stack_ready = bool(node.is_motion_stack_ready())
     status_publisher = getattr(node, "status_publisher", None)
     get_status_dict = getattr(status_publisher, "get_status_dict", None)
     if not callable(get_status_dict):
         payload.update({
             "success": False,
-            "runtime_ready": True,
+            "runtime_ready": motion_stack_ready,
+            "runtime_initialized": True,
+            "motion_stack_ready": motion_stack_ready,
+            "motion_stack_fault": None if motion_stack_ready else node.get_motion_stack_fault_reason(),
             "unavailable_fields": ["status_publisher"],
         })
         return payload
@@ -68,7 +75,10 @@ def execution_payload(robot: IRobotBackend | None, node: RobotController | None,
         status["last_submitted_task_id"] = getattr(node, "last_submitted_task_id", None)
         payload.update({
             "success": True,
-            "runtime_ready": True,
+            "runtime_ready": motion_stack_ready,
+            "runtime_initialized": True,
+            "motion_stack_ready": motion_stack_ready,
+            "motion_stack_fault": None if motion_stack_ready else node.get_motion_stack_fault_reason(),
             "unavailable_fields": [],
             "status": status,
         })
@@ -76,7 +86,10 @@ def execution_payload(robot: IRobotBackend | None, node: RobotController | None,
     except Exception as exc:
         payload.update({
             "success": False,
-            "runtime_ready": True,
+            "runtime_ready": motion_stack_ready,
+            "runtime_initialized": True,
+            "motion_stack_ready": motion_stack_ready,
+            "motion_stack_fault": None if motion_stack_ready else node.get_motion_stack_fault_reason(),
             "unavailable_fields": ["status"],
             "error": str(exc),
         })

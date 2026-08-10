@@ -15,13 +15,7 @@ class IPPHelperNode : public rclcpp::Node
 public:
     IPPHelperNode() : Node("ipp_helper")
     {
-        RCLCPP_INFO(this->get_logger(), "📡 IPP Helper Node starting...");
-
-        service_ = this->create_service<ApplyIPP>(
-            "/apply_ipp",
-            std::bind(&IPPHelperNode::applyIPP, this, std::placeholders::_1, std::placeholders::_2));
-
-        RCLCPP_INFO(this->get_logger(), "✅ Service '/apply_ipp' created");
+        RCLCPP_INFO(this->get_logger(), "IPP Helper Node starting...");
     }
 
     void initialize()
@@ -50,10 +44,11 @@ public:
             throw std::runtime_error("Robot model has no planning groups!");
         }
         planning_group_ = group_names[0];
-        RCLCPP_INFO(this->get_logger(), "📌 Using planning group: '%s'", planning_group_.c_str());
+        RCLCPP_INFO(this->get_logger(), "Using planning group: '%s'", planning_group_.c_str());
 
-        RCLCPP_INFO(this->get_logger(), "✅ Robot model and state cached successfully");
-        RCLCPP_INFO(this->get_logger(), "✅ IPP service '/apply_ipp' is now ready");
+        RCLCPP_INFO(this->get_logger(), "Robot model and state cached successfully");
+        advertiseService();
+        RCLCPP_INFO(this->get_logger(), "IPP service '/apply_ipp' is now ready");
     }
 
 private:
@@ -62,6 +57,15 @@ private:
     moveit::core::RobotModelPtr kinematic_model_;
     moveit::core::RobotStatePtr robot_state_;  // Cached state
     std::string planning_group_;
+
+    void advertiseService()
+    {
+        service_ = this->create_service<ApplyIPP>(
+            "/apply_ipp",
+            std::bind(&IPPHelperNode::applyIPP, this, std::placeholders::_1, std::placeholders::_2));
+
+        RCLCPP_INFO(this->get_logger(), "Service '/apply_ipp' created");
+    }
 
     void applyIPP(const std::shared_ptr<ApplyIPP::Request> request,
                   std::shared_ptr<ApplyIPP::Response> response)

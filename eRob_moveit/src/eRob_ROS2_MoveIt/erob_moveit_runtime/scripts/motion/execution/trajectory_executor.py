@@ -937,20 +937,62 @@ class TrajectoryExecutor:
             return float(default_percent)
         return max(0.0, min(100.0, float(value)))
 
+    def _set_post_success_unwind_skip_reason(self, reason, **details):
+        skip_reason = {'reason': str(reason)}
+        skip_reason.update(details)
+        self._last_post_success_unwind_skip_reason = skip_reason
+        return None
+
+    def _format_post_success_unwind_skip_reason(self):
+        skip_reason = dict(
+            getattr(self, '_last_post_success_unwind_skip_reason', {}) or {}
+        )
+        reason = skip_reason.get('reason') or 'unknown'
+        if reason == 'no_unwind_needed':
+            return (
+                'no unwind needed '
+                f"({skip_reason.get('joint_name', 'Joint_6')} "
+                f"current={float(skip_reason.get('current_value', 0.0)):.4f}rad "
+                f"target={float(skip_reason.get('target_value', 0.0)):.4f}rad "
+                f"delta={float(skip_reason.get('delta', 0.0)):.4f}rad "
+                f"min_delta={float(skip_reason.get('min_delta', 0.0)):.4f}rad)"
+            )
+        if reason == 'target_out_of_range':
+            return (
+                'target outside allowed range '
+                f"({skip_reason.get('joint_name', 'Joint_6')} "
+                f"target={float(skip_reason.get('target_value', 0.0)):.4f}rad "
+                f"range={float(skip_reason.get('target_range', 0.0)):.4f}rad)"
+            )
+        if reason == 'disabled':
+            return 'post-success unwind disabled'
+        if reason == 'joint_not_configured':
+            return f"joint {skip_reason.get('joint_name', 'Joint_6')!r} is not configured"
+        if reason == 'latest_joint_state_unavailable':
+            return 'latest joint state unavailable'
+        return str(reason)
+
     def _build_post_success_unwind_trajectory(self, require_enabled=True, vel=None, acc=None):
+        self._last_post_success_unwind_skip_reason = None
         if require_enabled and not bool(getattr(config, 'EXECUTOR_POST_UNWIND_ENABLED', False)):
-            return None
+            return self._set_post_success_unwind_skip_reason('disabled')
 
         joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
         unwind_joint_name = str(
             getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_NAME', 'Joint_6')
         ).strip()
         if unwind_joint_name not in joint_names:
-            return None
+            return self._set_post_success_unwind_skip_reason(
+                'joint_not_configured',
+                joint_name=unwind_joint_name,
+            )
 
         current_positions = self._get_latest_joint_state_in_trajectory_order(joint_names)
         if current_positions is None:
-            return None
+            return self._set_post_success_unwind_skip_reason(
+                'latest_joint_state_unavailable',
+                joint_name=unwind_joint_name,
+            )
 
         joint_index = joint_names.index(unwind_joint_name)
         current_value = float(current_positions[joint_index])
@@ -958,11 +1000,23 @@ class TrajectoryExecutor:
         delta = target_value - current_value
         min_delta = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DELTA_RAD', 0.5))
         if abs(delta) < min_delta:
-            return None
+            return self._set_post_success_unwind_skip_reason(
+                'no_unwind_needed',
+                joint_name=unwind_joint_name,
+                current_value=current_value,
+                target_value=target_value,
+                delta=delta,
+                min_delta=min_delta,
+            )
 
         target_range = float(getattr(config, 'EXECUTOR_POST_UNWIND_TARGET_RANGE_RAD', math.pi))
         if abs(target_value) > target_range + 1e-9:
-            return None
+            return self._set_post_success_unwind_skip_reason(
+                'target_out_of_range',
+                joint_name=unwind_joint_name,
+                target_value=target_value,
+                target_range=target_range,
+            )
 
         vel_percent = self._clamp_percentage(vel)
         acc_percent = self._clamp_percentage(acc)
@@ -1172,7 +1226,8 @@ class TrajectoryExecutor:
         )
         if queued_unwind is None:
             self._node.get_logger().info(
-                '[Controller] Queued explicit Joint_6 unwind skipped — no unwind needed'
+                '[Controller] Queued explicit Joint_6 unwind skipped - '
+                f'{self._format_post_success_unwind_skip_reason()}'
             )
             self._motion.last_move_result = 0
             self._queue.mark_current_complete(0)
@@ -1281,7 +1336,8 @@ class TrajectoryExecutor:
         )
         if queued_unwind is None:
             self._node.get_logger().info(
-                '[Controller] Explicit Joint_6 unwind skipped — no unwind needed'
+                '[Controller] Explicit Joint_6 unwind skipped - '
+                f'{self._format_post_success_unwind_skip_reason()}'
             )
             self._motion.last_move_result = 0
             return 0
@@ -1484,6 +1540,7 @@ class TrajectoryExecutor:
             )
         except Exception:
             pass
+        controller_goal.trajectory.header.stamp = self._node.get_clock().now().to_msg()
         future = self._controller_client.send_goal_async(controller_goal)
         self._motion.active_execute_send_future = future
         future.add_done_callback(

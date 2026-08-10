@@ -282,16 +282,6 @@ public:
             this->get_logger(),
             "PTP helper starting..."
         );
-
-        service_ = this->create_service<ComputePtp>(
-            "/compute_ptp",
-            std::bind(
-                &PtpHelperNode::computePtp,
-                this,
-                std::placeholders::_1,
-                std::placeholders::_2
-            )
-        );
     }
 
 
@@ -352,6 +342,8 @@ public:
             );
         }
 
+        advertiseService();
+
         RCLCPP_INFO(
             this->get_logger(),
             "PTP helper ready"
@@ -382,6 +374,23 @@ private:
         planning_scene_monitor::PlanningSceneMonitor
     > planning_scene_monitor_;
 
+    void advertiseService()
+    {
+        service_ = this->create_service<ComputePtp>(
+            "/compute_ptp",
+            std::bind(
+                &PtpHelperNode::computePtp,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2
+            )
+        );
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Service '/compute_ptp' created"
+        );
+    }
 
     void fail(
         const std::shared_ptr<ComputePtp::Response>& response,

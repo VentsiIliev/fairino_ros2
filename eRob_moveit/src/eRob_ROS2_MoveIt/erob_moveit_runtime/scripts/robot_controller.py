@@ -58,6 +58,7 @@ from config import (
     SERVICE_CARTESIAN_PATH,
     SERVICE_MOTION_SEQUENCE,
     SERVICE_APPLY_IPP,
+    SERVICE_APPLY_RUCKIG,
     COLLISION_TIP_LINK,
     BASE_LINK,
     WRIST_LINK,
@@ -193,6 +194,7 @@ class RobotController(Node):
         self.cart_path_client = self.create_client(GetCartesianPath, SERVICE_CARTESIAN_PATH)
         self.sequence_client = self.create_client(GetMotionSequence, SERVICE_MOTION_SEQUENCE)
         self.ipp_client = self.create_client(ApplyIPP, SERVICE_APPLY_IPP)
+        self.ruckig_client = self.create_client(ApplyIPP, SERVICE_APPLY_RUCKIG)
         self.trajectory_executor = TrajectoryExecutor(
             node=self,
             coordinator=self._motion,
@@ -818,8 +820,17 @@ class RobotController(Node):
     def get_ik_client(self):
         return self.planner_context.get_ik_client()
 
+    def get_contour_ik_client(self):
+        return self.planner_context.get_contour_ik_client()
+
+    def get_linked_lin_client(self):
+        return self.planner_context.get_linked_lin_client()
+
     def get_state_validity_client(self):
         return self.planner_context.get_state_validity_client()
+
+    def get_ptp_client(self):
+        return self.planner_context.get_ptp_client()
 
     def stop_motion(self):
         return self._motion.stop_motion()
@@ -1004,44 +1015,47 @@ class RobotController(Node):
             }
 
     def is_motion_stack_ready(self) -> bool:
-        if self.current_joint_state is None:
+        try:
+            return self.get_motion_stack_fault_reason() is None
+        except Exception as exc:
+            self.get_logger().warning(f'[MotionStackReady] readiness check failed: {exc}')
             return False
-        if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
-            return False
-        if not self.wait_for_cartesian_path_service(timeout_sec=0.05):
-            return False
-        ik_client = self.get_ik_client()
-        if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.05):
-            return False
-        fk_client = self.get_fk_client()
-        if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
-            return False
-        state_validity_client = self.get_state_validity_client()
-        if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=0.05):
-            return False
-        if not self.controller_client.wait_for_server(timeout_sec=0.05):
-            return False
-        return True
 
-    def get_motion_stack_fault_reason(self) -> str:
+    def get_motion_stack_fault_reason(self) -> str | None:
         if self.current_joint_state is None:
             return 'joint_states not available yet'
         if self.prev_cartesian is None or len(self.prev_cartesian) < 6:
             return 'current Cartesian pose not available yet'
-        if not self.wait_for_cartesian_path_service(timeout_sec=0.05):
-            return 'MoveIt compute_cartesian_path service not available'
-        ik_client = self.get_ik_client()
-        if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.05):
-            return 'MoveIt IK service not available'
-        fk_client = self.get_fk_client()
-        if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
-            return 'MoveIt FK service not available'
-        state_validity_client = self.get_state_validity_client()
-        if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=0.05):
-            return 'MoveIt state validity service not available'
-        if not self.controller_client.wait_for_server(timeout_sec=0.05):
-            return 'FollowJointTrajectory action server not available'
-        return 'motion stack not ready'
+        try:
+            if not self.wait_for_cartesian_path_service(timeout_sec=0.05):
+                return 'MoveIt compute_cartesian_path service not available'
+            ik_client = self.get_ik_client()
+            if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.05):
+                return 'MoveIt IK service not available'
+            fk_client = self.get_fk_client()
+            if fk_client is None or not fk_client.wait_for_service(timeout_sec=0.05):
+                return 'MoveIt FK service not available'
+            state_validity_client = self.get_state_validity_client()
+            if state_validity_client is None or not state_validity_client.wait_for_service(timeout_sec=0.05):
+                return 'MoveIt state validity service not available'
+            ptp_client = self.get_ptp_client()
+            if ptp_client is None or not ptp_client.wait_for_service(timeout_sec=0.05):
+                return 'PTP helper service not available'
+            contour_ik_client = self.get_contour_ik_client()
+            if contour_ik_client is None or not contour_ik_client.wait_for_service(timeout_sec=0.05):
+                return 'Contour IK helper service not available'
+            linked_lin_client = self.get_linked_lin_client()
+            if linked_lin_client is None or not linked_lin_client.wait_for_service(timeout_sec=0.05):
+                return 'Linked LIN helper service not available'
+            if self.ipp_client is None or not self.ipp_client.wait_for_service(timeout_sec=0.05):
+                return 'TOTG/IPP optimizer service not available'
+            if self.ruckig_client is None or not self.ruckig_client.wait_for_service(timeout_sec=0.05):
+                return 'Ruckig optimizer service not available'
+            if not self.controller_client.wait_for_server(timeout_sec=0.05):
+                return 'FollowJointTrajectory action server not available'
+        except Exception as exc:
+            return f'motion stack readiness check failed: {exc}'
+        return None
 
     def is_motion_active(self):
         return self._motion.is_motion_active()
@@ -1078,6 +1092,54 @@ class RobotController(Node):
         if self._fake_hardware:
             return []
         return self.runtime_adapter.get_all_drive_states(self)
+
+    @property
+    def active_execute_send_future(self):
+        return self._motion.active_execute_send_future
+
+    @active_execute_send_future.setter
+    def active_execute_send_future(self, value):
+        self._motion.active_execute_send_future = value
+
+    @property
+    def active_controller_goal(self):
+        return self._motion.active_controller_goal
+
+    @active_controller_goal.setter
+    def active_controller_goal(self, value):
+        self._motion.active_controller_goal = value
+
+    @property
+    def plan_generation(self):
+        return self._motion.plan_generation
+
+    @plan_generation.setter
+    def plan_generation(self, value):
+        self._motion.plan_generation = value
+
+    @property
+    def prev_cartesian(self):
+        return self.state_store.get_prev_cartesian()
+
+    @prev_cartesian.setter
+    def prev_cartesian(self, value):
+        self.state_store.set_prev_cartesian(value)
+
+    @property
+    def current_joint_state(self):
+        return self.state_store.get_current_joint_state()
+
+    @current_joint_state.setter
+    def current_joint_state(self, value):
+        self.state_store.set_current_joint_state(value)
+
+    @property
+    def latest_data(self):
+        return self.state_store.get_latest_data()
+
+    @latest_data.setter
+    def latest_data(self, value):
+        self.state_store.set_latest_data(value)
 
     def _send_hold_position_trajectory(
         self,

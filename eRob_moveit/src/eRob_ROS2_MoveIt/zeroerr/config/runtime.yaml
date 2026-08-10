@@ -74,6 +74,11 @@ STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S: 5.0
 # Default trajectory time-parameterization backend.
 TRAJECTORY_OPTIMIZER: RUCKIG
 
+# Route continuous ordered LIN blend groups through the C++ linked-LIN helper.
+# When enabled, helper failures are reported as motion planning failures rather
+# than falling back to the legacy Python LIN planner.
+LINKED_LIN_HELPER_ENABLED: true
+
 # Shared Cartesian path defaults. Profiles can override these for process-
 # specific dense paths such as paint contours.
 PATH_EEF_STEP_SCALE: 1.35

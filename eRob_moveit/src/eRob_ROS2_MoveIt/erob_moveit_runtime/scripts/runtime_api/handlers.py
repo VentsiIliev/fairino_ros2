@@ -123,11 +123,34 @@ class RuntimeApi:
             }, 200)
         return motion_error(result)
 
+    def _require_motion_stack_ready(self) -> ApiResponse | None:
+        node = self.node
+        if node is None:
+            return response_error("robot runtime is still starting", 503)
+        is_ready = getattr(node, "is_motion_stack_ready", None)
+        if not callable(is_ready):
+            return None
+        if is_ready():
+            return None
+        get_reason = getattr(node, "get_motion_stack_fault_reason", None)
+        reason = get_reason() if callable(get_reason) else "motion stack not ready"
+        return response_error(
+            "motion stack is not ready",
+            503,
+            motion_stack_ready=False,
+            motion_stack_fault=reason,
+            startup=self._startup_status_getter(),
+            runtime=self._runtime_state_snapshot_getter(),
+        )
+
     def move_linear(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
             payload = parse_move_linear_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         logger.info("Received move/linear request with data %s", data)
         try:
@@ -151,6 +174,9 @@ class RuntimeApi:
             payload = parse_move_linear_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         logger.info("Received move/ptp request with data %s", data)
         result = self.robot.move_ptp(
@@ -169,6 +195,9 @@ class RuntimeApi:
             payload = parse_execute_path_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         self.robot.node.get_logger().info(
             f"Executing path with {len(payload['path'])} waypoints, vel={payload['vel']}, acc={payload['acc']}"
@@ -196,6 +225,9 @@ class RuntimeApi:
             payload = parse_execute_sequence_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         self.robot.node.get_logger().info(f"Executing sequence with {len(payload['segments'])} segments")
         try:
@@ -255,6 +287,9 @@ class RuntimeApi:
             payload = parse_execute_ordered_motion_chain_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         self.robot.node.get_logger().info(
             f"Executing ordered motion chain with {len(payload['segments'])} segments"
@@ -288,6 +323,9 @@ class RuntimeApi:
                 "success": False,
                 "error": "vel and acc must be numeric when provided",
             }, 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
 
         try:
             result = self.robot.unwind_joint6(
@@ -518,6 +556,9 @@ class RuntimeApi:
     def jog(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
             axis, direction, step, vel, acc = parse_jog_request(data)
+            not_ready = self._require_motion_stack_ready()
+            if not_ready is not None:
+                return not_ready
             result = self.robot.start_jog(axis, direction, step, vel, acc)
             if result == 0:
                 return ApiResponse({"result": result, "success": True})

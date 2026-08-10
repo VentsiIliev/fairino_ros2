@@ -597,13 +597,7 @@ class RuckigHelperNode : public rclcpp::Node
 public:
     RuckigHelperNode() : Node("ruckig_helper")
     {
-        RCLCPP_INFO(this->get_logger(), "📡 Ruckig Helper Node starting...");
-
-        service_ = this->create_service<ApplyRuckig>(
-            "/apply_ruckig",
-            std::bind(&RuckigHelperNode::applyRuckig, this, std::placeholders::_1, std::placeholders::_2));
-
-        RCLCPP_INFO(this->get_logger(), "✅ Service '/apply_ruckig' created");
+        RCLCPP_INFO(this->get_logger(), "Ruckig Helper Node starting...");
     }
 
     void initialize()
@@ -630,10 +624,11 @@ public:
         }
 
         planning_group_ = group_names[0];
-        RCLCPP_INFO(this->get_logger(), "📌 Using planning group: '%s'", planning_group_.c_str());
+        RCLCPP_INFO(this->get_logger(), "Using planning group: '%s'", planning_group_.c_str());
 
-        RCLCPP_INFO(this->get_logger(), "✅ Robot model and state cached successfully");
-        RCLCPP_INFO(this->get_logger(), "✅ Ruckig service '/apply_ruckig' is now ready");
+        RCLCPP_INFO(this->get_logger(), "Robot model and state cached successfully");
+        advertiseService();
+        RCLCPP_INFO(this->get_logger(), "Ruckig service '/apply_ruckig' is now ready");
         RCLCPP_INFO(this->get_logger(), "   Using jerk-limited trajectory smoothing (3rd order)");
     }
 
@@ -643,6 +638,15 @@ private:
     moveit::core::RobotModelPtr kinematic_model_;
     moveit::core::RobotStatePtr robot_state_;
     std::string planning_group_;
+
+    void advertiseService()
+    {
+        service_ = this->create_service<ApplyRuckig>(
+            "/apply_ruckig",
+            std::bind(&RuckigHelperNode::applyRuckig, this, std::placeholders::_1, std::placeholders::_2));
+
+        RCLCPP_INFO(this->get_logger(), "Service '/apply_ruckig' created");
+    }
 
     void applyRuckig(const std::shared_ptr<ApplyRuckig::Request> request,
                      std::shared_ptr<ApplyRuckig::Response> response)

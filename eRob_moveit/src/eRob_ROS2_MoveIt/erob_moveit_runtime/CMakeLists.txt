@@ -15,6 +15,7 @@ find_package(moveit_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2 REQUIRED)
@@ -27,9 +28,26 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ApplyIPP.srv"
   "srv/ComputeContourIK.srv"
-   "srv/ComputePtp.srv"
+  "srv/ComputeLinkedLin.srv"
+  "srv/ComputePtp.srv"
   DEPENDENCIES trajectory_msgs moveit_msgs sensor_msgs geometry_msgs
 )
+
+add_library(trajectory_validation
+  src_cpp/trajectory_validation.cpp)
+target_include_directories(trajectory_validation PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(trajectory_validation
+  builtin_interfaces
+  trajectory_msgs)
+
+add_executable(trajectory_validation_smoke
+  src_cpp/trajectory_validation_smoke.cpp)
+target_link_libraries(trajectory_validation_smoke
+  trajectory_validation)
+ament_target_dependencies(trajectory_validation_smoke
+  trajectory_msgs)
 
 # Install the shared Python package so robot-specific publishers can import it
 ament_python_install_package(erob_state_publisher)
@@ -70,6 +88,16 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
   install(FILES README.md DESTINATION share/${PROJECT_NAME})
 endif()
 
+install(DIRECTORY include/ DESTINATION include)
+install(TARGETS trajectory_validation
+  EXPORT export_trajectory_validation
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+ament_export_include_directories(include)
+ament_export_targets(export_trajectory_validation HAS_LIBRARY_TARGET)
+ament_export_dependencies(builtin_interfaces trajectory_msgs)
+
 add_executable(ipp_helper src_cpp/ipp_helper_node.cpp)
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 ament_target_dependencies(ipp_helper
@@ -81,6 +109,25 @@ set_target_properties(ipp_helper PROPERTIES
   BUILD_WITH_INSTALL_RPATH FALSE
   INSTALL_RPATH_USE_LINK_PATH TRUE)
 install(TARGETS ipp_helper DESTINATION lib/${PROJECT_NAME})
+
+add_executable(linked_lin_helper src_cpp/linked_lin_helper_node.cpp)
+ament_target_dependencies(linked_lin_helper
+  rclcpp
+  moveit_core
+  moveit_ros_planning_interface
+  moveit_ros_planning
+  moveit_msgs
+  sensor_msgs
+  trajectory_msgs
+  geometry_msgs)
+target_link_libraries(linked_lin_helper
+  trajectory_validation
+  ${cpp_typesupport_target})
+set_target_properties(linked_lin_helper PROPERTIES
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/../../../lib:$ORIGIN/../../../../fairino_msgs/lib"
+  BUILD_WITH_INSTALL_RPATH FALSE
+  INSTALL_RPATH_USE_LINK_PATH TRUE)
+install(TARGETS linked_lin_helper DESTINATION lib/${PROJECT_NAME})
 
 add_executable(ruckig_helper src_cpp/ruckig_helper_node.cpp)
 ament_target_dependencies(ruckig_helper

@@ -194,6 +194,9 @@ class PlannerContext:
     def get_contour_ik_client(self):
         return self._planner_support.get_contour_ik_client()
 
+    def get_linked_lin_client(self):
+        return self._planner_support.get_linked_lin_client()
+
     def get_state_validity_client(self):
         return self._planner_support.get_state_validity_client()
 

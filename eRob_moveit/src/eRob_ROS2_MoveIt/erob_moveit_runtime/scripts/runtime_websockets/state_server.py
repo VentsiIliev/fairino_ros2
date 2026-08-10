@@ -46,6 +46,9 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
             "success": False,
             "partial": True,
             "runtime_ready": False,
+            "runtime_initialized": False,
+            "motion_stack_ready": False,
+            "motion_stack_fault": "robot runtime is still starting",
             "unavailable_fields": ["runtime"],
             "position": None,
             "flange_position": None,
@@ -69,10 +72,14 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
     if acceleration is None:
         unavailable.append("acceleration")
 
+    motion_stack_ready = bool(node.is_motion_stack_ready())
     payload.update({
         "success": not unavailable,
         "partial": bool(unavailable),
-        "runtime_ready": True,
+        "runtime_ready": motion_stack_ready,
+        "runtime_initialized": True,
+        "motion_stack_ready": motion_stack_ready,
+        "motion_stack_fault": None if motion_stack_ready else node.get_motion_stack_fault_reason(),
         "unavailable_fields": unavailable,
         "position": position,
         "flange_position": flange_position,

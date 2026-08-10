@@ -11,6 +11,7 @@ import traceback
 from flask import Flask, Response, jsonify, request
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
+from werkzeug.exceptions import HTTPException
 
 from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
@@ -331,12 +332,26 @@ def start_rest_server(
         with startup_lock:
             status = dict(startup_state)
         status["ros2_active"] = robot is not None
+        if robot is not None and node is not None and status.get("error") is None:
+            motion_stack_ready = bool(node.is_motion_stack_ready())
+            status["motion_stack_ready"] = motion_stack_ready
+            if motion_stack_ready:
+                status["phase"] = "ready"
+                status["message"] = "Robot runtime is ready"
+                status["ready"] = True
+                status["motion_stack_fault"] = None
+            else:
+                status["phase"] = "motion_stack_warming"
+                status["message"] = "Robot runtime is initialized; motion stack is still warming up"
+                status["ready"] = False
+                status["motion_stack_fault"] = node.get_motion_stack_fault_reason()
         return status
 
     def runtime_state_snapshot() -> dict:
         if robot is None or node is None:
             return {
                 "runtime_ready": False,
+                "runtime_initialized": False,
                 "startup": get_startup_status(),
             }
         drive_status = _to_jsonable(node.get_drive_operation_status())
@@ -344,7 +359,8 @@ def start_rest_server(
         hardware_ready = bool(node.is_hardware_ready_for_motion())
         motion_stack_ready = bool(node.is_motion_stack_ready())
         return {
-            "runtime_ready": True,
+            "runtime_ready": motion_stack_ready,
+            "runtime_initialized": True,
             "hardware_ready": hardware_ready,
             "hardware_fault": None if hardware_ready else node.get_hardware_fault_reason(),
             "motion_stack_ready": motion_stack_ready,
@@ -454,9 +470,9 @@ def start_rest_server(
                 if robot is None or node is None:
                     raise RuntimeError("runtime initializer did not return a robot and node")
                 update_startup_status(
-                    "ready",
-                    "Robot runtime is ready",
-                    ready=True,
+                    "runtime_initialized",
+                    "Robot runtime is initialized; waiting for motion stack",
+                    ready=False,
                     error=None,
                 )
             except Exception as exc:
@@ -476,6 +492,24 @@ def start_rest_server(
 
     if robot is None and runtime_initializer is None and not allow_starting_without_robot:
         raise RuntimeError("REST server started without a robot instance")
+
+    @app.errorhandler(Exception)
+    def json_error_handler(exc):
+        if isinstance(exc, HTTPException):
+            return jsonify({
+                "success": False,
+                "status": "error",
+                "error": exc.description,
+                "code": exc.code,
+                "startup": get_startup_status(),
+            }), exc.code
+        logger.exception("Unhandled REST exception")
+        return jsonify({
+            "success": False,
+            "status": "error",
+            "error": str(exc),
+            "startup": get_startup_status(),
+        }), 500
 
     @app.before_request
     def require_runtime_ready():
@@ -498,7 +532,10 @@ def start_rest_server(
     def health():
         status = get_startup_status()
         http_status = 200 if status.get("error") is None else 500
-        return jsonify({"status": "ok" if status["ready"] else status["phase"], **status}), http_status
+        # Legacy GUI clients use /health.status == "ok" as their interaction
+        # gate, so only report ok once the motion stack is ready.
+        health_status = "error" if status.get("error") else "ok" if status.get("ready") else status.get("phase", "starting")
+        return jsonify({"status": health_status, **status}), http_status
 
     @app.route("/startup/status", methods=["GET"])
     def startup_status():

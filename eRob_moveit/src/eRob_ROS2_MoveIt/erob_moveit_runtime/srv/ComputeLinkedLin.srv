@@ -1,0 +1,52 @@
+# Linked LIN planning request.
+#
+# This service is the Python/C++ boundary for replacing several compatible
+# sequential LIN segments with one C++ planning request.
+
+sensor_msgs/JointState seed_state
+geometry_msgs/Pose[] poses
+
+string group_name
+string link_name
+string reference_frame
+
+geometry_msgs/Transform tool_transform
+geometry_msgs/Transform workobject_transform
+bool use_workobject_transform
+
+float64 max_velocity_scaling
+float64 max_acceleration_scaling
+float64 cartesian_step_m
+float64 jump_threshold
+bool avoid_collisions
+
+float64 fk_position_tolerance_mm
+float64 fk_orientation_tolerance_deg
+float64 max_joint_step_rad
+float64 max_joint_span_rad
+float64 max_endpoint_delta_rad
+
+string[] full_turn_joint_names
+float64 full_turn_max_joint_span_rad
+float64 full_turn_max_endpoint_delta_rad
+
+---
+bool success
+int32 error_code
+string message
+
+moveit_msgs/RobotTrajectory trajectory
+
+uint32 requested_pose_count
+uint32 solved_pose_count
+uint32 failed_index
+
+float64 max_fk_position_error_mm
+float64 max_fk_orientation_error_deg
+float64 max_joint_step_rad
+float64 max_joint_span_rad
+float64 max_endpoint_delta_rad
+
+float64 planning_time_s
+float64 validation_time_s
+float64 total_time_s

@@ -163,7 +163,9 @@ class MotionCoordinator:
             }
 
         if controller_cancel_error is not None:
-            self._node.get_logger().error('[STOP] Stop failed: %s', controller_cancel_error)
+            self._node.get_logger().error(
+                f'[STOP] Stop failed: {controller_cancel_error}'
+            )
             return {
                 'state': 'ERROR',
                 'result': -2,

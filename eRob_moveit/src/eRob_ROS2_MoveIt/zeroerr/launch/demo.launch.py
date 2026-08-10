@@ -482,6 +482,20 @@ def generate_launch_description():
         ],
     )
 
+    linked_lin_helper_node = Node(
+        package="erob_moveit_runtime",
+        executable="linked_lin_helper",
+        name="linked_lin_helper",
+        output="screen",
+        prefix=non_rt_prefix,
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+        ],
+    )
+
     zeroerr_state_publisher = Node(
         package="zeroerr",
         executable="zeroerr_state_publisher.py",
@@ -558,6 +572,7 @@ def generate_launch_description():
     demo_ld.add_action(TimerAction(period=6.5, actions=[ruckig_helper_node]))
     demo_ld.add_action(TimerAction(period=8.0, actions=[contour_ik_helper_node]))
     demo_ld.add_action(TimerAction(period=8.5, actions=[ptp_helper_node]))
+    demo_ld.add_action(TimerAction(period=9.0, actions=[linked_lin_helper_node]))
 
     delayed_zeroerr_actions = [
         TimerAction(period=10.0, actions=[ethercat_sdo_server]),

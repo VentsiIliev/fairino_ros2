@@ -338,13 +338,17 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
         )
 
     # Create client if not exists
+    ruckig_service_name = getattr(cfg, 'SERVICE_APPLY_RUCKIG', '/apply_ruckig')
     if not hasattr(robot_controller, 'ruckig_client'):
-        robot_controller.ruckig_client = robot_controller.create_client(ApplyIPP, '/apply_ruckig')
+        robot_controller.ruckig_client = robot_controller.create_client(
+            ApplyIPP,
+            ruckig_service_name,
+        )
 
     if not robot_controller.ruckig_client.wait_for_service(timeout_sec=cfg.OPT_SERVICE_TIMEOUT_S):
-        robot_controller.get_logger().error('[Ruckig] ✗ Ruckig service /apply_ruckig NOT available after 5s!')
+        robot_controller.get_logger().error(f'[Ruckig] ✗ Ruckig service {ruckig_service_name} NOT available after 5s!')
         robot_controller.get_logger().error('[Ruckig]    Is ruckig_helper node running? Check: ros2 node list | grep ruckig')
-        _fallback_to_totg('/apply_ruckig service unavailable')
+        _fallback_to_totg(f'{ruckig_service_name} service unavailable')
         return
 
     robot_controller.get_logger().info('[Ruckig] ✓ Ruckig service is available')

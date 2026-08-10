@@ -139,14 +139,6 @@ public:
     ContourIKHelperNode() : Node("contour_ik_helper")
     {
         RCLCPP_INFO(this->get_logger(), "Contour IK helper starting...");
-        service_ = this->create_service<ComputeContourIK>(
-            "/compute_contour_ik",
-            std::bind(
-                &ContourIKHelperNode::computeContourIK,
-                this,
-                std::placeholders::_1,
-                std::placeholders::_2));
-        RCLCPP_INFO(this->get_logger(), "Service '/compute_contour_ik' created");
     }
 
    void initialize()
@@ -207,6 +199,8 @@ public:
         );
     }
 
+    advertiseService();
+
     RCLCPP_INFO(
         this->get_logger(),
         "Contour IK helper ready with local PlanningScene"
@@ -240,6 +234,19 @@ private:
     std::shared_ptr<
     planning_scene_monitor::PlanningSceneMonitor
     > planning_scene_monitor_;
+
+    void advertiseService()
+    {
+        service_ = this->create_service<ComputeContourIK>(
+            "/compute_contour_ik",
+            std::bind(
+                &ContourIKHelperNode::computeContourIK,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2));
+
+        RCLCPP_INFO(this->get_logger(), "Service '/compute_contour_ik' created");
+    }
 
     void fail(
         const std::shared_ptr<ComputeContourIK::Response>& response,

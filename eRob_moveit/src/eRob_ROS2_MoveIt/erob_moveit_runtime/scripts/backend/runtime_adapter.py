@@ -299,7 +299,10 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         return self._switch_drive_set_controllers(robot_controller, activate=False)
 
     def _switch_drive_set_controllers(self, robot_controller, *, activate: bool) -> bool:
-        controller_states = robot_controller._get_controller_states()
+        if activate:
+            controller_states = self._wait_for_drive_set_controllers_loaded(robot_controller, timeout_s=8.0)
+        else:
+            controller_states = robot_controller._get_controller_states()
         if controller_states is None:
             return False
         if not robot_controller.switch_controller_client.wait_for_service(timeout_sec=2.0):
@@ -348,6 +351,40 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             )
             return False
         return True
+
+    def _wait_for_drive_set_controllers_loaded(self, robot_controller, timeout_s: float) -> dict[str, str] | None:
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        missing_logged = None
+        last_states = None
+
+        while True:
+            controller_states = robot_controller._get_controller_states()
+            if controller_states is None:
+                return None
+            last_states = controller_states
+
+            missing = [
+                name for name in self._DRIVE_SET_CONTROLLER_NAMES
+                if name not in controller_states
+            ]
+            if not missing:
+                return controller_states
+
+            missing_key = tuple(missing)
+            if missing_key != missing_logged:
+                robot_controller.get_logger().info(
+                    f"[DriveEnable] Waiting for set controllers to load: missing={missing}"
+                )
+                missing_logged = missing_key
+
+            if time.monotonic() >= deadline:
+                robot_controller.get_logger().error(
+                    "[DriveEnable] Timed out waiting for set controllers to load: "
+                    f"missing={missing} loaded={sorted(controller_states.keys())}"
+                )
+                return None
+
+            time.sleep(0.1)
 
     def _drive_state_callback(self, robot_controller, msg: DynamicJointState):
         if robot_controller._runtime_dynamic_input_period > 0.0:

@@ -452,6 +452,8 @@ pin_non_rt_away() {
     ipp_helper
     ruckig_helper
     contour_ik_helper
+    ptp_helper
+    linked_lin_helper
     "main.py"
     spawner
     static_transform
