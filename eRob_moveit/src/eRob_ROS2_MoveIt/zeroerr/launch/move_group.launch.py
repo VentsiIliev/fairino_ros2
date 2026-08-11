@@ -69,7 +69,8 @@ def generate_launch_description():
     )
 
     non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
-    non_rt_prefix = f"taskset -c {non_rt_cores}"
+    planner_cores = os.environ.get("ZEROERR_PLANNER_CORES", non_rt_cores)
+    planner_prefix = f"taskset -c {planner_cores}"
 
     ld = LaunchDescription()
     ld.add_action(DeclareBooleanLaunchArg("debug", default_value=False))
@@ -113,7 +114,7 @@ def generate_launch_description():
             package="moveit_ros_move_group",
             executable="move_group",
             output="screen",
-            prefix=non_rt_prefix,
+            prefix=planner_prefix,
             parameters=[
                 moveit_config.to_dict(),
                 move_group_configuration,

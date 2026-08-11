@@ -13,6 +13,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 StateValidityFn = Callable[[list[str], list[float]], Any]
+BatchStateValidityFn = Callable[[list[str], list[list[float]]], Any]
 
 
 @dataclass(frozen=True)
@@ -53,9 +54,16 @@ def joint_path_distances(trajectory) -> list[float]:
 
 
 class BlendBuilder:
-    def __init__(self, logger, state_validity_fn: StateValidityFn, config: BlendBuilderConfig | None = None):
+    def __init__(
+        self,
+        logger,
+        state_validity_fn: StateValidityFn,
+        config: BlendBuilderConfig | None = None,
+        batch_state_validity_fn: BatchStateValidityFn | None = None,
+    ):
         self._logger = logger
         self._state_validity_fn = state_validity_fn
+        self._batch_state_validity_fn = batch_state_validity_fn
         self._config = config or BlendBuilderConfig()
 
     def _blend_trim_fraction(self, radius_mm: float, cartesian_length_mm: float) -> float:
@@ -242,27 +250,55 @@ class BlendBuilder:
             blends.append(blend_positions)
 
         validation_started = perf_counter()
-        for junction, blend_positions in enumerate(blends):
-            for sample_index, q in enumerate(blend_positions):
-                validity = self._state_validity_fn(joint_names, q)
-                if bool(getattr(validity, "valid", False)):
-                    continue
+        batch_validated = False
+        if self._batch_state_validity_fn is not None:
+            flat_blend_positions = []
+            sample_locations = []
+            for junction, blend_positions in enumerate(blends):
+                for sample_index, q in enumerate(blend_positions):
+                    flat_blend_positions.append(q)
+                    sample_locations.append((junction, sample_index))
 
-                contacts = []
-                for contact in list(getattr(validity, "contacts", []) or []):
-                    body_1 = str(
-                        getattr(contact, "contact_body_1", "")
-                        or getattr(contact, "body_name_1", "")
+            try:
+                validity = self._batch_state_validity_fn(joint_names, flat_blend_positions)
+                batch_validated = True
+                if not bool(getattr(validity, "valid", False)):
+                    failed_index = int(getattr(validity, "failed_index", 0) or 0)
+                    failed_index = max(0, min(failed_index, len(sample_locations) - 1))
+                    junction, sample_index = sample_locations[failed_index]
+                    message = str(getattr(validity, "message", "") or "").strip()
+                    detail = f" {message}" if message else ""
+                    raise RuntimeError(
+                        f"Blend junction {junction + 1} sample {sample_index}/{sample_count} is invalid{detail}"
                     )
-                    body_2 = str(
-                        getattr(contact, "contact_body_2", "")
-                        or getattr(contact, "body_name_2", "")
-                    )
-                    if body_1 or body_2:
-                        contacts.append(f"{body_1}<->{body_2}" if body_1 and body_2 else body_1 or body_2)
+            except TimeoutError:
+                self._logger.warning(
+                    "[OrderedBlend] Batch state validation unavailable; falling back to per-state validation"
+                )
+                batch_validated = False
 
-                detail = f" contacts={contacts}" if contacts else ""
-                raise RuntimeError(f"Blend junction {junction + 1} sample {sample_index}/{sample_count} is invalid{detail}")
+        if not batch_validated:
+            for junction, blend_positions in enumerate(blends):
+                for sample_index, q in enumerate(blend_positions):
+                    validity = self._state_validity_fn(joint_names, q)
+                    if bool(getattr(validity, "valid", False)):
+                        continue
+
+                    contacts = []
+                    for contact in list(getattr(validity, "contacts", []) or []):
+                        body_1 = str(
+                            getattr(contact, "contact_body_1", "")
+                            or getattr(contact, "body_name_1", "")
+                        )
+                        body_2 = str(
+                            getattr(contact, "contact_body_2", "")
+                            or getattr(contact, "body_name_2", "")
+                        )
+                        if body_1 or body_2:
+                            contacts.append(f"{body_1}<->{body_2}" if body_1 and body_2 else body_1 or body_2)
+
+                    detail = f" contacts={contacts}" if contacts else ""
+                    raise RuntimeError(f"Blend junction {junction + 1} sample {sample_index}/{sample_count} is invalid{detail}")
 
         merged = JointTrajectory()
         merged.joint_names = list(joint_names)
@@ -340,6 +376,51 @@ def wait_moveit_state_validity(
     raise TimeoutError("MoveIt state-validity request timed out")
 
 
+def wait_moveit_trajectory_state_validation(
+    planning_node,
+    config_obj,
+    joint_names,
+    joint_positions_batch,
+    timeout_s: float = 2.0,
+):
+    """Call the C++ batch trajectory-state validator for ordered blend samples."""
+
+    from erob_moveit_runtime.srv import ValidateTrajectoryStates
+
+    client_getter = getattr(planning_node, "get_trajectory_state_validation_client", None)
+    if client_getter is None:
+        raise TimeoutError("trajectory-state validation client unavailable")
+
+    client = client_getter()
+    if client is None or not client.wait_for_service(timeout_sec=0.05):
+        raise TimeoutError("trajectory-state validation service unavailable")
+
+    request = ValidateTrajectoryStates.Request()
+    request.joint_names = list(joint_names)
+    request.state_count = len(joint_positions_batch)
+    request.positions = [
+        float(value)
+        for joint_positions in joint_positions_batch
+        for value in joint_positions
+    ]
+    request.group_name = str(config_obj.PLANNING_GROUP)
+    request.check_collisions = bool(getattr(config_obj, "ORDERED_BLEND_BATCH_CHECK_COLLISIONS", True))
+    request.max_workers = int(getattr(config_obj, "ORDERED_BLEND_BATCH_VALIDATION_WORKERS", 4))
+
+    future = client.call_async(request)
+    deadline = time.monotonic() + float(timeout_s)
+    while time.monotonic() < deadline:
+        if future.done():
+            result = future.result()
+            if result is None or not bool(getattr(result, "success", False)):
+                message = str(getattr(result, "message", "") if result is not None else "")
+                raise RuntimeError(f"trajectory-state validation failed: {message or 'unknown error'}")
+            return result
+        time.sleep(0.001)
+
+    raise TimeoutError("trajectory-state validation request timed out")
+
+
 def build_ordered_blend_builder(planning_node, config_obj) -> BlendBuilder:
     """Create the ordered-chain blend builder from runtime config."""
 
@@ -363,6 +444,19 @@ def build_ordered_blend_builder(planning_node, config_obj) -> BlendBuilder:
             ),
             sample_count=int(getattr(config_obj, "ORDERED_BLEND_SAMPLES", 12)),
         ),
+        batch_state_validity_fn=(
+            lambda joint_names, joint_positions_batch: wait_moveit_trajectory_state_validation(
+                planning_node,
+                config_obj,
+                joint_names,
+                joint_positions_batch,
+                timeout_s=float(
+                    getattr(config_obj, "ORDERED_BLEND_BATCH_VALIDATION_TIMEOUT_S", 2.0)
+                ),
+            )
+        )
+        if bool(getattr(config_obj, "ORDERED_BLEND_BATCH_VALIDATION_ENABLED", True))
+        else None,
     )
 
 
@@ -371,6 +465,7 @@ __all__ = [
     "BlendBuilderConfig",
     "build_ordered_blend_builder",
     "joint_path_distances",
+    "wait_moveit_trajectory_state_validation",
     "wait_moveit_state_validity",
     "xyz_distance_mm",
 ]

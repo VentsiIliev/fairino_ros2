@@ -230,6 +230,14 @@ def generate_launch_description():
         parameters=helper_parameters,
     )
 
+    trajectory_state_validator_node = Node(
+        package="erob_moveit_runtime",
+        executable="trajectory_state_validator",
+        name="trajectory_state_validator",
+        output="screen",
+        parameters=helper_parameters,
+    )
+
     return LaunchDescription([
         SetEnvironmentVariable("EROB_CONFIG_PACKAGE", "zeroerr"),
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
@@ -248,5 +256,6 @@ def generate_launch_description():
         ruckig_helper_node,
         contour_ik_helper_node,
         linked_lin_helper_node,
+        trajectory_state_validator_node,
         wait_for_op_process,
     ])

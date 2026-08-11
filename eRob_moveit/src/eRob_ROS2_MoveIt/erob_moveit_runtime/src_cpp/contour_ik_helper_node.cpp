@@ -731,40 +731,53 @@ private:
         double timeout_s,
         double max_step_rad,
         std::vector<double>& candidate_positions,
-        TimingStats* timing_stats = nullptr)
+        TimingStats* timing_stats = nullptr,
+        bool use_continuity_callback = true)
     {
         setVariablePositionsByIndex(state, variable_indices, seed_positions);
         state.update();
-
-        moveit::core::GroupStateValidityCallbackFn local_continuity_cb =
-            [&](moveit::core::RobotState* candidate_state,
-                const moveit::core::JointModelGroup*,
-                const double*) -> bool
-            {
-                double max_delta = 0.0;
-
-                for (std::size_t j = 0; j < variable_indices.size(); ++j)
-                {
-                    double value = candidate_state->getVariablePosition(variable_indices[j]);
-                    value = nearestEquivalentAngle(previous_positions[j], value);
-                    max_delta = std::max(max_delta, std::abs(value - previous_positions[j]));
-                }
-
-                // Reject this IK candidate and let solver keep searching.
-                return max_delta <= max_step_rad;
-            };
 
         if (timing_stats)
         {
             timing_stats->candidate_attempts += 1;
         }
         const double ik_started_s = steadySeconds();
-        const bool ok = state.setFromIK(
-            joint_model_group,
-            pose,
-            link_name,
-            timeout_s,
-            local_continuity_cb);
+        bool ok = false;
+        if (use_continuity_callback)
+        {
+            moveit::core::GroupStateValidityCallbackFn local_continuity_cb =
+                [&](moveit::core::RobotState* candidate_state,
+                    const moveit::core::JointModelGroup*,
+                    const double*) -> bool
+                {
+                    double max_delta = 0.0;
+
+                    for (std::size_t j = 0; j < variable_indices.size(); ++j)
+                    {
+                        double value = candidate_state->getVariablePosition(variable_indices[j]);
+                        value = nearestEquivalentAngle(previous_positions[j], value);
+                        max_delta = std::max(max_delta, std::abs(value - previous_positions[j]));
+                    }
+
+                    // Reject this IK candidate and let solver keep searching.
+                    return max_delta <= max_step_rad;
+                };
+
+            ok = state.setFromIK(
+                joint_model_group,
+                pose,
+                link_name,
+                timeout_s,
+                local_continuity_cb);
+        }
+        else
+        {
+            ok = state.setFromIK(
+                joint_model_group,
+                pose,
+                link_name,
+                timeout_s);
+        }
         if (timing_stats)
         {
             timing_stats->ik_s += steadySeconds() - ik_started_s;
@@ -781,6 +794,22 @@ private:
                 max_step_rad,
                 candidate_positions))
         {
+            if (!use_continuity_callback)
+            {
+                return solveLocalIKCandidate(
+                    state,
+                    joint_model_group,
+                    pose,
+                    link_name,
+                    variable_indices,
+                    previous_positions,
+                    seed_positions,
+                    timeout_s,
+                    max_step_rad,
+                    candidate_positions,
+                    timing_stats,
+                    true);
+            }
             return false;
         }
         if (timing_stats)
@@ -847,7 +876,8 @@ private:
                     timeout_s,
                     max_step_rad,
                     candidate_positions,
-                    timing_stats))
+                    timing_stats,
+                    score_all_candidates))
             {
                 if (timing_stats)
                 {

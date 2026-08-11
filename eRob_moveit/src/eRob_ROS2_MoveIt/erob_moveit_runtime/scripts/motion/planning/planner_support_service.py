@@ -9,6 +9,7 @@ class PlannerSupportService:
         self._ik_client = None
         self._contour_ik_client = None
         self._linked_lin_client = None
+        self._trajectory_state_validation_client = None
         self._state_validity_client = None
         self._ptp_client = None
 
@@ -45,6 +46,22 @@ class PlannerSupportService:
             )
 
         return self._linked_lin_client
+
+    def get_trajectory_state_validation_client(self):
+        if self._trajectory_state_validation_client is None:
+            import config
+            from erob_moveit_runtime.srv import ValidateTrajectoryStates
+
+            self._trajectory_state_validation_client = self._node.create_client(
+                ValidateTrajectoryStates,
+                getattr(
+                    config,
+                    "SERVICE_TRAJECTORY_STATE_VALIDATION",
+                    "/validate_trajectory_states",
+                ),
+            )
+
+        return self._trajectory_state_validation_client
 
     def get_state_validity_client(self):
         if self._state_validity_client is None:

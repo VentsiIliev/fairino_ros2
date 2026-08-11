@@ -1,0 +1,14 @@
+string[] joint_names
+float64[] positions
+uint32 state_count
+string group_name
+bool check_collisions
+uint32 max_workers
+---
+bool success
+bool valid
+int32 error_code
+string message
+uint32 failed_index
+uint32 states_checked
+float64 validation_time_s

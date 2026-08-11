@@ -197,6 +197,9 @@ class PlannerContext:
     def get_linked_lin_client(self):
         return self._planner_support.get_linked_lin_client()
 
+    def get_trajectory_state_validation_client(self):
+        return self._planner_support.get_trajectory_state_validation_client()
+
     def get_state_validity_client(self):
         return self._planner_support.get_state_validity_client()
 

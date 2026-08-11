@@ -181,8 +181,11 @@ def generate_launch_description():
     os.environ["DISPLAY"] = os.environ.get("DISPLAY", ":1")
     ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
     non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
+    planner_cores = os.environ.get("ZEROERR_PLANNER_CORES", non_rt_cores)
+    low_priority_cores = os.environ.get("ZEROERR_LOW_PRIORITY_CORES", non_rt_cores)
     non_rt_prefix = f"taskset -c {non_rt_cores}"
-    low_priority_non_rt_prefix = f"taskset -c {non_rt_cores} nice -n 19"
+    planner_prefix = f"taskset -c {planner_cores}"
+    low_priority_non_rt_prefix = f"taskset -c {low_priority_cores} nice -n 19"
 
     package_path = get_package_share_directory("zeroerr")
     urdf_path = _urdf_path_from_runtime(package_path)
@@ -263,7 +266,7 @@ def generate_launch_description():
         executable="move_group",
         name="move_group",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
         parameters=[
             moveit_config.to_dict(),
             move_group_configuration,
@@ -278,7 +281,7 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz",
         output="log",
-        prefix=non_rt_prefix,
+        prefix=low_priority_non_rt_prefix,
         arguments=["-d", rviz_config],
         parameters=[
             moveit_config.robot_description,
@@ -431,7 +434,7 @@ def generate_launch_description():
         executable="ipp_helper",
         name="ipp_helper",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -445,7 +448,7 @@ def generate_launch_description():
         executable="ruckig_helper",
         name="ruckig_helper",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -459,7 +462,7 @@ def generate_launch_description():
         executable="contour_ik_helper",
         name="contour_ik_helper",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -473,7 +476,7 @@ def generate_launch_description():
         executable="ptp_helper",
         name="ptp_helper",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -487,7 +490,21 @@ def generate_launch_description():
         executable="linked_lin_helper",
         name="linked_lin_helper",
         output="screen",
-        prefix=non_rt_prefix,
+        prefix=planner_prefix,
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+        ],
+    )
+
+    trajectory_state_validator_node = Node(
+        package="erob_moveit_runtime",
+        executable="trajectory_state_validator",
+        name="trajectory_state_validator",
+        output="screen",
+        prefix=planner_prefix,
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
@@ -521,6 +538,7 @@ def generate_launch_description():
         emulate_tty=True,
         additional_env={
             "EROB_RUNTIME_HEADLESS": str(_runtime_value(package_path, "RUNTIME_HEADLESS", "0")),
+            "ZEROERR_USE_RVIZ": LaunchConfiguration("use_rviz"),
         },
         prefix=non_rt_prefix,
     )
@@ -573,6 +591,7 @@ def generate_launch_description():
     demo_ld.add_action(TimerAction(period=8.0, actions=[contour_ik_helper_node]))
     demo_ld.add_action(TimerAction(period=8.5, actions=[ptp_helper_node]))
     demo_ld.add_action(TimerAction(period=9.0, actions=[linked_lin_helper_node]))
+    demo_ld.add_action(TimerAction(period=9.5, actions=[trajectory_state_validator_node]))
 
     delayed_zeroerr_actions = [
         TimerAction(period=10.0, actions=[ethercat_sdo_server]),

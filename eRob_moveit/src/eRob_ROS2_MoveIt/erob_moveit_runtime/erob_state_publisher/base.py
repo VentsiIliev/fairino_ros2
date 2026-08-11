@@ -180,6 +180,14 @@ class CartesianPublisherBase(Node):
         )
         self._joint_acceleration_enabled = self._joint_acc_pub is not None
         self._joint_jerk_enabled = self._joint_jerk_pub is not None
+        self._joint_derivative_processing_enabled = (
+            self._joint_vel_pub is not None
+            or self._joint_acceleration_enabled
+            or self._joint_jerk_enabled
+            or self._cartesian_velocity_enabled
+            or self._cartesian_acceleration_enabled
+            or self._cartesian_jerk_enabled
+        )
 
         # ── Joint-state tracking ──────────────────────────────────────────────
         self._joint_positions: Optional[np.ndarray] = None
@@ -271,6 +279,11 @@ class CartesianPublisherBase(Node):
             return
 
         positions = np.array(msg.position[:6])
+        if not self._joint_derivative_processing_enabled:
+            self._joint_positions = positions
+            self._prev_positions = positions
+            self._prev_joint_time = now
+            return
 
         # Prefer velocity field from message if populated
         if msg.velocity and len(msg.velocity) >= 6:

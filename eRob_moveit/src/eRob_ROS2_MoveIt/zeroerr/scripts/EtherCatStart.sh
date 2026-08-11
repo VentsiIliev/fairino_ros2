@@ -11,6 +11,8 @@ CONTROL_CORES="${ZEROERR_CONTROL_CORES:-15}"
 
 PIN_NON_RT_AWAY="${ZEROERR_PIN_NON_RT_AWAY:-0}"
 NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}"
+PLANNER_CORES="${ZEROERR_PLANNER_CORES:-$NON_RT_CORES}"
+LOW_PRIORITY_CORES="${ZEROERR_LOW_PRIORITY_CORES:-$NON_RT_CORES}"
 
 RT_PRIORITY=90
 AFFINITY_CHECK_PERIOD_S="${ZEROERR_AFFINITY_CHECK_PERIOD_S:-2}"
@@ -441,7 +443,25 @@ pin_ros2_control() {
 pin_non_rt_away() {
   local quiet="${1:-0}"
   local non_rt_cores="$NON_RT_CORES"
-    local procs=(
+  local planner_cores="$PLANNER_CORES"
+  local low_priority_cores="$LOW_PRIORITY_CORES"
+  local planner_procs=(
+    move_group
+    ipp_helper
+    ruckig_helper
+    contour_ik_helper
+    ptp_helper
+    linked_lin_helper
+    trajectory_state_validator
+  )
+  local low_priority_procs=(
+    rviz2
+    zeroerr_error_monitor.py
+    zeroerr_drive_diagnostics.py
+    ethercat_sdo_srv_server
+    "main.py"
+  )
+  local procs=(
     move_group
     rviz2
     zeroerr_runtime.py
@@ -454,6 +474,7 @@ pin_non_rt_away() {
     contour_ik_helper
     ptp_helper
     linked_lin_helper
+    trajectory_state_validator
     "main.py"
     spawner
     static_transform
@@ -465,17 +486,32 @@ pin_non_rt_away() {
     return 0
   fi
   if [ "$quiet" != "1" ]; then
-    echo "Pinning non-RT ROS2 processes away from RT cores (→ cores $non_rt_cores)..."
+    echo "Pinning non-RT ROS2 processes away from RT cores (general=$non_rt_cores, planner=$planner_cores, low=$low_priority_cores)..."
   fi
   local pid=""
   local args=""
   while read -r pid args; do
+    local target_cores="$non_rt_cores"
+    local proc=""
+    for proc in "${planner_procs[@]}"; do
+      if [[ "$args" == *"$proc"* ]]; then
+        target_cores="$planner_cores"
+        break
+      fi
+    done
+    for proc in "${low_priority_procs[@]}"; do
+      if [[ "$args" == *"$proc"* ]]; then
+        target_cores="$low_priority_cores"
+        break
+      fi
+    done
+
     local proc=""
     for proc in "${procs[@]}"; do
       if [[ "$args" == *"$proc"* ]]; then
         for task_path in /proc/"$pid"/task/*; do
           [ -d "$task_path" ] || continue
-          ensure_affinity "$non_rt_cores" "${task_path##*/}"
+          ensure_affinity "$target_cores" "${task_path##*/}"
         done
         break
       fi

@@ -1378,14 +1378,14 @@ class TrajectoryExecutor:
             mark_move_linear_timing(self._node, "controller_prepare_start", points=len(getattr(joint_trajectory, "points", []) or []))
         except Exception:
             pass
-        # drive_check_started_at = time.perf_counter()
-        # if not self._ensure_drive_enabled_before_trajectory(
-        #     suppress_drive_disable_cancel=suppress_drive_disable_cancel,
-        # ):
-        #     self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
-        #     with self._motion.lock:
-        #         self._motion.is_executing = False
-        #     return
+        drive_check_started_at = time.perf_counter()
+        if not self._ensure_drive_enabled_before_trajectory(
+            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
+        ):
+            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
+            with self._motion.lock:
+                self._motion.is_executing = False
+            return
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "drive_check_done", duration_s=time.perf_counter() - drive_check_started_at)

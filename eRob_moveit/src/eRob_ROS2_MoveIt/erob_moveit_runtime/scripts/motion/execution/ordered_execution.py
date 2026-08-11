@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from time import perf_counter
 import time
 from typing import Any, Callable
@@ -198,6 +199,135 @@ def build_ordered_planned_segment_executor(
 
 def _duration_to_seconds(duration_msg: Any) -> float:
     return float(duration_msg.sec) + float(duration_msg.nanosec) / 1e9
+
+
+def _set_duration_from_seconds(duration_msg: Any, seconds: float) -> None:
+    total_nanosec = int(round(max(0.0, float(seconds)) * 1e9))
+    duration_msg.sec = total_nanosec // 1_000_000_000
+    duration_msg.nanosec = total_nanosec % 1_000_000_000
+
+
+def _scale_optional_sequence(values: Any, scale: float) -> Any:
+    if not values:
+        return values
+    return [float(value) * float(scale) for value in values]
+
+
+def _configured_joint_rate_limits() -> dict[str, float]:
+    try:
+        import config
+    except Exception:
+        return {}
+
+    raw_limits = getattr(config, "ORDERED_BLEND_JOINT_RATE_LIMITS_RAD_S", {}) or {}
+    if not isinstance(raw_limits, dict):
+        return {}
+
+    limits = {}
+    for raw_name, raw_limit in raw_limits.items():
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        try:
+            limit = float(raw_limit)
+        except (TypeError, ValueError):
+            continue
+        if limit > 0.0 and math.isfinite(limit):
+            limits[name] = limit
+    return limits
+
+
+def _ordered_blend_rate_guard_enabled() -> bool:
+    try:
+        import config
+    except Exception:
+        return True
+    return bool(getattr(config, "ORDERED_BLEND_JOINT_RATE_GUARD_ENABLED", True))
+
+
+def _maybe_stretch_ordered_blend_joint_rates(joint_trajectory: Any, logger: Any) -> None:
+    """Stretch a timed blended trajectory if configured joint interval rates are too high."""
+
+    if not _ordered_blend_rate_guard_enabled():
+        return
+
+    points = list(getattr(joint_trajectory, "points", []) or [])
+    joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+    if len(points) < 2 or not joint_names:
+        return
+
+    limits = _configured_joint_rate_limits()
+    peak_rate = 0.0
+    peak_joint = ""
+    peak_segment = 0
+    peak_dt = 0.0
+    peak_delta = 0.0
+
+    required_scale = 1.0
+    limited_joint = ""
+    limited_rate = 0.0
+    limited_limit = 0.0
+    limited_segment = 0
+
+    for segment_index, (previous, current) in enumerate(zip(points, points[1:]), start=1):
+        prev_t = _duration_to_seconds(previous.time_from_start)
+        current_t = _duration_to_seconds(current.time_from_start)
+        dt = current_t - prev_t
+        if dt <= 1e-9:
+            continue
+
+        previous_positions = list(getattr(previous, "positions", []) or [])
+        current_positions = list(getattr(current, "positions", []) or [])
+        if len(previous_positions) != len(joint_names) or len(current_positions) != len(joint_names):
+            continue
+
+        for joint_index, joint_name in enumerate(joint_names):
+            delta = abs(float(current_positions[joint_index]) - float(previous_positions[joint_index]))
+            rate = delta / dt
+            if rate > peak_rate:
+                peak_rate = rate
+                peak_joint = str(joint_name)
+                peak_segment = segment_index
+                peak_dt = dt
+                peak_delta = delta
+
+            limit = limits.get(str(joint_name))
+            if limit is None:
+                continue
+            scale = rate / limit
+            if scale > required_scale:
+                required_scale = scale
+                limited_joint = str(joint_name)
+                limited_rate = rate
+                limited_limit = limit
+                limited_segment = segment_index
+
+    if peak_joint:
+        logger.info(
+            f"[OrderedBlend] Timed trajectory peak interval rate "
+            f"{peak_joint}={peak_rate:.3f}rad/s "
+            f"segment={peak_segment} dt={peak_dt:.3f}s delta={peak_delta:.4f}rad"
+        )
+
+    if required_scale <= 1.001:
+        return
+
+    for point in points:
+        t = _duration_to_seconds(point.time_from_start)
+        _set_duration_from_seconds(point.time_from_start, t * required_scale)
+        point.velocities = _scale_optional_sequence(point.velocities, 1.0 / required_scale)
+        point.accelerations = _scale_optional_sequence(
+            point.accelerations,
+            1.0 / (required_scale * required_scale),
+        )
+
+    logger.warning(
+        f"[OrderedBlend] Stretched blended trajectory timing by {required_scale:.2f}x "
+        f"to respect {limited_joint} rate limit "
+        f"(peak {limited_rate:.3f}rad/s > {limited_limit:.3f}rad/s "
+        f"at segment={limited_segment}); "
+        f"new_duration={_duration_to_seconds(points[-1].time_from_start):.3f}s"
+    )
 
 
 def ordered_trajectory_point_match_error(
@@ -608,6 +738,11 @@ def execute_ordered_planned_segment(
             )
             result = 0
         else:
+            if segment_type == "blended":
+                _maybe_stretch_ordered_blend_joint_rates(
+                    planned_segment["trajectory"],
+                    controller_hooks.logger,
+                )
             timing = ordered_trajectory_timing(
                 planned_segment["trajectory"],
                 min_timeout_s=min_timeout_s,

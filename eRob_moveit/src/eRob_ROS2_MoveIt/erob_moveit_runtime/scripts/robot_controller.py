@@ -119,10 +119,22 @@ class RobotController(Node):
             config.TOPIC_PLANNING_SCENE,
             10,
         )
-        self.active_tool_marker_timer = self.create_timer(
-            0.1,
-            self._publish_active_tool_visualization,
-        )
+        self.active_tool_marker_timer = None
+        rviz_enabled = os.environ.get("ZEROERR_USE_RVIZ", "false").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        active_tool_marker_hz = float(getattr(config, "ACTIVE_TOOL_MARKER_PUBLISH_HZ", 1.0) or 0.0)
+        if rviz_enabled and active_tool_marker_hz > 0.0:
+            self.active_tool_marker_timer = self.create_timer(
+                1.0 / active_tool_marker_hz,
+                self._publish_active_tool_visualization,
+            )
+            self.get_logger().info(
+                f'[ActiveTCP] Visualization marker publishing at {active_tool_marker_hz:.1f} Hz'
+            )
+        else:
+            reason = "RViz disabled" if not rviz_enabled else "configured rate <= 0"
+            self.get_logger().info(f'[ActiveTCP] Visualization marker publishing disabled ({reason})')
 
         # Motion queue for sequential execution
         self.motion_queue = MotionQueue(max_size=MOTION_QUEUE_MAX_SIZE)
@@ -825,6 +837,9 @@ class RobotController(Node):
 
     def get_linked_lin_client(self):
         return self.planner_context.get_linked_lin_client()
+
+    def get_trajectory_state_validation_client(self):
+        return self.planner_context.get_trajectory_state_validation_client()
 
     def get_state_validity_client(self):
         return self.planner_context.get_state_validity_client()
