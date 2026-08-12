@@ -117,7 +117,11 @@ def start_state_websocket_server(
 
     async def state_handler(connection):
         request_obj = getattr(connection, "request", None)
-        request_path = str(getattr(request_obj, "path", "") or "")
+        request_path = str(
+            getattr(request_obj, "path", "")
+            or getattr(connection, "path", "")
+            or ""
+        )
         path_only = request_path.split("?", 1)[0]
         if path_only != "/ws/state":
             await connection.close(code=1008, reason="unsupported websocket path")

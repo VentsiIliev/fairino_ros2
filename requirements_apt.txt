@@ -26,6 +26,7 @@ python3-requests
 python3-rosdep
 python3-scipy
 python3-vcstool
+python3-websockets
 ros-jazzy-ament-cmake
 ros-jazzy-ament-cmake-gmock
 ros-jazzy-ament-cmake-gtest

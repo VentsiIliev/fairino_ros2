@@ -3,6 +3,7 @@
 # Server-side (requires ROS2 environment)
 Flask==3.0.0
 Flask-CORS==4.0.0  # If you need cross-origin requests
+websockets>=12.0
 
 # Client-side (NO ROS2 required!)
 requests==2.31.0
