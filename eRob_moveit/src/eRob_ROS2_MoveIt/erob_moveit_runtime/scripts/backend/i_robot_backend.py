@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo
+
 
 class IRobotBackend(ABC):
     @abstractmethod
@@ -57,6 +59,11 @@ class IRobotBackend(ABC):
 
     @abstractmethod
     def start_jog(self, axis, direction, step, vel, acc): ...
+
+    @property
+    @abstractmethod
+    def cartesian_servo(self) -> CartesianServo | None:
+        ...
 
     @abstractmethod
     def stop_motion(self): ...

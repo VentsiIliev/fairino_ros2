@@ -13,6 +13,7 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from werkzeug.exceptions import HTTPException
 
+from motion.servo import cartesian_servo
 from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
 from backend.i_robot_backend import IRobotBackend
@@ -60,6 +61,26 @@ OPENAPI_SPEC = {
         "/execute/ordered_motion_chain": {"post": {"tags": ["motion"], "summary": "Execute ordered motion chain"}},
         "/execute/ordered_motion_chain/status": {"get": {"tags": ["motion"], "summary": "Ordered motion chain status"}},
         "/unwind/joint6": {"post": {"tags": ["motion"], "summary": "Unwind joint 6"}},
+        "/servo/cartesian/start": {
+            "post": {
+                "tags": ["servo"],
+                "summary": "Start Cartesian Servo session",
+            }
+        },
+
+        "/servo/cartesian/update": {
+            "post": {
+                "tags": ["servo"],
+                "summary": "Update Cartesian Servo velocity command",
+            }
+        },
+
+        "/servo/cartesian/stop": {
+            "post": {
+                "tags": ["servo"],
+                "summary": "Stop Cartesian Servo session",
+            }
+        },
         "/jog": {"post": {"tags": ["motion"], "summary": "Jog along one robot axis"}},
         "/stop": {"post": {"tags": ["motion"], "summary": "Stop active motion and clear queued work"}},
         "/reachability/pose": {"post": {"tags": ["planning"], "summary": "Validate pose reachability from a start pose"}},
@@ -164,6 +185,17 @@ def _apply_openapi_details():
         },
         "/unwind/joint6": {"blocking": True, "queue_if_busy": True, "vel": 20, "acc": 20},
         "/jog": {"axis": "X", "direction": "POSITIVE", "step": 10, "vel": 10, "acc": 10},
+        "/servo/cartesian/start": {
+            "frame": "tool",
+            "tool": 1,
+        },
+
+        "/servo/cartesian/update": {
+            "linear_mm_s": [0.0, 0.0, -10.0],
+            "angular_deg_s": [0.0, 0.0, 0.0],
+        },
+
+        "/servo/cartesian/stop": {},
         "/reachability/pose": {
             "target_position": [300, 0, 300, 180, 0, 0],
             "start_position": [280, 0, 300, 180, 0, 0],
@@ -292,13 +324,13 @@ def _as_dict(value, error_message: str) -> dict:
 
 
 def start_rest_server(
-        robot: IRobotBackend | None = None,
-        node: RobotController | None = None,
-        host: str = config.REST_HOST,
-        port: int = config.REST_PORT,
-        start_ros: bool = True,
-        runtime_initializer=None,
-        allow_starting_without_robot: bool = False,
+    robot: IRobotBackend | None = None,
+    node: RobotController | None = None,
+    host: str = config.REST_HOST,
+    port: int = config.REST_PORT,
+    start_ros: bool = True,
+    runtime_initializer=None,
+    allow_starting_without_robot: bool = False,
 ):
     """
     Start REST server.
@@ -659,6 +691,24 @@ def start_rest_server(
     @app.route("/state/kinematics", methods=["GET"])
     def get_state_kinematics():
         return api_response(runtime_api.state_kinematics())
+
+    @app.route("/servo/cartesian/start", methods=["POST"])
+    def cartesian_servo_start():
+        return api_response(
+            runtime_api.cartesian_servo_start(request.json)
+        )
+
+    @app.route("/servo/cartesian/update", methods=["POST"])
+    def cartesian_servo_update():
+        return api_response(
+            runtime_api.cartesian_servo_update(request.json)
+        )
+
+    @app.route("/servo/cartesian/stop", methods=["POST"])
+    def cartesian_servo_stop():
+        return api_response(
+            runtime_api.cartesian_servo_stop()
+        )
 
     @app.route("/jog", methods=["POST"])
     def jog():

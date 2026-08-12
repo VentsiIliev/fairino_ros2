@@ -6,6 +6,7 @@ import time
 import traceback
 import config
 from backend.i_robot_backend import IRobotBackend
+from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo
 
 
 class MoveItRobotBackend(IRobotBackend):
@@ -14,7 +15,7 @@ class MoveItRobotBackend(IRobotBackend):
     Provides motion control, I/O operations, and coordinate frame management.
     """
 
-    def __init__(self, ip, node=None, workobject=None):
+    def __init__(self, ip, node=None, workobject=None,cartesian_servo=None):
         """
         Initializes the ROS2 robot wrapper.
 
@@ -27,6 +28,7 @@ class MoveItRobotBackend(IRobotBackend):
         self.node = node  # embeds the RobotController node
         self.workobject = workobject  # Default WorkObject frame (user=0)
         self.workobject_registry = {0: workobject}  # Registry of work objects by user ID
+        self._cartesian_servo = cartesian_servo
 
     # ---------------- WorkObject Methods ----------------
     def set_workobject(self, workobject, user_id=0):
@@ -1426,6 +1428,10 @@ class MoveItRobotBackend(IRobotBackend):
         except Exception as e:
             self.node.get_logger().error(f"Jog error: {e}")
             return -1
+
+    @property
+    def cartesian_servo(self) -> CartesianServo | None :
+        return self._cartesian_servo
 
     @staticmethod
     def _rotational_jog_max_step_deg():

@@ -1,229 +1,242 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from enum import Enum
-from typing import Sequence
+import logging
+import threading
+import time
+
+from motion.servo.cartesian_servo.i_cartesian_servo import (
+    CartesianServo,
+    CartesianServoCommand,
+    CartesianServoFrame,
+)
 
 
-class CartesianServoFrame(str, Enum):
-    BASE = "base"
-    TOOL = "tool"
-
-
-class CartesianServoState(str, Enum):
-    STOPPED = "stopped"
-    RUNNING = "running"
-    ERROR = "error"
-
-
-class CartesianServoResult(str, Enum):
-    OK = "ok"
-
-    ALREADY_RUNNING = "already_running"
-    NOT_STARTED = "not_started"
-
-    START_FAILED = "start_failed"
-    UPDATE_FAILED = "update_failed"
-    STOP_FAILED = "stop_failed"
-
-    INVALID_COMMAND = "invalid_command"
-
-
-@dataclass(frozen=True)
-class CartesianServoCommand:
-    linear_mm_s: tuple[float, float, float]
-    angular_deg_s: tuple[float, float, float]
-
-
-@dataclass(frozen=True)
-class CartesianServoStatus:
-    state: CartesianServoState
-    frame: CartesianServoFrame | None
-    tool: int | None
-    command: CartesianServoCommand | None
-    error: str | None = None
-
-
-class CartesianServo(ABC):
+class DummyCartesianServo(CartesianServo):
     """
-    Base Cartesian servo state machine.
+    Dummy Cartesian Servo implementation.
 
-    Public methods are intentionally non-overridable by convention.
+    Simulates the behavior expected from the real MoveIt Cartesian Servo:
 
-    Implementations provide only:
+        start()
+            Starts a Cartesian servo session.
 
-        _start_impl()
-        _update_impl()
-        _stop_impl()
+        update()
+            Replaces the current velocity command.
 
-    This guarantees identical lifecycle semantics for MoveIt, Dummy,
-    and any future Cartesian Servo implementation.
+        stop()
+            Stops Cartesian motion by changing the internally published
+            command to zero.
+
+    A background worker remains alive for the lifetime of this object and
+    simulates continuously publishing the latest command at publish_rate_hz.
+
+    This means REST/API clients only need to send update() when the desired
+    command changes. They do not need to continuously stream commands.
     """
 
-    def __init__(self) -> None:
-        self._state = CartesianServoState.STOPPED
-        self._frame: CartesianServoFrame | None = None
-        self._tool: int | None = None
-        self._command: CartesianServoCommand | None = None
-        self._error: str | None = None
-
-    # ============================================================
-    # Public API / template methods
-    # ============================================================
-
-    def start(
+    def __init__(
         self,
         *,
-        frame: CartesianServoFrame,
-        tool: int,
-    ) -> CartesianServoResult:
+        publish_rate_hz: float = 100.0,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        super().__init__()
 
-        if self._state == CartesianServoState.RUNNING:
-            return CartesianServoResult.ALREADY_RUNNING
+        if publish_rate_hz <= 0.0:
+            raise ValueError("publish_rate_hz must be > 0")
 
-        frame = CartesianServoFrame(frame)
-        tool = int(tool)
+        self._publish_rate_hz = float(publish_rate_hz)
+        self._publish_period_s = 1.0 / self._publish_rate_hz
 
-        try:
-            success = self._on_start(
-                frame=frame,
-                tool=tool,
-            )
-        except Exception as exc:
-            self._state = CartesianServoState.ERROR
-            self._error = str(exc)
-            return CartesianServoResult.START_FAILED
-
-        if not success:
-            self._state = CartesianServoState.ERROR
-            self._error = "Servo implementation failed to start"
-            return CartesianServoResult.START_FAILED
-
-        self._frame = frame
-        self._tool = tool
-        self._command = self._zero_command()
-        self._error = None
-        self._state = CartesianServoState.RUNNING
-
-        return CartesianServoResult.OK
-
-    def update(
-        self,
-        *,
-        linear_mm_s: Sequence[float],
-        angular_deg_s: Sequence[float],
-    ) -> CartesianServoResult:
-
-        if self._state != CartesianServoState.RUNNING:
-            return CartesianServoResult.NOT_STARTED
-
-        try:
-            command = CartesianServoCommand(
-                linear_mm_s=self._vector3(linear_mm_s),
-                angular_deg_s=self._vector3(angular_deg_s),
-            )
-        except (TypeError, ValueError):
-            return CartesianServoResult.INVALID_COMMAND
-
-        try:
-            success = self._on_update(command)
-        except Exception as exc:
-            self._state = CartesianServoState.ERROR
-            self._error = str(exc)
-            return CartesianServoResult.UPDATE_FAILED
-
-        if not success:
-            self._state = CartesianServoState.ERROR
-            self._error = "Servo implementation failed to update"
-            return CartesianServoResult.UPDATE_FAILED
-
-        self._command = command
-
-        return CartesianServoResult.OK
-
-    def stop(self) -> CartesianServoResult:
-
-        if self._state == CartesianServoState.STOPPED:
-            return CartesianServoResult.NOT_STARTED
-
-        try:
-            success = self.on_stop()
-        except Exception as exc:
-            self._state = CartesianServoState.ERROR
-            self._error = str(exc)
-            return CartesianServoResult.STOP_FAILED
-
-        if not success:
-            self._state = CartesianServoState.ERROR
-            self._error = "Servo implementation failed to stop"
-            return CartesianServoResult.STOP_FAILED
-
-        self._state = CartesianServoState.STOPPED
-        self._frame = None
-        self._tool = None
-        self._command = None
-        self._error = None
-
-        return CartesianServoResult.OK
-
-    def get_status(self) -> CartesianServoStatus:
-        return CartesianServoStatus(
-            state=self._state,
-            frame=self._frame,
-            tool=self._tool,
-            command=self._command,
-            error=self._error,
+        self._logger = logger or logging.getLogger(
+            "DummyCartesianServo"
         )
 
-    def is_running(self) -> bool:
-        return self._state == CartesianServoState.RUNNING
+        self._command_lock = threading.Lock()
+        self._published_command = self._zero_command()
+
+        self._shutdown_event = threading.Event()
+
+        self._publish_count = 0
+
+        self._worker = threading.Thread(
+            target=self._publish_loop,
+            name="DummyCartesianServoPublisher",
+            daemon=True,
+        )
+        self._worker.start()
+
+        self._logger.info(
+            "[CARTESIAN_SERVO] Dummy publisher started rate=%.1f Hz",
+            self._publish_rate_hz,
+        )
 
     # ============================================================
-    # Implementation hooks
+    # CartesianServo implementation hooks
     # ============================================================
 
-    @abstractmethod
     def _on_start(
         self,
         *,
         frame: CartesianServoFrame,
         tool: int,
     ) -> bool:
-        """Backend-specific servo startup."""
-        raise NotImplementedError
+        """
+        Start a new Cartesian Servo session.
 
-    @abstractmethod
+        The background publisher is already alive. Starting simply
+        establishes the frame/tool session and resets the command to zero.
+        """
+
+        with self._command_lock:
+            self._published_command = self._zero_command()
+
+        self._logger.info(
+            "[CARTESIAN_SERVO] START frame=%s tool=%d",
+            frame.value,
+            tool,
+        )
+
+        return True
+
     def _on_update(
         self,
         command: CartesianServoCommand,
     ) -> bool:
-        """Backend-specific command replacement."""
-        raise NotImplementedError
+        """
+        Replace the command continuously published by the worker.
+        """
 
-    @abstractmethod
-    def __on_stop(self) -> bool:
-        """Backend-specific servo shutdown."""
-        raise NotImplementedError
+        with self._command_lock:
+            self._published_command = command
 
-    # ============================================================
-    # Helpers
-    # ============================================================
-
-    @staticmethod
-    def _zero_command() -> CartesianServoCommand:
-        return CartesianServoCommand(
-            linear_mm_s=(0.0, 0.0, 0.0),
-            angular_deg_s=(0.0, 0.0, 0.0),
+        self._logger.info(
+            "[CARTESIAN_SERVO] UPDATE "
+            "linear_mm_s=%s angular_deg_s=%s",
+            command.linear_mm_s,
+            command.angular_deg_s,
         )
 
-    @staticmethod
-    def _vector3(values: Sequence[float]) -> tuple[float, float, float]:
-        if values is None or len(values) != 3:
-            raise ValueError("Expected exactly 3 values")
+        return True
 
-        return (
-            float(values[0]),
-            float(values[1]),
-            float(values[2]),
+    def _on_stop(self) -> bool:
+        """
+        Stop Cartesian motion.
+
+        The worker stays alive but publishes zero velocity.
+        """
+
+        zero = self._zero_command()
+
+        with self._command_lock:
+            self._published_command = zero
+
+        self._logger.info(
+            "[CARTESIAN_SERVO] STOP -> zero command"
+        )
+
+        return True
+
+    # ============================================================
+    # Simulated high-rate publisher
+    # ============================================================
+
+    def _publish_loop(self) -> None:
+        """
+        Simulate the high-rate ROS2 publishing loop.
+
+        The real MoveIt implementation will publish TwistStamped
+        messages here. The dummy only records/logs the operation.
+        """
+
+        next_publish = time.monotonic()
+
+        while not self._shutdown_event.is_set():
+            now = time.monotonic()
+
+            if now < next_publish:
+                self._shutdown_event.wait(next_publish - now)
+                continue
+
+            next_publish += self._publish_period_s
+
+            # Prevent runaway catch-up if the process was paused.
+            if now - next_publish > self._publish_period_s:
+                next_publish = now + self._publish_period_s
+
+            with self._command_lock:
+                command = self._published_command
+
+            self._simulate_publish(command)
+
+    def _simulate_publish(
+        self,
+        command: CartesianServoCommand,
+    ) -> None:
+        """
+        Simulate publishing one high-rate Cartesian Servo command.
+
+        Deliberately DEBUG rather than INFO because this can execute
+        100+ times per second.
+        """
+
+        self._publish_count += 1
+
+        self._logger.debug(
+            "[CARTESIAN_SERVO] PUBLISH #%d "
+            "state=%s frame=%s tool=%s "
+            "linear_mm_s=%s angular_deg_s=%s",
+            self._publish_count,
+            self._state.value,
+            self._frame.value if self._frame else None,
+            self._tool,
+            command.linear_mm_s,
+            command.angular_deg_s,
+        )
+
+    # ============================================================
+    # Diagnostics / lifecycle
+    # ============================================================
+
+    @property
+    def publish_rate_hz(self) -> float:
+        return self._publish_rate_hz
+
+    @property
+    def publish_count(self) -> int:
+        return self._publish_count
+
+    @property
+    def last_published_command(self) -> CartesianServoCommand:
+        with self._command_lock:
+            return self._published_command
+
+    def shutdown(self) -> None:
+        """
+        Permanently terminate the dummy publisher.
+
+        This is different from stop():
+
+            stop()     -> end current servo session / zero velocity
+            shutdown() -> terminate the background worker
+
+        shutdown() should normally only be used during application exit.
+        """
+
+        self._logger.info(
+            "[CARTESIAN_SERVO] Dummy publisher shutting down"
+        )
+
+        self._shutdown_event.set()
+
+        if (
+            self._worker.is_alive()
+            and threading.current_thread() is not self._worker
+        ):
+            self._worker.join(timeout=1.0)
+
+        self._logger.info(
+            "[CARTESIAN_SERVO] Dummy publisher stopped "
+            "publish_count=%d",
+            self._publish_count,
         )

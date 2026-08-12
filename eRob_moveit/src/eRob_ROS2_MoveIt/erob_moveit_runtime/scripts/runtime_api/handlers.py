@@ -6,10 +6,14 @@ import logging
 import time
 import traceback
 from typing import Any, Callable
-
+from motion.servo.cartesian_servo.i_cartesian_servo import (
+    CartesianServoResult,
+)
 import config
 from rest_api_support import (
     MOTION_ERROR_DESCRIPTIONS,
+    parse_cartesian_servo_start_request,
+    parse_cartesian_servo_update_request,
     parse_execute_ordered_motion_chain_request,
     parse_execute_path_request,
     parse_execute_sequence_request,
@@ -100,6 +104,11 @@ class RuntimeApi:
     @property
     def node(self):
         return self._node_getter()
+
+    @property
+    def cartesian_servo(self):
+        robot = self.robot
+        return robot.cartesian_servo if robot is not None else None
 
     def _task_id(self):
         return getattr(self.robot.node, "last_submitted_task_id", None)
@@ -694,3 +703,135 @@ class RuntimeApi:
             "hardware_fault": None if hardware_ready else self.node.get_hardware_fault_reason(),
             "motion_interlock": to_jsonable(self.node.get_motion_interlock_status()),
         })
+
+    def _cartesian_servo_result(
+            self,
+            result: CartesianServoResult,
+    ) -> ApiResponse:
+
+        servo = self.cartesian_servo
+
+        status = servo.get_status() if servo is not None else None
+
+        status_body = None
+        if status is not None:
+            status_body = {
+                "state": status.state.value,
+                "frame": status.frame.value if status.frame else None,
+                "tool": status.tool,
+                "command": (
+                    {
+                        "linear_mm_s": list(status.command.linear_mm_s),
+                        "angular_deg_s": list(status.command.angular_deg_s),
+                    }
+                    if status.command is not None
+                    else None
+                ),
+                "error": status.error,
+            }
+
+        body = {
+            "success": result == CartesianServoResult.OK,
+            "result": result.value,
+            "servo": status_body,
+        }
+
+        if result == CartesianServoResult.OK:
+            return ApiResponse(body, 200)
+
+        if result in {
+            CartesianServoResult.ALREADY_RUNNING,
+            CartesianServoResult.NOT_STARTED,
+        }:
+            return ApiResponse(body, 409)
+
+        if result in {
+            CartesianServoResult.INVALID_FRAME,
+            CartesianServoResult.INVALID_TOOL,
+            CartesianServoResult.INVALID_COMMAND,
+        }:
+            return ApiResponse(body, 400)
+
+        return ApiResponse(body, 500)
+
+    def cartesian_servo_start(
+        self,
+        data: dict[str, Any] | None,
+    ) -> ApiResponse:
+        try:
+            payload = parse_cartesian_servo_start_request(data)
+        except ValueError as exc:
+            return response_error(str(exc), 400)
+
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
+
+        servo = self.cartesian_servo
+        if servo is None:
+            return response_error(
+                "Cartesian Servo is not available",
+                503,
+            )
+
+        logger.info(
+            "Received Cartesian Servo start frame=%s tool=%s",
+            payload["frame"].value,
+            payload["tool"],
+        )
+
+        try:
+            result = servo.start(
+                frame=payload["frame"],
+                tool=payload["tool"],
+            )
+        except Exception as exc:
+            logger.exception("Cartesian Servo start failed")
+            return response_error(str(exc), 500)
+
+        return self._cartesian_servo_result(result)
+
+    def cartesian_servo_update(
+        self,
+        data: dict[str, Any] | None,
+    ) -> ApiResponse:
+        try:
+            payload = parse_cartesian_servo_update_request(data)
+        except ValueError as exc:
+            return response_error(str(exc), 400)
+
+        servo = self.cartesian_servo
+        if servo is None:
+            return response_error(
+                "Cartesian Servo is not available",
+                503,
+            )
+
+        try:
+            result = servo.update(
+                linear_mm_s=payload["linear_mm_s"],
+                angular_deg_s=payload["angular_deg_s"],
+            )
+        except Exception as exc:
+            logger.exception("Cartesian Servo update failed")
+            return response_error(str(exc), 500)
+
+        return self._cartesian_servo_result(result)
+
+    def cartesian_servo_stop(self) -> ApiResponse:
+        servo = self.cartesian_servo
+        if servo is None:
+            return response_error(
+                "Cartesian Servo is not available",
+                503,
+            )
+
+        logger.info("Received Cartesian Servo stop")
+
+        try:
+            result = servo.stop()
+        except Exception as exc:
+            logger.exception("Cartesian Servo stop failed")
+            return response_error(str(exc), 500)
+
+        return self._cartesian_servo_result(result)

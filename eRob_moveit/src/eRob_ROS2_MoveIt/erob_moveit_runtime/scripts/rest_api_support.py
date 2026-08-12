@@ -7,6 +7,7 @@ from typing import Any
 
 from flask import jsonify
 from moveit_msgs.msg import MoveItErrorCodes
+from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServoFrame
 
 import config
 from enums import Direction, RobotAxis
@@ -94,7 +95,6 @@ def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-
 def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
     path = payload.get("path")
@@ -123,7 +123,6 @@ def parse_execute_path_request(data: dict[str, Any] | None) -> dict[str, Any]:
         "trajectory_optimizer": trajectory_optimizer,
         "orientation_mode": orientation_mode,
     }
-
 
 
 def parse_execute_sequence_request(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -231,6 +230,67 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
         "blocking": bool(payload.get("blocking", True)),
         "trajectory_optimizer": trajectory_optimizer,
     }
+
+
+def parse_cartesian_servo_start_request(
+    data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = data or {}
+
+    frame_value = payload.get("frame")
+    if frame_value is None:
+        raise ValueError("Missing 'frame'")
+
+    try:
+        frame = CartesianServoFrame(str(frame_value).strip().lower())
+    except (TypeError, ValueError) as exc:
+        valid_frames = [frame.value for frame in CartesianServoFrame]
+        raise ValueError(
+            f"Invalid 'frame': {frame_value}. Valid frames: {valid_frames}"
+        ) from exc
+
+    try:
+        tool = int(payload.get("tool"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid or missing 'tool'") from exc
+
+    return {
+        "frame": frame,
+        "tool": tool,
+    }
+
+
+def parse_cartesian_servo_update_request(
+    data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = data or {}
+
+    linear = payload.get("linear_mm_s")
+    angular = payload.get("angular_deg_s")
+
+    if not isinstance(linear, (list, tuple)) or len(linear) != 3:
+        raise ValueError(
+            "Invalid 'linear_mm_s'; expected [vx, vy, vz]"
+        )
+
+    if not isinstance(angular, (list, tuple)) or len(angular) != 3:
+        raise ValueError(
+            "Invalid 'angular_deg_s'; expected [wx, wy, wz]"
+        )
+
+    try:
+        linear = [float(value) for value in linear]
+        angular = [float(value) for value in angular]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Servo velocity values must be numeric"
+        ) from exc
+
+    return {
+        "linear_mm_s": linear,
+        "angular_deg_s": angular,
+    }
+
 
 def _wait_future(future, timeout_s: float = 10.0):
     deadline = time.time() + timeout_s
