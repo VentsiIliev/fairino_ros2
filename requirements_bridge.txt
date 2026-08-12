@@ -1,4 +1,10 @@
 # Requirements for Fairino ROS2 Bridge
+# INSTALL WITH pip install -r requirements_bridge.txt
+
+# IF NO VENV:
+# python3 -m venv .venv
+# source .venv/bin/activate
+# INSTALL:  pip install -r requirements_bridge.txt
 
 # Server-side (requires ROS2 environment)
 Flask==3.0.0
