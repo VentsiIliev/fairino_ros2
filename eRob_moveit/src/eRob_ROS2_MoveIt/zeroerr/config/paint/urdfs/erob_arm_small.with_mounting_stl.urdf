@@ -281,16 +281,16 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 1.57079632679"/>
       <geometry>
-        <mesh filename="package://zeroerr/meshes/paint/mounting_robot_origin_top_surface_flip_x.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://zeroerr/meshes/paint/latest_mounting.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="mounting_surface_debug_material">
         <color rgba="1.0 1.0 1.0 1.0"/>
       </material>
     </visual>
     <collision name="mounted_fixture_collision">
-      <origin xyz="0.01165 0.57645 0.15800" rpy="0 0 0"/>
+      <origin xyz="0.1000 0.57645 0.15800" rpy="0 0 0"/>
       <geometry>
-        <box size="0.115 0.190 0.295"/>
+        <box size="0.115 0.190 0.1475"/>
       </geometry>
     </collision>
   </link>
@@ -298,7 +298,7 @@
   <joint name="mounting_surface_joint" type="fixed">
     <parent link="base_link"/>
     <child link="mounting_surface"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 1.57079633"/>
   </joint>
 
   <material name="table_material">
