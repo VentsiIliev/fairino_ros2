@@ -8,7 +8,7 @@ from motion.servo.cartesian_servo.moveit_cartesian_servo import MoveItCartesianS
 
 def create_robot_backend(node, workobject=None, ip: str = '0.0.0.0'):
     cartesian_servo = MoveItCartesianServo(
-        publish_rate_hz=100.0,
+        publish_rate_hz=float(getattr(config, "CARTESIAN_SERVO_PUBLISH_RATE_HZ", 100.0)),
         node=node,
         base_frame="base_link",
         service_timeout_s=float(getattr(config, "CARTESIAN_SERVO_SERVICE_TIMEOUT_S", 5.0)),

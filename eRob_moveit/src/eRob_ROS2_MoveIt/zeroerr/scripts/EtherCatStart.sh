@@ -457,6 +457,7 @@ pin_non_rt_away() {
   )
   local low_priority_procs=(
     rviz2
+    zeroerr_state_publisher
     zeroerr_error_monitor.py
     zeroerr_drive_diagnostics.py
     ethercat_sdo_srv_server
