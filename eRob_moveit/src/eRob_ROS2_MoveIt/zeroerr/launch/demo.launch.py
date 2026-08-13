@@ -212,16 +212,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
 def _deep_merge(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
@@ -291,11 +281,10 @@ def generate_launch_description():
     planner_cores = _env_core_list("ZEROERR_PLANNER_CORES", non_rt_cores)
     low_priority_cores = _env_core_list("ZEROERR_LOW_PRIORITY_CORES", non_rt_cores)
     control_cores = _env_core_list("ZEROERR_CONTROL_CORES", _default_control_cores())
-    control_fifo = _env_int("ZEROERR_CONTROL_FIFO", 90)
     non_rt_prefix = f"taskset -c {non_rt_cores}"
     planner_prefix = f"taskset -c {planner_cores}"
     low_priority_non_rt_prefix = f"taskset -c {low_priority_cores} nice -n 19"
-    control_prefix = f"chrt -f {control_fifo} taskset -c {control_cores}"
+    control_prefix = f"taskset -c {control_cores}"
 
     package_path = get_package_share_directory("zeroerr")
     urdf_path = _urdf_path_from_runtime(package_path)

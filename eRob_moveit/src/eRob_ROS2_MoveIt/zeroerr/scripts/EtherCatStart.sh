@@ -230,6 +230,9 @@ validate_rt_core_config() {
   if [ -n "$CONTROL_CORES" ] && [ -n "$PLANNER_CORES" ] && cpu_lists_intersect "$CONTROL_CORES" "$PLANNER_CORES"; then
     rt_policy_issue "ZEROERR_PLANNER_CORES=$PLANNER_CORES overlaps control cores $CONTROL_CORES" || return 1
   fi
+  if [ -n "${ZEROERR_RT_AUX_CORES:-}" ] && [ -n "$ETHERCAT_CORES" ] && [ -n "$CONTROL_CORES" ] && cpu_lists_intersect "$ETHERCAT_CORES" "$CONTROL_CORES"; then
+    rt_policy_issue "ZEROERR_ETHERCAT_CORES=$ETHERCAT_CORES overlaps control cores $CONTROL_CORES even though ZEROERR_RT_AUX_CORES=$ZEROERR_RT_AUX_CORES is available" || return 1
+  fi
   if [ -n "$ISOLATED_CORES" ] && [ -n "$LOW_PRIORITY_CORES" ] && cpu_lists_intersect "$ISOLATED_CORES" "$LOW_PRIORITY_CORES"; then
     rt_policy_issue "ZEROERR_LOW_PRIORITY_CORES=$LOW_PRIORITY_CORES overlaps isolated cores $ISOLATED_CORES" || return 1
   fi
