@@ -390,8 +390,10 @@ def generate_launch_description():
         servo_period = _env_float("ZEROERR_SERVO_PERIOD", 0.02)
         servo_config["update_period"] = servo_period
         servo_config["publish_period"] = servo_period
+        servo_realtime = _env_bool("ZEROERR_SERVO_REALTIME", False)
     else:
         servo_period = float(servo_config.get("publish_period", 0.01))
+        servo_realtime = _env_bool("ZEROERR_SERVO_REALTIME", True)
 
     servo_node = Node(
         package="zeroerr",
@@ -403,6 +405,7 @@ def generate_launch_description():
             {"moveit_servo": servo_config},
             {"update_period": servo_period},
             {"planning_group_name": "manipulator"},
+            {"zeroerr_servo_realtime": servo_realtime},
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,

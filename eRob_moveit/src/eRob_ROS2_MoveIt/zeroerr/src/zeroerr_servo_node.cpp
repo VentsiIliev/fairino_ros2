@@ -53,6 +53,7 @@ public:
     servo_ = std::make_unique<moveit_servo::Servo>(node_, servo_param_listener, planning_scene_monitor_);
     servo_params_ = servo_->getParams();
     servo_->setCollisionChecking(false);
+    node_->declare_parameter("zeroerr_servo_realtime", true);
     last_publish_diagnostic_time_ = node_->now();
 
     configureRealtime();
@@ -123,6 +124,12 @@ public:
 private:
   void configureRealtime()
   {
+    if (!node_->get_parameter("zeroerr_servo_realtime").as_bool())
+    {
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Servo FIFO RT scheduling disabled by zeroerr_servo_realtime parameter.");
+      return;
+    }
+
     if (realtime_tools::configure_sched_fifo(servo_params_.thread_priority))
     {
       RCLCPP_INFO_STREAM(node_->get_logger(), "Enabled SCHED_FIFO and higher thread priority.");
