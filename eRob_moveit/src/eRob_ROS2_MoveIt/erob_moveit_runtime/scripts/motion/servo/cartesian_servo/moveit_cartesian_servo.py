@@ -430,14 +430,16 @@ class MoveItCartesianServo(CartesianServo):
         # --------------------------------------------------------
 
         if not self._set_servo_paused(False):
-            with self._command_lock:
-                self._command_frame_id = None
-                self._command_frame = None
-                self._tool_transform = np.eye(4)
-                self._workobject_transform = np.eye(4)
-                self._latest_command = None
-
-            return self._fail_start("failed to resume MoveIt Servo")
+            logger.warning(
+                "[MOVEIT_CARTESIAN_SERVO] "
+                "MoveIt Servo resume was not confirmed during start; "
+                "continuing command stream and retrying resume in background"
+            )
+            self._servo_paused = False
+            self._set_servo_paused_background(
+                False,
+                reason="start resume retry",
+            )
 
         # --------------------------------------------------------
         # 6. Publish immediate zero
@@ -710,6 +712,31 @@ class MoveItCartesianServo(CartesianServo):
             )
             self._servo_paused = True
 
+    def _set_servo_paused_background(
+        self,
+        paused: bool,
+        *,
+        reason: str,
+    ) -> None:
+        threading.Thread(
+            target=self._set_servo_paused_worker,
+            args=(bool(paused), str(reason)),
+            daemon=True,
+        ).start()
+
+    def _set_servo_paused_worker(
+        self,
+        paused: bool,
+        reason: str,
+    ) -> None:
+        if not self._set_servo_paused(paused, force=True):
+            logger.warning(
+                "[MOVEIT_CARTESIAN_SERVO] "
+                "Background pause_servo failed paused=%s reason=%s",
+                paused,
+                reason,
+            )
+
     # ============================================================
     # MoveIt Servo pause/resume and collision checking
     # ============================================================
@@ -717,6 +744,8 @@ class MoveItCartesianServo(CartesianServo):
     def _set_servo_paused(
         self,
         paused: bool,
+        *,
+        force: bool = False,
     ) -> bool:
         """
         Pause or resume the external MoveIt Servo node.
@@ -727,7 +756,7 @@ class MoveItCartesianServo(CartesianServo):
         """
 
         paused = bool(paused)
-        if self._servo_paused is paused:
+        if self._servo_paused is paused and not force:
             logger.debug(
                 "[MOVEIT_CARTESIAN_SERVO] "
                 "pause_servo skipped; already %s",
