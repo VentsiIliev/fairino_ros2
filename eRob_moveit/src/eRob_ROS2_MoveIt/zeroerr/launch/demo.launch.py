@@ -177,10 +177,17 @@ def _kernel_isolated_cores() -> str:
 
 
 def _default_non_rt_cores() -> str:
-    all_cpus = set(range(os.cpu_count() or 1))
+    all_cpus = set(range(_online_cpu_count()))
     isolated = _expand_cpu_list(_kernel_isolated_cores())
     non_rt = all_cpus - isolated
     return _compact_cpu_list(non_rt or all_cpus)
+
+
+def _default_control_cores() -> str:
+    isolated = _expand_cpu_list(_kernel_isolated_cores())
+    if isolated:
+        return str(max(isolated))
+    return str(max(_online_cpu_count() - 1, 0))
 
 
 def _env_core_list(name: str, default: str) -> str:
@@ -273,6 +280,7 @@ def generate_launch_description():
     non_rt_cores = _env_core_list("ZEROERR_NON_RT_CORES", _default_non_rt_cores())
     planner_cores = _env_core_list("ZEROERR_PLANNER_CORES", non_rt_cores)
     low_priority_cores = _env_core_list("ZEROERR_LOW_PRIORITY_CORES", non_rt_cores)
+    control_cores = _env_core_list("ZEROERR_CONTROL_CORES", _default_control_cores())
     non_rt_prefix = f"taskset -c {non_rt_cores}"
     planner_prefix = f"taskset -c {planner_cores}"
     low_priority_non_rt_prefix = f"taskset -c {low_priority_cores} nice -n 19"
@@ -440,6 +448,7 @@ def generate_launch_description():
         executable="ros2_control_node",
         name="controller_manager",
         output="screen",
+        prefix=["chrt", "-f", "90", "taskset", "-c", control_cores],
         parameters=[ros2_controllers_yaml],
         remappings=[
             ("/controller_manager/robot_description", "/robot_description"),
