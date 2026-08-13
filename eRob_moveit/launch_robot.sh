@@ -390,6 +390,7 @@ launch_zeroerr() {
 
   echo "Preparing ZeroErr stack (${profile}): ${package} ${launch_file}"
   echo "ZeroErr hardware mode: $([[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]] && echo fake || echo real)"
+  echo "ZeroErr RT policy: isolated=${ZEROERR_ISOLATED_CORES:-none} control=${ZEROERR_CONTROL_CORES:-unset} ethercat=${ZEROERR_ETHERCAT_CORES:-unset} irq=${ZEROERR_IRQ_CORES:-unset} non_rt=${ZEROERR_NON_RT_CORES:-unset} planner=${ZEROERR_PLANNER_CORES:-unset} low=${ZEROERR_LOW_PRIORITY_CORES:-unset}"
   cleanup_stale_zeroerr_processes
 
   if [[ "${ZEROERR_USE_FAKE_HARDWARE}" == "1" ]]; then

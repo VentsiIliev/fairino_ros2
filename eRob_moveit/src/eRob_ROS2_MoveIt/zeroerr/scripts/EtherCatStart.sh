@@ -2,9 +2,17 @@
 set -euo pipefail
 # EtherCAT RT startup — supports PREP_ONLY=1 or POSTSTART_ONLY=1.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_POLICY_FILE="$(cd "${SCRIPT_DIR}/../../../.." && pwd)/zeroerr_rt_policy.env"
+ZEROERR_RT_POLICY_FILE="${ZEROERR_RT_POLICY_FILE:-$DEFAULT_POLICY_FILE}"
+if [ -f "$ZEROERR_RT_POLICY_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$ZEROERR_RT_POLICY_FILE"
+fi
+
 ISOLATED_CORES="${ZEROERR_ISOLATED_CORES:-}"
 ISOLATED_MASK="${ZEROERR_ISOLATED_MASK:-}"
-IRQ_CORES="${ZEROERR_IRQ_CORES:-${ZEROERR_ETHERCAT_CORES:-}}"
+IRQ_CORES="${ZEROERR_ETHERCAT_IRQ_CORES:-${ZEROERR_IRQ_CORES:-${ZEROERR_ETHERCAT_CORES:-}}}"
 IRQ_MASK="${ZEROERR_IRQ_MASK:-}"
 ETHERCAT_CORES="${ZEROERR_ETHERCAT_CORES:-}"
 CONTROL_CORES="${ZEROERR_CONTROL_CORES:-15}"
@@ -14,15 +22,19 @@ NON_RT_CORES="${ZEROERR_NON_RT_CORES:-}"
 PLANNER_CORES="${ZEROERR_PLANNER_CORES:-$NON_RT_CORES}"
 LOW_PRIORITY_CORES="${ZEROERR_LOW_PRIORITY_CORES:-$NON_RT_CORES}"
 
-RT_PRIORITY=90
+RT_PRIORITY="${ZEROERR_ETHERCAT_FIFO:-90}"
+CONTROL_FIFO="${ZEROERR_CONTROL_FIFO:-90}"
 AFFINITY_CHECK_PERIOD_S="${ZEROERR_AFFINITY_CHECK_PERIOD_S:-2}"
 NON_RT_DISCOVERY_PERIOD_S="${ZEROERR_NON_RT_DISCOVERY_PERIOD_S:-6}"
-NIC="${ZEROERR_NIC:-enp3s0}"
+NIC="${ZEROERR_ETHERCAT_IFACE:-${ZEROERR_NIC:-enp3s0}}"
 ETHERCAT_DEVICE="${ZEROERR_ETHERCAT_DEVICE:-/dev/EtherCAT0}"
 PREP_ONLY="${PREP_ONLY:-0}"
 POSTSTART_ONLY="${POSTSTART_ONLY:-0}"
 STOP_ONLY="${STOP_ONLY:-0}"
 REUSE_ETHERCAT_MASTER="${ZEROERR_REUSE_ETHERCAT_MASTER:-1}"
+MOVE_IRQS_AWAY_FROM="${ZEROERR_MOVE_IRQS_AWAY_FROM:-$ISOLATED_CORES}"
+MOVE_IRQS_TO="${ZEROERR_MOVE_IRQS_TO:-$NON_RT_CORES}"
+RT_POLICY_STRICT="${ZEROERR_RT_POLICY_STRICT:-1}"
 
 declare -A CANONICAL_CPU_LISTS=()
 CANONICAL_CPU_LIST_RESULT=""
@@ -103,6 +115,85 @@ raise SystemExit(0 if expand(sys.argv[1]) & expand(sys.argv[2]) else 1)
 PY
 }
 
+cpu_lists_equal() {
+  local lhs="$1"
+  local rhs="$2"
+  python3 - "$lhs" "$rhs" <<'PY'
+import sys
+
+def expand(value):
+    cpus = set()
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            cpus.update(range(int(start), int(end) + 1))
+        else:
+            cpus.add(int(part))
+    return cpus
+
+raise SystemExit(0 if expand(sys.argv[1]) == expand(sys.argv[2]) else 1)
+PY
+}
+
+cpu_list_contains() {
+  local superset="$1"
+  local subset="$2"
+  python3 - "$superset" "$subset" <<'PY'
+import sys
+
+def expand(value):
+    cpus = set()
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            cpus.update(range(int(start), int(end) + 1))
+        else:
+            cpus.add(int(part))
+    return cpus
+
+superset = expand(sys.argv[1])
+subset = expand(sys.argv[2])
+raise SystemExit(0 if subset <= superset else 1)
+PY
+}
+
+cpu_list_to_lines() {
+  local value="$1"
+  python3 - "$value" <<'PY'
+import sys
+
+cpus = set()
+for part in str(sys.argv[1]).split(","):
+    part = part.strip()
+    if not part:
+        continue
+    if "-" in part:
+        start, end = part.split("-", 1)
+        cpus.update(range(int(start), int(end) + 1))
+    else:
+        cpus.add(int(part))
+
+for cpu in sorted(cpus):
+    print(cpu)
+PY
+}
+
+rt_policy_issue() {
+  local message="$1"
+  if [ "$RT_POLICY_STRICT" = "1" ]; then
+    echo "  Error: $message" >&2
+    return 1
+  fi
+  echo "  Warning: $message"
+  return 0
+}
+
 detect_kernel_isolated_cores() {
   tr ' ' '\n' < /proc/cmdline \
     | awk -F= '/^(isolcpus|nohz_full)=/ {print $2; exit}' \
@@ -111,16 +202,39 @@ detect_kernel_isolated_cores() {
 
 validate_rt_core_config() {
   local kernel_isolated=""
+  local online_cpus=""
   kernel_isolated="$(detect_kernel_isolated_cores)"
-  if [ -n "$kernel_isolated" ] && [ -n "$ISOLATED_CORES" ] && [ "$kernel_isolated" != "$ISOLATED_CORES" ]; then
-    echo "  Warning: kernel isolates CPUs $kernel_isolated but ZEROERR_ISOLATED_CORES=$ISOLATED_CORES"
+  online_cpus="$(cat /sys/devices/system/cpu/online 2>/dev/null || true)"
+
+  if [ -n "$kernel_isolated" ] && [ -n "$ISOLATED_CORES" ] && ! cpu_lists_equal "$kernel_isolated" "$ISOLATED_CORES"; then
+    rt_policy_issue "kernel isolates CPUs $kernel_isolated but ZEROERR_ISOLATED_CORES=$ISOLATED_CORES" || return 1
   fi
   if [ -n "$kernel_isolated" ] && [ -n "$ETHERCAT_CORES" ] && ! cpu_lists_intersect "$kernel_isolated" "$ETHERCAT_CORES"; then
-    echo "  Warning: EtherCAT cores ($ETHERCAT_CORES) are not in kernel isolated CPUs ($kernel_isolated)"
+    rt_policy_issue "EtherCAT cores ($ETHERCAT_CORES) are not in kernel isolated CPUs ($kernel_isolated)" || return 1
   fi
   if [ -n "$kernel_isolated" ] && [ -n "$CONTROL_CORES" ] && ! cpu_lists_intersect "$kernel_isolated" "$CONTROL_CORES"; then
-    echo "  Warning: ros2_control cores ($CONTROL_CORES) are not in kernel isolated CPUs ($kernel_isolated)"
+    rt_policy_issue "ros2_control cores ($CONTROL_CORES) are not in kernel isolated CPUs ($kernel_isolated)" || return 1
   fi
+  if [ -n "$online_cpus" ]; then
+    for cpu_list_name in ISOLATED_CORES ETHERCAT_CORES CONTROL_CORES IRQ_CORES NON_RT_CORES PLANNER_CORES LOW_PRIORITY_CORES; do
+      local cpu_list="${!cpu_list_name:-}"
+      [ -n "$cpu_list" ] || continue
+      if ! cpu_list_contains "$online_cpus" "$cpu_list"; then
+        rt_policy_issue "$cpu_list_name=$cpu_list includes CPUs outside online set $online_cpus" || return 1
+      fi
+    done
+  fi
+  if [ -n "$ISOLATED_CORES" ] && [ -n "$NON_RT_CORES" ] && cpu_lists_intersect "$ISOLATED_CORES" "$NON_RT_CORES"; then
+    rt_policy_issue "ZEROERR_NON_RT_CORES=$NON_RT_CORES overlaps isolated cores $ISOLATED_CORES" || return 1
+  fi
+  if [ -n "$CONTROL_CORES" ] && [ -n "$PLANNER_CORES" ] && cpu_lists_intersect "$CONTROL_CORES" "$PLANNER_CORES"; then
+    rt_policy_issue "ZEROERR_PLANNER_CORES=$PLANNER_CORES overlaps control cores $CONTROL_CORES" || return 1
+  fi
+  if [ -n "$ISOLATED_CORES" ] && [ -n "$LOW_PRIORITY_CORES" ] && cpu_lists_intersect "$ISOLATED_CORES" "$LOW_PRIORITY_CORES"; then
+    rt_policy_issue "ZEROERR_LOW_PRIORITY_CORES=$LOW_PRIORITY_CORES overlaps isolated cores $ISOLATED_CORES" || return 1
+  fi
+
+  echo "  RT policy: isolated=${ISOLATED_CORES:-none} control=$CONTROL_CORES ethercat=$ETHERCAT_CORES irq=$IRQ_CORES non_rt=$NON_RT_CORES planner=$PLANNER_CORES low=$LOW_PRIORITY_CORES"
 }
 
 configure_cpu() {
@@ -137,7 +251,7 @@ configure_cpu() {
   fi
 
   local idle_cores
-  idle_cores=$(printf "%s\n%s\n%s\n" "$ISOLATED_CORES" "$IRQ_CORES" "$CONTROL_CORES" | tr ',' '\n' | awk 'NF && !seen[$0]++')
+  idle_cores=$(cpu_list_to_lines "${ISOLATED_CORES},${IRQ_CORES},${CONTROL_CORES}" | awk 'NF && !seen[$0]++')
   if [ -z "$idle_cores" ]; then
     echo "No RT-related cores configured for idle-state tuning."
     return 0
@@ -314,15 +428,15 @@ pin_irqs() {
 }
 
 move_non_ethercat_irqs_off_isolated_cores() {
-  [ -n "$ISOLATED_CORES" ] || return 0
-  [ -n "$NON_RT_CORES" ] || return 0
+  [ -n "$MOVE_IRQS_AWAY_FROM" ] || return 0
+  [ -n "$MOVE_IRQS_TO" ] || return 0
 
   local non_rt_mask
-  non_rt_mask="$(cpu_list_to_mask "$NON_RT_CORES")"
+  non_rt_mask="$(cpu_list_to_mask "$MOVE_IRQS_TO")"
   local nic_irq_nums
   nic_irq_nums="$(awk -v nic="$NIC" '$0 ~ nic {gsub(":", "", $1); print $1}' /proc/interrupts || true)"
 
-  echo "Moving non-EtherCAT IRQs off isolated cores $ISOLATED_CORES (→ cores $NON_RT_CORES)..."
+  echo "Moving non-EtherCAT IRQs off cores $MOVE_IRQS_AWAY_FROM (→ cores $MOVE_IRQS_TO)..."
   local irq_num=""
   while read -r irq_num; do
     [ -n "$irq_num" ] || continue
@@ -331,7 +445,7 @@ move_non_ethercat_irqs_off_isolated_cores() {
     fi
     local effective=""
     effective=$(cat "/proc/irq/${irq_num}/effective_affinity_list" 2>/dev/null || true)
-    if [ -n "$effective" ] && ! cpu_lists_intersect "$effective" "$ISOLATED_CORES"; then
+    if [ -n "$effective" ] && ! cpu_lists_intersect "$effective" "$MOVE_IRQS_AWAY_FROM"; then
       continue
     fi
 
@@ -341,7 +455,7 @@ move_non_ethercat_irqs_off_isolated_cores() {
     else
       local irq_name=""
       irq_name=$(awk -v irq="$irq_num" '$1 == irq ":" {$1=""; print}' /proc/interrupts 2>/dev/null || true)
-      echo "  Warning: failed to move IRQ $irq_num off isolated cores${irq_name:+:$irq_name}"
+      echo "  Warning: failed to move IRQ $irq_num off cores $MOVE_IRQS_AWAY_FROM${irq_name:+:$irq_name}"
     fi
   done < <(awk '/^[[:space:]]*[0-9]+:/ {gsub(":", "", $1); print $1}' /proc/interrupts)
 }
