@@ -143,6 +143,7 @@ private:
     moveit_msgs::msg::ServoStatus status_msg;
     std::optional<moveit_servo::KinematicState> next_joint_state = std::nullopt;
     rclcpp::WallRate servo_frequency(1.0 / servo_params_.publish_period);
+    rclcpp::WallRate paused_frequency(5.0);
 
     const auto servo_node_start = node_->now();
     auto state_monitor = planning_scene_monitor_->getStateMonitor();
@@ -171,7 +172,7 @@ private:
       if (servo_paused_)
       {
         servo_->resetSmoothing(current_state);
-        servo_frequency.sleep();
+        paused_frequency.sleep();
         continue;
       }
 

@@ -144,6 +144,17 @@ def _compact_cpu_list(cpus: set[int]) -> str:
     return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges)
 
 
+def _online_cpu_count() -> int:
+    try:
+        with open("/sys/devices/system/cpu/online") as f:
+            cpus = _expand_cpu_list(f.read().strip())
+            if cpus:
+                return len(cpus)
+    except Exception:
+        pass
+    return os.cpu_count() or 1
+
+
 def _kernel_isolated_cores() -> str:
     try:
         with open("/sys/devices/system/cpu/isolated") as f:
@@ -175,6 +186,23 @@ def _default_non_rt_cores() -> str:
 def _env_core_list(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
     return value or default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -349,6 +377,14 @@ def generate_launch_description():
     with open(servo_yaml) as f:
         servo_config = yaml.safe_load(f) or {}
 
+    servo_low_cpu = _env_bool("ZEROERR_SERVO_LOW_CPU", _online_cpu_count() <= 4)
+    if servo_low_cpu:
+        servo_period = _env_float("ZEROERR_SERVO_PERIOD", 0.02)
+        servo_config["update_period"] = servo_period
+        servo_config["publish_period"] = servo_period
+    else:
+        servo_period = float(servo_config.get("publish_period", 0.01))
+
     servo_node = Node(
         package="zeroerr",
         executable="zeroerr_servo_node",
@@ -357,7 +393,7 @@ def generate_launch_description():
         prefix=planner_prefix,
         parameters=[
             {"moveit_servo": servo_config},
-            {"update_period": 0.01},
+            {"update_period": servo_period},
             {"planning_group_name": "manipulator"},
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
