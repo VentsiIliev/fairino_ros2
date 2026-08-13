@@ -41,6 +41,53 @@ def _runtime_urdf_path(package_path: str) -> str:
     return _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
 
 
+def _expand_cpu_list(value: str) -> list[int]:
+    cpus: set[int] = set()
+    for part in str(value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = [int(item) for item in part.split("-", 1)]
+            cpus.update(range(start, end + 1))
+        else:
+            cpus.add(int(part))
+    return sorted(cpus)
+
+
+def _kernel_isolated_cores() -> str:
+    try:
+        with open("/sys/devices/system/cpu/isolated") as f:
+            isolated = f.read().strip()
+            if isolated:
+                return isolated
+    except Exception:
+        pass
+    try:
+        with open("/proc/cmdline") as f:
+            for token in f.read().split():
+                if token.startswith("isolcpus=") or token.startswith("nohz_full="):
+                    value = token.split("=", 1)[1]
+                    for prefix in ("managed_irq,", "domain,", "nohz,"):
+                        value = value.replace(prefix, "")
+                    return value
+    except Exception:
+        pass
+    return ""
+
+
+def _default_control_cores() -> str:
+    isolated = _expand_cpu_list(_kernel_isolated_cores())
+    if isolated:
+        return str(isolated[-1])
+    return str(max((os.cpu_count() or 1) - 1, 0))
+
+
+def _env_core_list(name: str, default: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return value or default
+
+
 def generate_launch_description():
     package_path = get_package_share_directory("zeroerr")
     urdf_path = _runtime_urdf_path(package_path)
@@ -55,7 +102,7 @@ def generate_launch_description():
 
     ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
 
-    control_cores = os.environ.get("ZEROERR_CONTROL_CORES", "15")
+    control_cores = _env_core_list("ZEROERR_CONTROL_CORES", _default_control_cores())
 
     ros2_control_node = Node(
         package="controller_manager",

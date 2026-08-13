@@ -447,6 +447,7 @@ pin_non_rt_away() {
   local low_priority_cores="$LOW_PRIORITY_CORES"
   local planner_procs=(
     move_group
+    zeroerr_servo_node
     ipp_helper
     ruckig_helper
     contour_ik_helper
@@ -463,6 +464,7 @@ pin_non_rt_away() {
   )
   local procs=(
     move_group
+    zeroerr_servo_node
     rviz2
     zeroerr_runtime.py
     zeroerr_state_publisher
