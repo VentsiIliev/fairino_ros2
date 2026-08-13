@@ -51,6 +51,17 @@ unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
 
 source_setup "${ROS_SETUP}"
 
+if ! ros2 pkg prefix moveit_servo >/dev/null 2>&1; then
+  echo "Missing ROS package: moveit_servo" >&2
+  if [[ -n "${ROS_DISTRO:-}" ]]; then
+    echo "Install it with:" >&2
+    echo "  sudo apt update && sudo apt install -y ros-${ROS_DISTRO}-moveit-servo" >&2
+  else
+    echo "Install the MoveIt Servo package for your ROS 2 distro, then rerun this script." >&2
+  fi
+  exit 1
+fi
+
 if [[ -n "${MOVEIT_SETUP_FILE:-}" ]]; then
   if [[ ! -f "${MOVEIT_SETUP_FILE}" ]]; then
     echo "MOVEIT_SETUP_FILE not found: ${MOVEIT_SETUP_FILE}" >&2

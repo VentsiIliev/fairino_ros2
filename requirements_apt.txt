@@ -51,6 +51,7 @@ ros-jazzy-moveit-ros-visualization
 ros-jazzy-moveit-ros-warehouse
 ros-jazzy-moveit-setup-assistant
 ros-jazzy-moveit-simple-controller-manager
+ros-jazzy-moveit-servo
 ros-jazzy-pilz-industrial-motion-planner
 ros-jazzy-pluginlib
 ros-jazzy-robot-state-publisher
