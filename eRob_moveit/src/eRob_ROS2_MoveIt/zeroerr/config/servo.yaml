@@ -1,0 +1,48 @@
+update_period: 0.01
+publish_period: 0.01
+max_expected_latency: 0.1
+
+command_in_type: "speed_units"
+
+scale:
+  linear: 0.2
+  rotational: 0.8
+  joint: 0.5
+
+command_out_type: trajectory_msgs/JointTrajectory
+
+publish_joint_positions: true
+publish_joint_velocities: true
+publish_joint_accelerations: false
+
+use_smoothing: true
+smoothing_filter_plugin_name: "online_signal_smoothing::AccelerationLimitedPlugin"
+
+# move_group already owns the primary PlanningSceneMonitor
+is_primary_planning_scene_monitor: false
+
+check_octomap_collisions: false
+
+# IMPORTANT: verify this against your SRDF
+move_group_name: manipulator
+planning_group_name: manipulator
+
+lower_singularity_threshold: 10.0
+hard_stop_singularity_threshold: 30.0
+leaving_singularity_threshold_multiplier: 2.0
+
+joint_limit_margins: [0.12]
+
+cartesian_command_in_topic: ~/delta_twist_cmds
+joint_command_in_topic: ~/delta_joint_cmds
+
+joint_topic: /joint_states
+status_topic: ~/status
+
+command_out_topic: /manipulator_controller/joint_trajectory
+
+check_collisions: true
+collision_check_rate: 10.0
+
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.02

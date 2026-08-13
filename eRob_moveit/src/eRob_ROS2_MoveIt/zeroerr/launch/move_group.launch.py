@@ -25,6 +25,10 @@ def _resolve_config_path(config_yaml: str, value: str) -> str:
     return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
 
 
+def _load_yaml(path: str) -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
 def _load_runtime_config(package_path: str) -> dict:
     rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
     with open(rt_yaml) as f:
@@ -67,6 +71,8 @@ def generate_launch_description():
         )
         .to_moveit_configs()
     )
+
+
 
     non_rt_cores = os.environ.get("ZEROERR_NON_RT_CORES", "0-13")
     planner_cores = os.environ.get("ZEROERR_PLANNER_CORES", non_rt_cores)
@@ -122,5 +128,7 @@ def generate_launch_description():
             additional_env={"DISPLAY": os.environ.get("DISPLAY", "")},
         )
     )
+
+
 
     return ld

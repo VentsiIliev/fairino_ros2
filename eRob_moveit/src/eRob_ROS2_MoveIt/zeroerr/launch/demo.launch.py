@@ -264,7 +264,6 @@ def generate_launch_description():
     move_group = Node(
         package="moveit_ros_move_group",
         executable="move_group",
-        name="move_group",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -274,6 +273,44 @@ def generate_launch_description():
         additional_env={"DISPLAY": os.environ.get("DISPLAY", "")},
     )
     demo_ld.add_action(move_group)
+
+    # ============================================================
+    # MoveIt Servo
+    # ============================================================
+
+    servo_yaml = os.path.join(
+        package_path,
+        "config",
+        "servo.yaml",
+    )
+
+    with open(servo_yaml) as f:
+        servo_config = yaml.safe_load(f) or {}
+
+    servo_node = Node(
+        package="moveit_servo",
+        executable="servo_node",
+        output="screen",
+        prefix=planner_prefix,
+        parameters=[
+            moveit_config.to_dict(),
+            {
+                "moveit_servo": servo_config,
+            },
+            # Required by:
+            # online_signal_smoothing::AccelerationLimitedPlugin
+            {
+                "update_period": 0.01,
+            },
+            # Parameter required directly by this servo_node implementation
+            {
+                "planning_group_name": "manipulator",
+            },
+        ],
+    )
+
+    demo_ld.add_action(servo_node)
+
 
     rviz_config = os.path.join(package_path, "config", "moveit.rviz")
     rviz = Node(
@@ -460,7 +497,6 @@ def generate_launch_description():
     contour_ik_helper_node = Node(
         package="erob_moveit_runtime",
         executable="contour_ik_helper",
-        name="contour_ik_helper",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -474,7 +510,6 @@ def generate_launch_description():
     ptp_helper_node = Node(
         package="erob_moveit_runtime",
         executable="ptp_helper",
-        name="ptp_helper",
         output="screen",
         prefix=planner_prefix,
         parameters=[
