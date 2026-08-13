@@ -66,7 +66,6 @@ def main():
     atexit.register(_remove_runtime_pid_file, pid_file)
 
     def handle_shutdown_signal(signum, _frame):
-        rclpy.try_shutdown()
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGINT, handle_shutdown_signal)
@@ -108,6 +107,7 @@ def main():
         work_object = WorkObject(*wo_params) if any(v != 0 for v in wo_params) else None
         robot_backend = create_robot_backend(node=ros_node, workobject=work_object, ip="192.168.58.2")
         runtime["robot_backend"] = robot_backend
+        ros_node.robot = robot_backend
 
         # win = MonitorWindow(ros_node, robot_backend)
         # ros_node.ui_callback = win.ros_update

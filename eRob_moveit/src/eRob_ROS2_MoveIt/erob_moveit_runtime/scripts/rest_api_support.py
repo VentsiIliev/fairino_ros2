@@ -40,7 +40,7 @@ def motion_error_response(result: int, **extra):
     return jsonify(body), http_status
 
 
-def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction, float, float, float]:
+def parse_jog_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
 
     axis_val = payload.get("axis")
@@ -56,7 +56,15 @@ def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction
     if direction_val is None:
         raise ValueError("Missing 'direction'")
     try:
-        direction = Direction.get_by_string(direction_val) if isinstance(direction_val, str) else Direction(direction_val)
+        if isinstance(direction_val, str):
+            direction_name = direction_val.strip().upper()
+            direction_aliases = {
+                "POSITIVE": "PLUS",
+                "NEGATIVE": "MINUS",
+            }
+            direction = Direction.get_by_string(direction_aliases.get(direction_name, direction_name))
+        else:
+            direction = Direction(direction_val)
     except ValueError as exc:
         valid_directions = [direction.name for direction in Direction]
         raise ValueError(f"Invalid 'direction': {direction_val}. Valid directions: {valid_directions}") from exc
@@ -71,7 +79,115 @@ def parse_jog_request(data: dict[str, Any] | None) -> tuple[RobotAxis, Direction
     if axis == RobotAxis.Z:
         step = -step
 
-    return axis, direction, step, vel, acc
+    frame_value = payload.get("frame", "user")
+    try:
+        if isinstance(frame_value, int) or (
+            isinstance(frame_value, str) and frame_value.strip().lstrip("-").isdigit()
+        ):
+            frame = CartesianServoFrame.USER
+            user = int(frame_value)
+        else:
+            frame = CartesianServoFrame(str(frame_value).strip().lower())
+            user = int(payload.get("user", 0))
+    except (TypeError, ValueError) as exc:
+        valid_frames = [frame.value for frame in CartesianServoFrame]
+        raise ValueError(
+            f"Invalid 'frame': {frame_value}. Valid frames: {valid_frames} or numeric user frame id"
+        ) from exc
+
+    try:
+        tool = int(payload.get("tool", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid 'tool'") from exc
+
+    return {
+        "axis": axis,
+        "direction": direction,
+        "step": step,
+        "vel": vel,
+        "acc": acc,
+        "frame": frame,
+        "tool": tool,
+        "user": user,
+    }
+
+
+def parse_servo_jog_start_request(data: dict[str, Any] | None) -> dict[str, Any]:
+    payload = data or {}
+
+    axis_val = payload.get("axis")
+    if axis_val is None:
+        raise ValueError("Missing 'axis'")
+    try:
+        axis = RobotAxis.get_by_string(axis_val) if isinstance(axis_val, str) else RobotAxis(axis_val)
+    except ValueError as exc:
+        valid_axes = [axis.name for axis in RobotAxis]
+        raise ValueError(f"Invalid 'axis': {axis_val}. Valid axes: {valid_axes}") from exc
+
+    direction_val = payload.get("direction")
+    if direction_val is None:
+        raise ValueError("Missing 'direction'")
+    try:
+        if isinstance(direction_val, str):
+            direction_name = direction_val.strip().upper()
+            direction_aliases = {
+                "POSITIVE": "PLUS",
+                "NEGATIVE": "MINUS",
+            }
+            direction = Direction.get_by_string(direction_aliases.get(direction_name, direction_name))
+        else:
+            direction = Direction(direction_val)
+    except ValueError as exc:
+        valid_directions = [direction.name for direction in Direction]
+        raise ValueError(f"Invalid 'direction': {direction_val}. Valid directions: {valid_directions}") from exc
+
+    linear_mm_s = payload.get("linear_mm_s")
+    angular_deg_s = payload.get("angular_deg_s")
+    vel = payload.get("vel")
+    acc = payload.get("acc")
+    try:
+        linear_mm_s = None if linear_mm_s is None else float(linear_mm_s)
+        angular_deg_s = None if angular_deg_s is None else float(angular_deg_s)
+        vel = None if vel is None else float(vel)
+        acc = None if acc is None else float(acc)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid linear_mm_s/angular_deg_s/vel/acc") from exc
+
+    if linear_mm_s is None and angular_deg_s is None and vel is None:
+        raise ValueError("Missing speed; provide linear_mm_s/angular_deg_s or vel")
+
+    frame_value = payload.get("frame", "user")
+    try:
+        if isinstance(frame_value, int) or (
+            isinstance(frame_value, str) and frame_value.strip().lstrip("-").isdigit()
+        ):
+            frame = CartesianServoFrame.USER
+            user = int(frame_value)
+        else:
+            frame = CartesianServoFrame(str(frame_value).strip().lower())
+            user = int(payload.get("user", 0))
+    except (TypeError, ValueError) as exc:
+        valid_frames = [frame.value for frame in CartesianServoFrame]
+        raise ValueError(
+            f"Invalid 'frame': {frame_value}. Valid frames: {valid_frames} or numeric user frame id"
+        ) from exc
+
+    try:
+        tool = int(payload.get("tool", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid 'tool'") from exc
+
+    return {
+        "axis": axis,
+        "direction": direction,
+        "vel": vel,
+        "acc": acc,
+        "linear_mm_s": linear_mm_s,
+        "angular_deg_s": angular_deg_s,
+        "frame": frame,
+        "tool": tool,
+        "user": user,
+    }
 
 
 def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
@@ -242,21 +358,29 @@ def parse_cartesian_servo_start_request(
         raise ValueError("Missing 'frame'")
 
     try:
-        frame = CartesianServoFrame(str(frame_value).strip().lower())
+        if isinstance(frame_value, int) or (
+            isinstance(frame_value, str) and frame_value.strip().lstrip("-").isdigit()
+        ):
+            frame = CartesianServoFrame.USER
+            user = int(frame_value)
+        else:
+            frame = CartesianServoFrame(str(frame_value).strip().lower())
+            user = int(payload.get("user", 0))
     except (TypeError, ValueError) as exc:
         valid_frames = [frame.value for frame in CartesianServoFrame]
         raise ValueError(
-            f"Invalid 'frame': {frame_value}. Valid frames: {valid_frames}"
+            f"Invalid 'frame': {frame_value}. Valid frames: {valid_frames} or numeric user frame id"
         ) from exc
 
     try:
-        tool = int(payload.get("tool"))
+        tool = int(payload.get("tool", 0))
     except (TypeError, ValueError) as exc:
-        raise ValueError("Invalid or missing 'tool'") from exc
+        raise ValueError("Invalid 'tool'") from exc
 
     return {
         "frame": frame,
         "tool": tool,
+        "user": user,
     }
 
 

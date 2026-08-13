@@ -18,8 +18,8 @@ publish_joint_accelerations: false
 use_smoothing: true
 smoothing_filter_plugin_name: "online_signal_smoothing::AccelerationLimitedPlugin"
 
-# move_group already owns the primary PlanningSceneMonitor
-is_primary_planning_scene_monitor: false
+# The local ZeroErr Servo node owns its PlanningSceneMonitor state.
+is_primary_planning_scene_monitor: true
 
 check_octomap_collisions: false
 
@@ -27,8 +27,11 @@ check_octomap_collisions: false
 move_group_name: manipulator
 planning_group_name: manipulator
 
-lower_singularity_threshold: 10.0
-hard_stop_singularity_threshold: 30.0
+# ZeroErr working poses can sit close to wrist singularity according to Servo's
+# condition metric. Keep singularity protection, but do not scale ordinary jog
+# commands to near-zero as early as the conservative demo defaults.
+lower_singularity_threshold: 25.0
+hard_stop_singularity_threshold: 60.0
 leaving_singularity_threshold_multiplier: 2.0
 
 joint_limit_margins: [0.12]
@@ -37,6 +40,7 @@ cartesian_command_in_topic: ~/delta_twist_cmds
 joint_command_in_topic: ~/delta_joint_cmds
 
 joint_topic: /joint_states
+monitored_planning_scene_topic: /monitored_planning_scene
 status_topic: ~/status
 
 command_out_topic: /manipulator_controller/joint_trajectory

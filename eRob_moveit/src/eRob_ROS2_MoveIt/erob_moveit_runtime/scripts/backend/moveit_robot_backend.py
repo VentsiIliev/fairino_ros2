@@ -6,7 +6,9 @@ import time
 import traceback
 import config
 from backend.i_robot_backend import IRobotBackend
-from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo
+from motion.jog.planned_jog import PlannedJogCapability
+from motion.jog.servo_jog import ServoJogCapability
+from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo, CartesianServoFrame
 
 
 class MoveItRobotBackend(IRobotBackend):
@@ -29,6 +31,8 @@ class MoveItRobotBackend(IRobotBackend):
         self.workobject = workobject  # Default WorkObject frame (user=0)
         self.workobject_registry = {0: workobject}  # Registry of work objects by user ID
         self._cartesian_servo = cartesian_servo
+        self._planned_jog = PlannedJogCapability(self)
+        self._servo_jog = ServoJogCapability(self)
 
     # ---------------- WorkObject Methods ----------------
     def set_workobject(self, workobject, user_id=0):
@@ -1344,7 +1348,55 @@ class MoveItRobotBackend(IRobotBackend):
             time.sleep(check_interval)
 
     # ---------------- Jog / Control / Misc ----------------
-    def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc):
+    def start_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc, *, frame=None, tool=0, user=0):
+        if frame is None:
+            frame = CartesianServoFrame.USER
+        else:
+            frame = CartesianServoFrame(frame)
+        return self._planned_jog.start_jog(
+            axis,
+            direction,
+            step,
+            vel,
+            acc,
+            frame=frame,
+            tool=tool,
+            user=user,
+        )
+
+    def start_servo_jog(
+        self,
+        axis: RobotAxis,
+        direction: Direction,
+        vel=None,
+        acc=None,
+        *,
+        frame=None,
+        tool=0,
+        user=0,
+        linear_mm_s=None,
+        angular_deg_s=None,
+    ):
+        if frame is None:
+            frame = CartesianServoFrame.USER
+        else:
+            frame = CartesianServoFrame(frame)
+        return self._servo_jog.start_continuous_jog(
+            axis,
+            direction,
+            vel,
+            acc,
+            frame=frame,
+            tool=tool,
+            user=user,
+            linear_mm_s=linear_mm_s,
+            angular_deg_s=angular_deg_s,
+        )
+
+    def stop_servo_jog(self):
+        return self._servo_jog.stop_continuous_jog()
+
+    def _start_planned_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc, *, frame=None, tool=0, user=0):
         drive_error = self._reject_if_drive_not_enabled("JOG")
         if drive_error is not None:
             return drive_error
@@ -1571,6 +1623,10 @@ class MoveItRobotBackend(IRobotBackend):
             }
 
         setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+        try:
+            self.stop_servo_jog()
+        except Exception as exc:
+            self.node.get_logger().warning(f"[SERVO_JOG] stop during stop_motion failed: {exc}")
         return self.node.stop_motion()
 
     def resetAllErrors(self):

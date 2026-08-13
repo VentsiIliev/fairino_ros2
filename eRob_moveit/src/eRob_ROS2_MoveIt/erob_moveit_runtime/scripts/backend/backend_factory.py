@@ -11,6 +11,8 @@ def create_robot_backend(node, workobject=None, ip: str = '0.0.0.0'):
         publish_rate_hz=100.0,
         node=node,
         base_frame="base_link",
+        service_timeout_s=float(getattr(config, "CARTESIAN_SERVO_SERVICE_TIMEOUT_S", 5.0)),
+        tf_timeout_s=float(getattr(config, "CARTESIAN_SERVO_TF_TIMEOUT_S", 0.25)),
     )
 
     backend_kind = str(getattr(config, 'ROBOT_BACKEND', 'moveit')).lower()

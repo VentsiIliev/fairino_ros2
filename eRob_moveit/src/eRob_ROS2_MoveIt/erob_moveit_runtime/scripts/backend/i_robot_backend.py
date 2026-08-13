@@ -58,7 +58,25 @@ class IRobotBackend(ABC):
     def get_current_velocity(self): ...
 
     @abstractmethod
-    def start_jog(self, axis, direction, step, vel, acc): ...
+    def start_jog(self, axis, direction, step, vel, acc, *, frame=None, tool=0, user=0): ...
+
+    @abstractmethod
+    def start_servo_jog(
+        self,
+        axis,
+        direction,
+        vel=None,
+        acc=None,
+        *,
+        frame=None,
+        tool=0,
+        user=0,
+        linear_mm_s=None,
+        angular_deg_s=None,
+    ): ...
+
+    @abstractmethod
+    def stop_servo_jog(self): ...
 
     @property
     @abstractmethod

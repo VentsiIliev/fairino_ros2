@@ -80,6 +80,7 @@ class DummyCartesianServo(CartesianServo):
         *,
         frame: CartesianServoFrame,
         tool: int,
+        user: int,
     ) -> bool:
         """
         Start a new Cartesian Servo session.
@@ -92,9 +93,10 @@ class DummyCartesianServo(CartesianServo):
             self._published_command = self._zero_command()
 
         self._logger.info(
-            "[CARTESIAN_SERVO] START frame=%s tool=%d",
+            "[CARTESIAN_SERVO] START frame=%s tool=%d user=%d",
             frame.value,
             tool,
+            user,
         )
 
         return True

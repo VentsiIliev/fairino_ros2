@@ -3,7 +3,6 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
-
 def _runtime_yaml_path(package_path: str) -> str:
     return os.path.join(package_path, "config", "runtime.yaml")
 
@@ -288,29 +287,21 @@ def generate_launch_description():
         servo_config = yaml.safe_load(f) or {}
 
     servo_node = Node(
-        package="moveit_servo",
-        executable="servo_node",
+        package="zeroerr",
+        executable="zeroerr_servo_node",
+        name="servo_node",
         output="screen",
         prefix=planner_prefix,
         parameters=[
-            moveit_config.to_dict(),
-            {
-                "moveit_servo": servo_config,
-            },
-            # Required by:
-            # online_signal_smoothing::AccelerationLimitedPlugin
-            {
-                "update_period": 0.01,
-            },
-            # Parameter required directly by this servo_node implementation
-            {
-                "planning_group_name": "manipulator",
-            },
+            {"moveit_servo": servo_config},
+            {"update_period": 0.01},
+            {"planning_group_name": "manipulator"},
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
         ],
     )
-
-    demo_ld.add_action(servo_node)
-
 
     rviz_config = os.path.join(package_path, "config", "moveit.rviz")
     rviz = Node(
@@ -369,6 +360,7 @@ def generate_launch_description():
         arguments=["joint_state_broadcaster"],
         output="screen",
     )
+    demo_ld.add_action(servo_node)
     demo_ld.add_action(manipulator_controller_spawner)
     demo_ld.add_action(joint_state_broadcaster_spawner)
 

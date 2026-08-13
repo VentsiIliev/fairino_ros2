@@ -2,6 +2,30 @@ cmake_minimum_required(VERSION 3.22)
 project(zeroerr)
 
 find_package(ament_cmake REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
+find_package(moveit_servo REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+
+add_executable(zeroerr_servo_node src/zeroerr_servo_node.cpp)
+ament_target_dependencies(zeroerr_servo_node
+  control_msgs
+  geometry_msgs
+  moveit_msgs
+  moveit_servo
+  rclcpp
+  std_msgs
+  std_srvs
+  trajectory_msgs
+)
+
+install(TARGETS zeroerr_servo_node
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(PROGRAMS
   scripts/zeroerr_state_publisher.py

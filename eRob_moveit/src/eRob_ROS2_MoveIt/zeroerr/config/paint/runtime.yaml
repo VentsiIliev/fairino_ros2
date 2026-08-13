@@ -31,10 +31,46 @@ ACTIVE_TOOL_COLLISION_ORIGIN:
 - 0
 ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM: true
 ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
+- Link_5
 - ee_link
 - tool0
 - tcp
 - Link_6
+
+# Publish the fixture as MoveIt world geometry so Servo collision checking sees
+# the mounting surface as scene geometry, not only as an RViz/URDF visual.
+MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED: true
+MOUNTING_SURFACE_COLLISION_OBJECT_ID: mounting_surface_collision
+MOUNTING_SURFACE_COLLISION_OBJECT_FRAME: mounting_surface
+MOUNTING_SURFACE_COLLISION_BOX_M:
+- 0.115
+- 0.190
+- 0.1475
+MOUNTING_SURFACE_COLLISION_ORIGIN:
+- 100.0
+- 576.45
+- 158.0
+- 0.0
+- 0.0
+- 0.0
+
+# If Servo has already halted in contact with the fixture, allow only a
+# deliberate base +Z recovery command to back out, then restore collision checks.
+CARTESIAN_SERVO_COLLISION_ESCAPE_ENABLED: true
+CARTESIAN_SERVO_COLLISION_ESCAPE_AXIS_BASE:
+- 0.0
+- 0.0
+- 1.0
+CARTESIAN_SERVO_COLLISION_ESCAPE_MIN_LINEAR_M_S: 0.001
+CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
+CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
+CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05
+
+SERVO_JOG_LINEAR_SPEED_AT_100_PERCENT_MM_S: 100.0
+SERVO_JOG_ANGULAR_SPEED_AT_100_PERCENT_DEG_S: 30.0
+SERVO_JOG_DEFAULT_LINEAR_MM_S: 10.0
+SERVO_JOG_DEFAULT_ANGULAR_DEG_S: 3.0
+SERVO_JOG_MAX_DURATION_S: 10.0
 
 # Dense paint contours use direct IK plus TOTG timing. Ruckig can introduce
 # implausible local timing gaps on these long wrapped Joint_6 paths.
@@ -85,4 +121,3 @@ TOOL_ID_MAP:
 
 # Use Pilz CommandPlanner LIN for single-target /move/linear requests.
 MOVE_LIN_STRATEGY: cartesian_path
-

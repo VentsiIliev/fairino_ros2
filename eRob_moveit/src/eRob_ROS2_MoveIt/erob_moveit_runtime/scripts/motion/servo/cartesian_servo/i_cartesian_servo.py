@@ -4,10 +4,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import Sequence
+import logging
 
+_logger = logging.getLogger(__name__)
 
 class CartesianServoFrame(str, Enum):
     BASE = "base"
+    USER = "user"
     TOOL = "tool"
 
 
@@ -43,6 +46,7 @@ class CartesianServoStatus:
     state: CartesianServoState
     frame: CartesianServoFrame | None
     tool: int | None
+    user: int | None
     command: CartesianServoCommand | None
     error: str | None = None
 
@@ -69,6 +73,7 @@ class CartesianServo(ABC):
         self._state = CartesianServoState.STOPPED
         self._frame: CartesianServoFrame | None = None
         self._tool: int | None = None
+        self._user: int | None = None
         self._command: CartesianServoCommand | None = None
         self._error: str | None = None
 
@@ -81,38 +86,52 @@ class CartesianServo(ABC):
         *,
         frame: CartesianServoFrame,
         tool: int,
+        user: int = 0,
     ) -> CartesianServoResult:
-
+        _logger.debug(f"[CARTESIAN_SERVO] START frame={frame} tool={tool} user={user}")
         if self._state == CartesianServoState.RUNNING:
             return CartesianServoResult.ALREADY_RUNNING
 
         try:
             frame = CartesianServoFrame(frame)
+            _logger.debug(f"[CARTESIAN_SERVO] START frame={frame} tool={tool} user={user}")
         except (TypeError, ValueError):
+            # log the actual error
+            _logger.error(f"[CARTESIAN_SERVO] Invalid frame: {frame}", exc_info=True)
             return CartesianServoResult.INVALID_FRAME
 
         try:
             tool = int(tool)
+            user = int(user)
+            _logger.debug(f"[CARTESIAN_SERVO] START frame={frame} tool={tool} user={user}")
         except (TypeError, ValueError):
+            _logger.error(f"[CARTESIAN_SERVO] Invalid tool/user: tool={tool} user={user}", exc_info=True)
             return CartesianServoResult.INVALID_TOOL
 
         try:
             success = self._on_start(
                 frame=frame,
                 tool=tool,
+                user=user,
             )
+            _logger.debug(f"[CARTESIAN_SERVO] START success={success} frame={frame} tool={tool} user={user}")
         except Exception as exc:
             self._state = CartesianServoState.ERROR
             self._error = str(exc)
+            # log the actual error
+            _logger.error(f"[CARTESIAN_SERVO] Start failed: {exc}", exc_info=True)
             return CartesianServoResult.START_FAILED
 
         if not success:
             self._state = CartesianServoState.ERROR
             self._error = "Servo implementation failed to start"
+            # log the actual error
+            _logger.error(f"[CARTESIAN_SERVO] Start failed: Servo implementation failed to start")
             return CartesianServoResult.START_FAILED
 
         self._frame = frame
         self._tool = tool
+        self._user = user
         self._command = self._zero_command()
         self._error = None
         self._state = CartesianServoState.RUNNING
@@ -173,6 +192,7 @@ class CartesianServo(ABC):
         self._state = CartesianServoState.STOPPED
         self._frame = None
         self._tool = None
+        self._user = None
         self._command = None
         self._error = None
 
@@ -183,6 +203,7 @@ class CartesianServo(ABC):
             state=self._state,
             frame=self._frame,
             tool=self._tool,
+            user=self._user,
             command=self._command,
             error=self._error,
         )
@@ -200,6 +221,7 @@ class CartesianServo(ABC):
         *,
         frame: CartesianServoFrame,
         tool: int,
+        user: int,
     ) -> bool:
         """Backend-specific servo startup."""
         raise NotImplementedError

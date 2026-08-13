@@ -322,6 +322,7 @@ class RobotController(Node):
         """Publish safety walls after a short delay to speed up initialization."""
         self.safety_manager.force_update()
         self.get_logger().info('[Init] Safety walls published')
+        self._publish_mounting_surface_collision()
         self._publish_active_tool_collision()
 
         if hasattr(self, '_safety_init_timer'):
@@ -330,6 +331,67 @@ class RobotController(Node):
 
     def _active_tool_collision_enabled(self) -> bool:
         return bool(getattr(config, "ACTIVE_TOOL_COLLISION_ENABLED", False))
+
+    def _mounting_surface_collision_enabled(self) -> bool:
+        return bool(getattr(config, "MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED", False))
+
+    def _publish_mounting_surface_collision(self):
+        if not self._mounting_surface_collision_enabled():
+            return
+
+        try:
+            obj = CollisionObject()
+            obj.id = str(
+                getattr(config, "MOUNTING_SURFACE_COLLISION_OBJECT_ID", "mounting_surface_collision")
+            )
+            obj.header.frame_id = str(
+                getattr(config, "MOUNTING_SURFACE_COLLISION_OBJECT_FRAME", "mounting_surface")
+            )
+            obj.header.stamp = self.get_clock().now().to_msg()
+
+            box_values = list(getattr(config, "MOUNTING_SURFACE_COLLISION_BOX_M", []) or [])
+            if len(box_values) != 3:
+                box_values = [0.115, 0.190, 0.1475]
+
+            primitive = SolidPrimitive()
+            primitive.type = SolidPrimitive.BOX
+            primitive.dimensions = [float(value) for value in box_values]
+
+            origin_values = list(
+                getattr(
+                    config,
+                    "MOUNTING_SURFACE_COLLISION_ORIGIN",
+                    [100.0, 576.45, 158.0, 0.0, 0.0, 0.0],
+                ) or []
+            )
+            if len(origin_values) != 6:
+                origin_values = [100.0, 576.45, 158.0, 0.0, 0.0, 0.0]
+
+            T_collision = TransformationUtils.pose_to_transform(origin_values)
+            quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
+            pose = Pose()
+            pose.position.x = float(T_collision[0, 3])
+            pose.position.y = float(T_collision[1, 3])
+            pose.position.z = float(T_collision[2, 3])
+            pose.orientation.x = float(quat[0])
+            pose.orientation.y = float(quat[1])
+            pose.orientation.z = float(quat[2])
+            pose.orientation.w = float(quat[3])
+
+            obj.primitives.append(primitive)
+            obj.primitive_poses.append(pose)
+            obj.operation = CollisionObject.ADD
+
+            scene = PlanningScene()
+            scene.is_diff = True
+            scene.world.collision_objects.append(obj)
+            self.active_tool_collision_pub.publish(scene)
+            self.get_logger().info(
+                f"[MountingSurfaceCollision] Published box id={obj.id} frame={obj.header.frame_id} "
+                f"dims={primitive.dimensions}"
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"[MountingSurfaceCollision] Failed to publish collision object: {exc}")
 
     def _publish_active_tool_collision(self):
         if not self._active_tool_collision_enabled():
@@ -655,6 +717,14 @@ class RobotController(Node):
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")
         self._publish_active_tool_collision()
+
+    def set_active_tool(self, tool_id):
+        tool_name = tool_id_map.get(tool_id, "TOOL_0")
+        if tool_name not in tool_registry:
+            self.get_logger().warning(f"Tool {tool_name} not found in registry")
+            return False
+        self.set_tool(tool_name)
+        return True
 
     def load_tcp_transform(self):
         if self.tcp_loaded:
@@ -1079,6 +1149,13 @@ class RobotController(Node):
         return self._motion.has_pending_motion()
 
     def destroy_node(self):
+        backend = getattr(self, 'robot', None)
+        servo = getattr(backend, 'cartesian_servo', None)
+        if servo is not None and hasattr(servo, 'shutdown'):
+            try:
+                servo.shutdown()
+            except Exception as exc:
+                self.get_logger().warning(f'Cartesian Servo shutdown failed: {exc}')
         self._ethercat_watchdog_running = False
         watchdog = getattr(self, '_ethercat_watchdog_thread', None)
         if watchdog is not None and watchdog.is_alive():

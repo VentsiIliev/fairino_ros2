@@ -13,7 +13,6 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from werkzeug.exceptions import HTTPException
 
-from motion.servo import cartesian_servo
 from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
 from backend.i_robot_backend import IRobotBackend
@@ -82,6 +81,8 @@ OPENAPI_SPEC = {
             }
         },
         "/jog": {"post": {"tags": ["motion"], "summary": "Jog along one robot axis"}},
+        "/servojog/start": {"post": {"tags": ["servo"], "summary": "Start continuous ServoJog"}},
+        "/servojog/stop": {"post": {"tags": ["servo"], "summary": "Stop continuous ServoJog"}},
         "/stop": {"post": {"tags": ["motion"], "summary": "Stop active motion and clear queued work"}},
         "/reachability/pose": {"post": {"tags": ["planning"], "summary": "Validate pose reachability from a start pose"}},
         "/workobject/set": {"post": {"tags": ["frames"], "summary": "Set active work object origin"}},
@@ -184,9 +185,12 @@ def _apply_openapi_details():
             "trajectory_optimizer": "RUCKIG",
         },
         "/unwind/joint6": {"blocking": True, "queue_if_busy": True, "vel": 20, "acc": 20},
-        "/jog": {"axis": "X", "direction": "POSITIVE", "step": 10, "vel": 10, "acc": 10},
+        "/jog": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
+        "/servojog/start": {"axis": "X", "direction": "PLUS", "linear_mm_s": 10, "angular_deg_s": 3, "frame": "user", "user": 0, "tool": 0},
+        "/servojog/stop": {},
         "/servo/cartesian/start": {
-            "frame": "tool",
+            "frame": "user",
+            "user": 0,
             "tool": 1,
         },
 
@@ -235,9 +239,36 @@ def _apply_openapi_details():
                         "step": {"type": "number"},
                         "vel": {"type": "number"},
                         "acc": {"type": "number"},
+                        "frame": {"oneOf": [{"type": "string", "enum": ["base", "user", "tool"]}, {"type": "integer"}]},
+                        "user": {"type": "integer"},
+                        "tool": {"type": "integer"},
                     },
                 },
-                "example": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10},
+                "example": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
+            },
+        },
+    }
+
+    OPENAPI_SPEC["paths"]["/servojog/start"]["post"]["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["axis", "direction"],
+                    "properties": {
+                        "axis": {"type": "string", "enum": ["X", "Y", "Z", "RX", "RY", "RZ"]},
+                        "direction": {"type": "string", "enum": ["PLUS", "MINUS", "POSITIVE", "NEGATIVE"]},
+                        "linear_mm_s": {"type": "number"},
+                        "angular_deg_s": {"type": "number"},
+                        "vel": {"type": "number"},
+                        "acc": {"type": "number"},
+                        "frame": {"oneOf": [{"type": "string", "enum": ["base", "user", "tool"]}, {"type": "integer"}]},
+                        "user": {"type": "integer"},
+                        "tool": {"type": "integer"},
+                    },
+                },
+                "example": {"axis": "X", "direction": "PLUS", "linear_mm_s": 10, "angular_deg_s": 3, "frame": "user", "user": 0, "tool": 0},
             },
         },
     }
@@ -695,13 +726,13 @@ def start_rest_server(
     @app.route("/servo/cartesian/start", methods=["POST"])
     def cartesian_servo_start():
         return api_response(
-            runtime_api.cartesian_servo_start(request.json)
+            runtime_api.cartesian_servo_start(request.get_json(silent=True))
         )
 
     @app.route("/servo/cartesian/update", methods=["POST"])
     def cartesian_servo_update():
         return api_response(
-            runtime_api.cartesian_servo_update(request.json)
+            runtime_api.cartesian_servo_update(request.get_json(silent=True))
         )
 
     @app.route("/servo/cartesian/stop", methods=["POST"])
@@ -712,7 +743,15 @@ def start_rest_server(
 
     @app.route("/jog", methods=["POST"])
     def jog():
-        return api_response(runtime_api.jog(request.json))
+        return api_response(runtime_api.jog(request.get_json(silent=True)))
+
+    @app.route("/servojog/start", methods=["POST"])
+    def servo_jog_start():
+        return api_response(runtime_api.servo_jog_start(request.get_json(silent=True)))
+
+    @app.route("/servojog/stop", methods=["POST"])
+    def servo_jog_stop():
+        return api_response(runtime_api.servo_jog_stop())
 
     @app.route("/io/digital_output", methods=["POST"])
     def set_digital_output():

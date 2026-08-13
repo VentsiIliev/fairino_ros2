@@ -19,6 +19,7 @@ from rest_api_support import (
     parse_execute_sequence_request,
     parse_jog_request,
     parse_move_linear_request,
+    parse_servo_jog_start_request,
     validate_pose_from_start,
 )
 from utils.work_object import WorkObject
@@ -564,11 +565,20 @@ class RuntimeApi:
 
     def jog(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
-            axis, direction, step, vel, acc = parse_jog_request(data)
+            payload = parse_jog_request(data)
             not_ready = self._require_motion_stack_ready()
             if not_ready is not None:
                 return not_ready
-            result = self.robot.start_jog(axis, direction, step, vel, acc)
+            result = self.robot.start_jog(
+                payload["axis"],
+                payload["direction"],
+                payload["step"],
+                payload["vel"],
+                payload["acc"],
+                frame=payload["frame"],
+                tool=payload["tool"],
+                user=payload["user"],
+            )
             if result == 0:
                 return ApiResponse({"result": result, "success": True})
             return motion_error(result)
@@ -576,6 +586,42 @@ class RuntimeApi:
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
         except Exception as exc:
             self.robot.node.get_logger().error(f"Jog endpoint error: {exc}")
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
+
+    def servo_jog_start(self, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = parse_servo_jog_start_request(data)
+            not_ready = self._require_motion_stack_ready()
+            if not_ready is not None:
+                return not_ready
+            result = self.robot.start_servo_jog(
+                payload["axis"],
+                payload["direction"],
+                payload["vel"],
+                payload["acc"],
+                frame=payload["frame"],
+                tool=payload["tool"],
+                user=payload["user"],
+                linear_mm_s=payload["linear_mm_s"],
+                angular_deg_s=payload["angular_deg_s"],
+            )
+            if result == 0:
+                return ApiResponse({"result": result, "success": True, "state": "running"})
+            return motion_error(result)
+        except ValueError as exc:
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            self.robot.node.get_logger().error(f"ServoJog start endpoint error: {exc}")
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
+
+    def servo_jog_stop(self) -> ApiResponse:
+        try:
+            result = self.robot.stop_servo_jog()
+            if result == 0:
+                return ApiResponse({"result": result, "success": True, "state": "stopped"})
+            return motion_error(result)
+        except Exception as exc:
+            self.robot.node.get_logger().error(f"ServoJog stop endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def set_digital_output(self, data: dict[str, Any] | None) -> ApiResponse:
@@ -775,15 +821,17 @@ class RuntimeApi:
             )
 
         logger.info(
-            "Received Cartesian Servo start frame=%s tool=%s",
+            "Received Cartesian Servo start frame=%s tool=%s user=%s",
             payload["frame"].value,
             payload["tool"],
+            payload["user"],
         )
 
         try:
             result = servo.start(
                 frame=payload["frame"],
                 tool=payload["tool"],
+                user=payload["user"],
             )
         except Exception as exc:
             logger.exception("Cartesian Servo start failed")

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <robot name="eRobo3">
     <group name="manipulator">
-        <joint name="virtual_joint"/>
         <joint name="Joint_1"/>
         <joint name="Joint_2"/>
         <joint name="Joint_3"/>
