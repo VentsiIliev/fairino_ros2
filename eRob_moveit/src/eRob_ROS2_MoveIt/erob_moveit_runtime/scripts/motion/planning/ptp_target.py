@@ -42,6 +42,68 @@ def _wait_future(
     )
 
 
+def _robot_identity(robot_controller):
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
+
+    return planning_group, ee_link, joint_names
+
+
+def _scope_joint_state(robot_controller, joint_state):
+    """Return a position-only joint state ordered for the selected robot."""
+    if joint_state is None:
+        return None
+
+    state_names = list(getattr(joint_state, "name", []) or [])
+    state_positions = list(getattr(joint_state, "position", []) or [])
+
+    if not state_names or len(state_names) != len(state_positions):
+        return None
+
+    _, _, joint_names = _robot_identity(robot_controller)
+    if not joint_names:
+        return None
+
+    position_by_name = dict(zip(state_names, state_positions))
+    missing = [
+        name
+        for name in joint_names
+        if name not in position_by_name
+    ]
+    if missing:
+        return None
+
+    result = JointState()
+    result.header.stamp = (
+        robot_controller
+        .get_clock()
+        .now()
+        .to_msg()
+    )
+    result.name = list(joint_names)
+    result.position = [
+        float(position_by_name[name])
+        for name in joint_names
+    ]
+
+    return result
+
+
 def _get_live_joint_state(robot_controller):
     joint_state = getattr(
         robot_controller,
@@ -49,46 +111,10 @@ def _get_live_joint_state(robot_controller):
         None,
     )
 
-    if joint_state is None:
-        return None
-
-    names = list(
-        getattr(
-            joint_state,
-            "name",
-            [],
-        )
-        or []
+    return _scope_joint_state(
+        robot_controller,
+        joint_state,
     )
-
-    positions = list(
-        getattr(
-            joint_state,
-            "position",
-            [],
-        )
-        or []
-    )
-
-    if not names:
-        return None
-
-    if len(names) != len(positions):
-        return None
-
-    result = JointState()
-
-    result.header.stamp = (
-        robot_controller
-        .get_clock()
-        .now()
-        .to_msg()
-    )
-
-    result.name = names
-    result.position = positions
-
-    return result
 
 
 def _request_native_ptp(
@@ -110,18 +136,26 @@ def _request_native_ptp(
             "native PTP service unavailable"
         )
 
+    planning_group, ee_link, _ = _robot_identity(
+        robot_controller
+    )
+
+    scoped_start_state = _scope_joint_state(
+        robot_controller,
+        start_state,
+    )
+    if scoped_start_state is None:
+        raise RuntimeError(
+            "PTP start joint state does not contain all active robot joints"
+        )
+
     request = ComputePtp.Request()
 
     request.target_pose = target_pose
-    request.start_state = start_state
+    request.start_state = scoped_start_state
 
-    request.group_name = str(
-        config.PLANNING_GROUP
-    )
-
-    request.link_name = str(
-        config.EE_LINK
-    )
+    request.group_name = planning_group
+    request.link_name = ee_link
 
     #
     # Keep each IK attempt short.
@@ -291,6 +325,7 @@ def plan_ptp_trajectory(
         start_joint_state,
     )
 
+
 def send_ptp_goal(
     robot_controller,
     x_mm,
@@ -312,7 +347,7 @@ def send_ptp_goal(
 
     if start_state is None:
         robot_controller.get_logger().error(
-            "[PTP] Current joint state unavailable"
+            "[PTP] Current joint state unavailable or missing active robot joints"
         )
         return -4
 
