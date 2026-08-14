@@ -24,6 +24,58 @@ def _wait_future(future, timeout_s: float = 10.0):
     raise TimeoutError(f"Timed out waiting for MoveIt service response after {timeout_s:.1f}s")
 
 
+def _robot_identity(node):
+    robot_context = getattr(node, "robot_context", None)
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
+    return planning_group, ee_link, base_link, joint_names
+
+
+def _scope_joint_state(node, joint_state):
+    """Return a position-only joint state scoped and ordered to the active robot."""
+    if joint_state is None:
+        return None
+
+    names = list(getattr(joint_state, "name", []) or [])
+    positions = list(getattr(joint_state, "position", []) or [])
+    if not names or len(names) != len(positions):
+        return None
+
+    _, _, _, joint_names = _robot_identity(node)
+    if not joint_names:
+        state = deepcopy(joint_state)
+        state.velocity = []
+        state.effort = []
+        return state
+
+    position_by_name = dict(zip(names, positions))
+    if any(name not in position_by_name for name in joint_names):
+        return None
+
+    from sensor_msgs.msg import JointState
+
+    state = JointState()
+    state.header = deepcopy(getattr(joint_state, "header", state.header))
+    state.name = list(joint_names)
+    state.position = [float(position_by_name[name]) for name in joint_names]
+    return state
+
+
 def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=None, avoid_collisions=True):
     ik_client = node.get_ik_client()
     if ik_client is None or not ik_client.wait_for_service(timeout_sec=1.0):
@@ -31,23 +83,21 @@ def _request_ik_for_pose(node, pose, timeout_s: float = 3.0, seed_joint_state=No
 
     from moveit_msgs.srv import GetPositionIK
 
+    planning_group, ee_link, base_link, _ = _robot_identity(node)
+
     req = GetPositionIK.Request()
-    req.ik_request.group_name = config.PLANNING_GROUP
-    req.ik_request.ik_link_name = config.EE_LINK
-    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.group_name = planning_group
+    req.ik_request.ik_link_name = ee_link
+    req.ik_request.pose_stamped.header.frame_id = base_link
     req.ik_request.pose_stamped.header.stamp = node.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
     req.ik_request.avoid_collisions = bool(avoid_collisions)
     req.ik_request.timeout.sec = int(timeout_s)
     req.ik_request.timeout.nanosec = int((timeout_s - int(timeout_s)) * 1_000_000_000)
 
-    if seed_joint_state is not None:
-        state = deepcopy(seed_joint_state)
-        state.header.stamp = node.get_clock().now().to_msg()
-        req.ik_request.robot_state.joint_state = state
-        req.ik_request.robot_state.is_diff = True
-    elif node.current_joint_state is not None:
-        state = deepcopy(node.current_joint_state)
+    candidate_seed = seed_joint_state if seed_joint_state is not None else node.current_joint_state
+    state = _scope_joint_state(node, candidate_seed)
+    if state is not None:
         state.header.stamp = node.get_clock().now().to_msg()
         req.ik_request.robot_state.joint_state = state
         req.ik_request.robot_state.is_diff = True
@@ -64,13 +114,15 @@ def _check_state_validity(node, joint_names, joint_positions, timeout_s: float =
     from moveit_msgs.srv import GetStateValidity
     from sensor_msgs.msg import JointState
 
+    planning_group, _, _, _ = _robot_identity(node)
+
     req = GetStateValidity.Request()
     js = JointState()
     js.name = list(joint_names)
     js.position = list(joint_positions)
     req.robot_state.joint_state = js
     req.robot_state.is_diff = True
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = planning_group
 
     future = state_validity_client.call_async(req)
     return _wait_future(future, timeout_s=timeout_s + 1.0)
@@ -105,9 +157,10 @@ def validate_pose_from_start(node, robot, start_position, target_position, tool=
         start_positions = list(start_joint_state_payload.get("position", []) or [])
         if start_names and start_positions and len(start_names) == len(start_positions):
             from sensor_msgs.msg import JointState
-            start_joint_state = JointState()
-            start_joint_state.name = start_names
-            start_joint_state.position = start_positions
+            payload_state = JointState()
+            payload_state.name = start_names
+            payload_state.position = start_positions
+            start_joint_state = _scope_joint_state(node, payload_state)
 
     if start_joint_state is None:
         start_poses, err = _to_pose_list(node, [start_base], tool_transform, check_last_only=True)
@@ -125,7 +178,7 @@ def validate_pose_from_start(node, robot, start_position, target_position, tool=
 
         start_ik_error = int(getattr(getattr(start_ik_resp, "error_code", None), "val", 0))
         start_solution = getattr(start_ik_resp, "solution", None)
-        start_joint_state = getattr(start_solution, "joint_state", None)
+        start_joint_state = _scope_joint_state(node, getattr(start_solution, "joint_state", None))
         start_positions = list(getattr(start_joint_state, "position", [])) if start_joint_state is not None else []
         start_names = list(getattr(start_joint_state, "name", [])) if start_joint_state is not None else []
         if start_ik_error != MoveItErrorCodes.SUCCESS or not start_positions or not start_names:
@@ -147,7 +200,7 @@ def validate_pose_from_start(node, robot, start_position, target_position, tool=
 
     target_ik_error = int(getattr(getattr(target_ik_resp, "error_code", None), "val", 0))
     target_solution = getattr(target_ik_resp, "solution", None)
-    target_joint_state = getattr(target_solution, "joint_state", None)
+    target_joint_state = _scope_joint_state(node, getattr(target_solution, "joint_state", None))
     target_positions = list(getattr(target_joint_state, "position", [])) if target_joint_state is not None else []
     target_names = list(getattr(target_joint_state, "name", [])) if target_joint_state is not None else []
     if target_ik_error != MoveItErrorCodes.SUCCESS or not target_positions or not target_names:
