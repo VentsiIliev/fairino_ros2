@@ -73,12 +73,13 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
         self,
         urdf_path: Optional[str] = None,
         urdf_string: Optional[str] = None,
-        base_link: str = config.BASE_LINK,
-        tip_link: str = config.COLLISION_TIP_LINK,
-        num_joints: int = config.NUM_JOINTS,
+        base_link: Optional[str] = None,
+        tip_link: Optional[str] = None,
+        num_joints: Optional[int] = None,
         gravity: np.ndarray = np.array([0, 0, -9.81]),
         include_gravity: bool = False,
-        logger=None
+        logger=None,
+        robot_context=None,
     ):
         if not KDL_AVAILABLE:
             raise RuntimeError(
@@ -91,7 +92,27 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
                 "[KDLInverseDynamicsModel] urdf_path or urdf_string is required"
             )
 
-        self._num_joints = num_joints
+        base_link = str(
+            base_link
+            or getattr(robot_context, "base_link", "")
+            or getattr(config, "BASE_LINK", "base_link")
+        )
+        tip_link = str(
+            tip_link
+            or getattr(robot_context, "collision_tip_link", "")
+            or getattr(config, "COLLISION_TIP_LINK", "ee_link")
+        )
+        if num_joints is None:
+            context_joint_names = list(
+                getattr(robot_context, "joint_names", ()) or []
+            )
+            num_joints = (
+                len(context_joint_names)
+                if context_joint_names
+                else int(getattr(config, "NUM_JOINTS", 6))
+            )
+
+        self._num_joints = int(num_joints)
         self._include_gravity = include_gravity
         self.logger = logger
 
