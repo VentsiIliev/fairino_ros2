@@ -39,6 +39,7 @@ from motion.execution.trajectory_optimizer import build_trajectory_optimizer
 from motion.planning.planner_context import PlannerContext
 from motion.planning.planner_support_service import PlannerSupportService
 from utils.workspace_extractor import _extract_workspace_from_urdf
+from robot_runtime_context import RobotRuntimeContext
 
 # All tunable constants live in config.py
 from config import (
@@ -54,7 +55,6 @@ from config import (
     STATUS_PUBLISH_RATE_HZ,
     WS_EXTRACT_MAX_RETRIES,
     WS_EXTRACT_RETRY_DELAY,
-    ACTION_FOLLOW_TRAJECTORY,
     SERVICE_CARTESIAN_PATH,
     SERVICE_MOTION_SEQUENCE,
     SERVICE_APPLY_IPP,
@@ -93,11 +93,27 @@ from config import (
 class RobotController(Node):
     _MANIPULATOR_CONTROLLER_NAME = 'manipulator_controller'
 
-    def __init__(self):
+    def __init__(
+            self,
+            robot_context: RobotRuntimeContext | None = None,
+    ):
         import time
         start_time = time.time()
 
         super().__init__('velocity_monitor')
+        self.robot_context = (
+            robot_context
+            if robot_context is not None
+            else RobotRuntimeContext.from_config()
+        )
+
+        self.get_logger().info(
+            f'[Init] Runtime robot: {self.robot_context.name} '
+            f'group={self.robot_context.planning_group} '
+            f'base={self.robot_context.base_link} '
+            f'action={self.robot_context.action_follow_trajectory}'
+        )
+
         self.get_logger().info('[Init] RobotController starting...')
 
         self._fake_hardware = os.environ.get('ZEROERR_USE_FAKE_HARDWARE', '').strip().lower() in {
@@ -194,7 +210,12 @@ class RobotController(Node):
         self._safety_init_timer = self.create_timer(1.0, self._delayed_safety_init)
 
         # ROS clients
-        self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
+        self.controller_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            self.robot_context.action_follow_trajectory,
+        )
+
         self.list_controllers_client = self.create_client(
             ListControllers,
             '/controller_manager/list_controllers',
@@ -212,6 +233,7 @@ class RobotController(Node):
             coordinator=self._motion,
             motion_queue=self.motion_queue,
             controller_client=self.controller_client,
+            action_follow_trajectory=self.robot_context.action_follow_trajectory,
         )
         self.trajectory_optimizer = build_trajectory_optimizer(
             TRAJECTORY_OPTIMIZER,
@@ -279,8 +301,12 @@ class RobotController(Node):
         self.runtime_adapter.initialize_runtime_controller(self)
 
         self.create_subscription(JointState, '/joint_states', self.joint_state_callback, 10)
-        self.create_subscription(GoalStatusArray, ACTION_FOLLOW_TRAJECTORY + '/_action/status',
-                                 self._controller_status_callback, 10)
+        self.create_subscription(
+            GoalStatusArray,
+            self.robot_context.action_follow_trajectory + '/_action/status',
+            self._controller_status_callback,
+            10,
+        )
 
         self.get_logger().info(f'[Init] RobotController ready ({time.time() - start_time:.2f}s total)')
 

@@ -12,7 +12,14 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 class TrajectoryExecutor:
     """Owns controller goal submission and queue draining for timed joint trajectories."""
 
-    def __init__(self, node, coordinator, motion_queue, controller_client):
+    def __init__(
+            self,
+            node,
+            coordinator,
+            motion_queue,
+            controller_client,
+            action_follow_trajectory: str | None = None,
+    ):
         self._node = node
         self._motion = coordinator
         self._queue = motion_queue
@@ -31,7 +38,10 @@ class TrajectoryExecutor:
         self._active_drive_disabled_samples = 0
         self._active_drive_disabled_reason = None
         self._unwind_cancel_reason = None
-        action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
+        action_name = (
+                str(action_follow_trajectory or '').strip()
+                or str(getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or '').strip()
+        )
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
     def _overwrite_first_point_with_live_state(self, joint_trajectory):
