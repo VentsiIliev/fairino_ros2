@@ -108,12 +108,35 @@ def _jacobian_fallback_move(
 
     n = 6
     js = robot_controller.current_joint_state
-    if js is None or len(js.position) < n:
-        robot_controller.get_logger().warning('[JacMove] Joint state unavailable or insufficient joints')
+    if js is None:
+        robot_controller.get_logger().warning('[JacMove] Joint state unavailable')
         return False
 
-    joints = [float(js.position[i]) for i in range(n)]
-    joint_names = [str(js.name[i]) for i in range(n)]
+    state_names = list(getattr(js, 'name', []) or [])
+    state_positions = list(getattr(js, 'position', []) or [])
+    if not state_names or len(state_names) != len(state_positions):
+        robot_controller.get_logger().warning('[JacMove] Joint state names/positions are incomplete')
+        return False
+
+    robot_context = getattr(robot_controller, 'robot_context', None)
+    joint_names = list(
+        getattr(robot_context, 'joint_names', ())
+        or getattr(config, 'JOINT_NAMES', [])
+        or []
+    )
+    if len(joint_names) != n:
+        robot_controller.get_logger().warning(
+            f'[JacMove] Expected {n} active robot joints, got {len(joint_names)}')
+        return False
+
+    position_by_name = dict(zip(state_names, state_positions))
+    missing = [name for name in joint_names if name not in position_by_name]
+    if missing:
+        robot_controller.get_logger().warning(
+            f'[JacMove] Joint state missing active robot joints: {missing}')
+        return False
+
+    joints = [float(position_by_name[name]) for name in joint_names]
     q0 = np.array(joints)
     T0 = _fk(q0)
 
@@ -314,6 +337,12 @@ def _jacobian_check_and_execute(
     # Arithmetic midpoint in joint space — approximates the worst-case intermediate pose
     q_mid   = [(q_start[i] + q_end[i]) * 0.5 for i in range(len(q_start))]
 
+    robot_context = getattr(robot_controller, 'robot_context', None)
+    planning_group = str(
+        getattr(robot_context, 'planning_group', '')
+        or getattr(config, 'PLANNING_GROUP', 'manipulator')
+    )
+
     # Shared results dict protected by a lock; both callbacks write here
     results = {'mid': None, 'end': None}
     results_lock = threading.Lock()
@@ -331,7 +360,7 @@ def _jacobian_check_and_execute(
         rs.is_diff = True
         req = GetStateValidity.Request()
         req.robot_state = rs
-        req.group_name = config.PLANNING_GROUP
+        req.group_name = planning_group
         return req
 
     def _log_contacts(label, response):
