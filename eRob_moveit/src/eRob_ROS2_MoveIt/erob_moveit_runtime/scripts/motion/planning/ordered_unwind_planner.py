@@ -29,6 +29,37 @@ def joint_positions_by_name(state) -> dict[str, float]:
     return {name: float(value) for name, value in zip(names, values)}
 
 
+def _active_joint_names(planning_node, config_obj) -> list[str]:
+    robot_context = getattr(planning_node, "robot_context", None)
+    return list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config_obj, "JOINT_NAMES", [])
+        or []
+    )
+
+
+def _resolve_unwind_joint_name(
+    planning_node,
+    config_obj,
+    configured_joint_name: str,
+    joint_names: list[str],
+) -> str:
+    if configured_joint_name in joint_names:
+        return configured_joint_name
+
+    legacy_joint_names = list(getattr(config_obj, "JOINT_NAMES", []) or [])
+    if (
+        configured_joint_name in legacy_joint_names
+        and len(legacy_joint_names) == len(joint_names)
+    ):
+        return joint_names[legacy_joint_names.index(configured_joint_name)]
+
+    if configured_joint_name in {"Joint_6", "j6"} and joint_names:
+        return joint_names[-1]
+
+    raise RuntimeError(f"Joint {configured_joint_name!r} is not configured")
+
+
 def force_ordered_unwind_joint_branch(
     joint_trajectory,
     joint_name: str,
@@ -320,17 +351,22 @@ def plan_ordered_unwind_segment(
     if blend_r > 0.0:
         raise RuntimeError(f"Ordered unwind segment {label!r} cannot use blendR")
 
-    joint_names = list(getattr(config_obj, "JOINT_NAMES", []) or [])
+    joint_names = _active_joint_names(planning_node, config_obj)
+    if not joint_names:
+        raise RuntimeError("No active robot joints configured")
+
     unwind_config = parse_ordered_unwind_config(
         segment,
         config_obj=config_obj,
         clamp_percentage=clamp_percentage,
         is_final_segment=index == total_segments - 1,
     )
-    joint_name = unwind_config.joint_name
-
-    if joint_name not in joint_names:
-        raise RuntimeError(f"Joint {joint_name!r} is not configured")
+    joint_name = _resolve_unwind_joint_name(
+        planning_node,
+        config_obj,
+        unwind_config.joint_name,
+        joint_names,
+    )
 
     if unwind_config.live_final_execution:
         planning_node.get_logger().info(
@@ -350,6 +386,10 @@ def plan_ordered_unwind_segment(
     axis_index = unwind_config.axis_index
     joint_index = joint_names.index(joint_name)
     by_name = joint_positions_by_name(current_state)
+    if joint_name not in by_name:
+        raise RuntimeError(
+            f"Current state does not contain active unwind joint {joint_name!r}"
+        )
     current_value = float(by_name[joint_name])
     final_target = canonical_angle(current_value)
     min_delta = unwind_config.min_delta_rad
