@@ -133,6 +133,10 @@ kill_matching_processes() {
   local pid=""
   local pids=""
   local alive=""
+  local pgid=""
+  local current_pgid=""
+
+  current_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' || true)"
 
   for pattern in "${patterns[@]}"; do
     while read -r pid; do
@@ -146,7 +150,12 @@ kill_matching_processes() {
 
   echo "Cleaning up stale processes: $(printf '%s\n' "${pids}" | paste -sd, -)"
   while read -r pid; do
-    kill "${pid}" 2>/dev/null || true
+    pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "${pgid}" && "${pgid}" != "${current_pgid}" ]]; then
+      kill -TERM -- "-${pgid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
+    else
+      kill "${pid}" 2>/dev/null || true
+    fi
   done <<< "${pids}"
 
   for _ in $(seq 1 20); do
@@ -162,7 +171,12 @@ kill_matching_processes() {
 
   while read -r pid; do
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-      kill -9 "${pid}" 2>/dev/null || true
+      pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+      if [[ -n "${pgid}" && "${pgid}" != "${current_pgid}" ]]; then
+        kill -KILL -- "-${pgid}" 2>/dev/null || kill -9 "${pid}" 2>/dev/null || true
+      else
+        kill -9 "${pid}" 2>/dev/null || true
+      fi
     fi
   done <<< "${pids}"
 }
@@ -188,7 +202,9 @@ cleanup_stale_zeroerr_processes() {
     "ros2 launch zeroerr"
     "EtherCatStart.sh"
     "WaitForSlavesOp.sh"
+    "/lib/zeroerr/zeroerr_state_publisher.py"
     "zeroerr_state_publisher.py"
+    "zeroerr_state_publisher"
     "zeroerr_runtime.py"
     "/erob_moveit_runtime/.*/main.py"
     "/lib/erob_moveit_runtime/main.py"
@@ -236,6 +252,9 @@ cleanup_stale_fairino_processes() {
     "/lib/erob_moveit_runtime/rest/main.py"
     "python3 .*erob_moveit_runtime.*/rest/main.py"
     "fairino_state_publisher.py"
+    "/lib/zeroerr/zeroerr_state_publisher.py"
+    "zeroerr_state_publisher.py"
+    "zeroerr_state_publisher"
     "zeroerr_runtime.py"
     "ipp_helper"
     "ruckig_helper"
