@@ -215,9 +215,9 @@ class DynamicsCollisionDetector:
 def create_dynamics_collision_detector(
     urdf_path: Optional[str] = None,
     urdf_string: Optional[str] = None,
-    base_link: str = config.BASE_LINK,
-    tip_link: str = config.COLLISION_TIP_LINK,
-    num_joints: int = config.NUM_JOINTS,
+    base_link: Optional[str] = None,
+    tip_link: Optional[str] = None,
+    num_joints: Optional[int] = None,
     external_torque_rate_thresholds: Optional[np.ndarray] = None,
     external_torque_sustained_thresholds: Optional[np.ndarray] = None,
     enable_sustained_check: bool = False,
@@ -228,14 +228,36 @@ def create_dynamics_collision_detector(
     recovery_time: float = config.COLLISION_RECOVERY_TIME_S,
     gravity: np.ndarray = np.array([0, 0, 9.81]),
     include_gravity: bool = False,
-    logger=None
+    logger=None,
+    robot_context=None,
 ) -> DynamicsCollisionDetector:
     """
     Factory function that wires up Model -> Estimator -> Strategies -> Detector.
 
-    Accepts the same parameters as the original DynamicsCollisionDetector
-    constructor for easy migration.
+    Robot identity can be supplied through robot_context; explicit base/tip/count
+    arguments still take precedence for backward compatibility.
     """
+    base_link = str(
+        base_link
+        or getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+    tip_link = str(
+        tip_link
+        or getattr(robot_context, "collision_tip_link", "")
+        or getattr(config, "COLLISION_TIP_LINK", "ee_link")
+    )
+    if num_joints is None:
+        context_joint_names = list(
+            getattr(robot_context, "joint_names", ()) or []
+        )
+        num_joints = (
+            len(context_joint_names)
+            if context_joint_names
+            else int(getattr(config, "NUM_JOINTS", 6))
+        )
+    num_joints = int(num_joints)
+
     # Defaults
     if external_torque_rate_thresholds is None:
         external_torque_rate_thresholds = np.array(config.COLLISION_RATE_THRESHOLDS)
@@ -252,6 +274,7 @@ def create_dynamics_collision_detector(
         gravity=gravity,
         include_gravity=include_gravity,
         logger=logger,
+        robot_context=robot_context,
     )
 
     # 2. Estimator
