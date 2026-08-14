@@ -13,6 +13,7 @@ from zeroerr_launch.cpu_policy import (
 from zeroerr_launch.moveit_config import build_moveit_config
 from zeroerr_launch.runtime_config import (
     load_state_publisher_params,
+    ros2_controllers_path_from_runtime,
     runtime_value,
     urdf_path_from_runtime,
 )
@@ -176,15 +177,44 @@ def generate_launch_description():
     demo_ld.add_action(rviz)
 
     config_dir = os.path.join(package_path, "config")
-    fake_controllers_yaml = os.path.join(config_dir, "ros2_controllers_fake.yaml")
-    real_controllers_yaml = os.path.join(config_dir, "ros2_controllers.yaml")
-    ros2_controllers_path = PythonExpression(
-        [
-            "'", fake_controllers_yaml, "' if '",
-            use_fake_hardware,
-            "' == 'true' else '", real_controllers_yaml, "'",
-        ]
+
+    profile_controllers_yaml = ros2_controllers_path_from_runtime(package_path)
+
+    fake_controllers_yaml = os.path.join(
+        config_dir,
+        "ros2_controllers_fake.yaml",
     )
+
+    real_controllers_yaml = os.path.join(
+        config_dir,
+        "ros2_controllers.yaml",
+    )
+
+    active_profile = str(
+        runtime_value(package_path, "ACTIVE_PROFILE", "")
+    ).strip()
+
+    if active_profile and os.path.isfile(
+            os.path.join(
+                package_path,
+                "config",
+                active_profile,
+                "ros2_controllers.yaml",
+            )
+    ):
+        ros2_controllers_path = profile_controllers_yaml
+    else:
+        ros2_controllers_path = PythonExpression(
+            [
+                "'",
+                fake_controllers_yaml,
+                "' if '",
+                use_fake_hardware,
+                "' == 'true' else '",
+                real_controllers_yaml,
+                "'",
+            ]
+        )
 
     demo_ld.add_action(
         LogInfo(msg=["[ZEROERR] ros2_control config: ", ros2_controllers_path])
@@ -202,20 +232,45 @@ def generate_launch_description():
     )
     demo_ld.add_action(ros2_control_node)
 
-    manipulator_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["manipulator_controller"],
-        output="screen",
+    controllers_to_spawn = runtime_value(
+        package_path,
+        "CONTROLLERS_TO_SPAWN",
+        ["manipulator_controller"],
     )
+
+    controller_spawners = []
+
+    for controller_name in controllers_to_spawn:
+        controller_spawners.append(
+            Node(
+                package="controller_manager",
+                executable="spawner",
+                arguments=[controller_name],
+                output="screen",
+            )
+        )
+
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["joint_state_broadcaster"],
         output="screen",
     )
-    demo_ld.add_action(servo_node)
-    demo_ld.add_action(manipulator_controller_spawner)
+
+    servo_enabled = bool(
+        runtime_value(
+            package_path,
+            "SERVO_ENABLED",
+            True,
+        )
+    )
+
+    if servo_enabled:
+        demo_ld.add_action(servo_node)
+
+    for controller_spawner in controller_spawners:
+        demo_ld.add_action(controller_spawner)
+
     demo_ld.add_action(joint_state_broadcaster_spawner)
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
@@ -408,10 +463,37 @@ def generate_launch_description():
         parameters=[
             state_publisher_params,
             {
-                "cartesian_source_link": runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
-                "publish_hz": float(runtime_value(package_path, "STATE_PUBLISH_RATE_HZ", 50.0)),
-                "joint_publish_hz": float(runtime_value(package_path, "JOINT_DERIVATIVE_PUBLISH_RATE_HZ", 0.0)),
-                "joint_input_hz": float(runtime_value(package_path, "JOINT_STATE_INPUT_RATE_HZ", 0.0)),
+                "base_frame": runtime_value(
+                    package_path,
+                    "BASE_LINK",
+                    "base_link",
+                ),
+                "cartesian_source_link": runtime_value(
+                    package_path,
+                    "CARTESIAN_SOURCE_LINK",
+                    "ee_link",
+                ),
+                "publish_hz": float(
+                    runtime_value(
+                        package_path,
+                        "STATE_PUBLISH_RATE_HZ",
+                        50.0,
+                    )
+                ),
+                "joint_publish_hz": float(
+                    runtime_value(
+                        package_path,
+                        "JOINT_DERIVATIVE_PUBLISH_RATE_HZ",
+                        0.0,
+                    )
+                ),
+                "joint_input_hz": float(
+                    runtime_value(
+                        package_path,
+                        "JOINT_STATE_INPUT_RATE_HZ",
+                        0.0,
+                    )
+                ),
             },
         ],
     )

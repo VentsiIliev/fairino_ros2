@@ -2,7 +2,8 @@
 ROBOT_BACKEND: zeroerr
 
 # Active robot profile. Profile-specific overrides live under config/<profile>/.
-ACTIVE_PROFILE: paint
+#ACTIVE_PROFILE: paint
+ACTIVE_PROFILE: twin_robots
 #ACTIVE_PROFILE: welding
 
 # Enables the EtherCAT OP-state watchdog before allowing motion.

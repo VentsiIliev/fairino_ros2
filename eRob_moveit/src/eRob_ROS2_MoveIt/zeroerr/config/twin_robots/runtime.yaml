@@ -3,3 +3,38 @@ SRDF_PATH: eRobo3.srdf
 
 NUM_JOINTS: 12
 ETHERCAT_EXPECTED_SLAVES: 12
+
+CONTROLLERS_TO_SPAWN:
+  - robot1_joint_trajectory_controller
+  - robot2_joint_trajectory_controller
+
+SERVO_ENABLED: false
+
+# ------------------------------------------------------------------
+# Legacy/single-arm runtime compatibility.
+#
+# The current erob_moveit_runtime architecture owns one planning group
+# and one FollowJointTrajectory action. For the first twin bring-up,
+# Robot 1 is the primary runtime-controlled arm.
+# Robot 2 remains available through MoveIt and its own ros2_control
+# trajectory controller.
+# ------------------------------------------------------------------
+
+JOINT_NAMES:
+  - robot1_Joint_1
+  - robot1_Joint_2
+  - robot1_Joint_3
+  - robot1_Joint_4
+  - robot1_Joint_5
+  - robot1_Joint_6
+
+PLANNING_GROUP: robot1_arm
+
+BASE_LINK: robot1_base_link
+EE_LINK: robot1_ee_link
+WRIST_LINK: robot1_Link_6
+
+CARTESIAN_SOURCE_LINK: robot1_ee_link
+COLLISION_TIP_LINK: robot1_tool0
+
+ACTION_FOLLOW_TRAJECTORY: /robot1_joint_trajectory_controller/follow_joint_trajectory
