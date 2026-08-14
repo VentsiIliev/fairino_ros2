@@ -182,11 +182,22 @@ def _build_batched_contour_trajectory(robot_controller, poses, seed_state=None):
         return None
 
     joint_names, seed_positions = _positions_in_config_order(robot_controller, seed_state=seed_state)
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
     request = ComputeContourIK.Request()
     request.seed_state = _joint_state(robot_controller, joint_names, seed_positions)
     request.poses = list(poses)
-    request.group_name = config.PLANNING_GROUP
-    request.link_name = config.EE_LINK
+    request.group_name = planning_group
+    request.link_name = ee_link
     request.timeout_s = float(getattr(config, "CONTOUR_IK_TIMEOUT_S", 0.003))
     request.retry_timeout_s = float(getattr(config, "CONTOUR_IK_RETRY_TIMEOUT_S", 0.02))
     request.fk_position_tolerance_mm = float(getattr(config, "CONTOUR_IK_FK_POSITION_TOL_MM", 0.15))
@@ -276,10 +287,27 @@ def _request_ik(robot_controller, pose, seed_state, timeout_s: float):
     if client is None or not client.wait_for_service(timeout_sec=1.0):
         raise TimeoutError("MoveIt IK service unavailable")
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
     req = GetPositionIK.Request()
-    req.ik_request.group_name = config.PLANNING_GROUP
-    req.ik_request.ik_link_name = config.EE_LINK
-    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.group_name = planning_group
+    req.ik_request.ik_link_name = ee_link
+    req.ik_request.pose_stamped.header.frame_id = base_link
     req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
     req.ik_request.avoid_collisions = config.resolve_avoid_collisions(True)
@@ -302,10 +330,22 @@ def _validate_fk_accuracy(robot_controller, poses, joint_names, solved_points, r
         report.failure_reason = "fk_service_unavailable"
         return
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
     for index, (pose, positions) in enumerate(zip(poses, solved_points)):
         req = GetPositionFK.Request()
-        req.header.frame_id = config.BASE_LINK
-        req.fk_link_names = [config.EE_LINK]
+        req.header.frame_id = base_link
+        req.fk_link_names = [ee_link]
         req.robot_state.joint_state = _joint_state(robot_controller, joint_names, positions)
         req.robot_state.is_diff = False
         response = _wait_future(
@@ -389,6 +429,13 @@ def _validate_sampled_state_validity(robot_controller, joint_names, solved_point
         report.failure_reason = "state_validity_service_unavailable"
         return
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
     stride = max(1, int(getattr(config, "CONTOUR_STATE_VALIDITY_STRIDE", 10)))
     indexes = set(range(0, len(solved_points), stride))
     indexes.add(0)
@@ -397,7 +444,7 @@ def _validate_sampled_state_validity(robot_controller, joint_names, solved_point
         req = GetStateValidity.Request()
         req.robot_state.joint_state = _joint_state(robot_controller, joint_names, solved_points[index])
         req.robot_state.is_diff = True
-        req.group_name = config.PLANNING_GROUP
+        req.group_name = planning_group
         response = _wait_future(
             client.call_async(req),
             timeout_s=2.0,
