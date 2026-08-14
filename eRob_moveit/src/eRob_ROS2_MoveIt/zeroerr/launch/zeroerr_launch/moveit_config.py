@@ -6,6 +6,7 @@ from launch.substitution import Substitution
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from zeroerr_launch.runtime_config import (
+    moveit_controllers_path_from_runtime,
     srdf_path_from_runtime,
     urdf_path_from_runtime,
 )
@@ -36,12 +37,16 @@ def build_moveit_config(
     """
     urdf_path = urdf_path_from_runtime(package_path)
     srdf_path = srdf_path_from_runtime(package_path)
+    moveit_controllers_path = moveit_controllers_path_from_runtime(package_path)
+
     mappings = {"robot_urdf": urdf_path}
+
     if use_fake_hardware is not None:
         if isinstance(use_fake_hardware, bool):
             mappings["use_fake_hardware"] = "true" if use_fake_hardware else "false"
         else:
             mappings["use_fake_hardware"] = use_fake_hardware
+
     return (
         MoveItConfigsBuilder("eRobo3", package_name=package_name)
         .robot_description(
@@ -49,6 +54,9 @@ def build_moveit_config(
             mappings=mappings,
         )
         .robot_description_semantic(file_path=srdf_path)
+        .trajectory_execution(
+            file_path=moveit_controllers_path,
+        )
         .planning_pipelines(
             default_planning_pipeline=default_planning_pipeline,
             pipelines=list(planning_pipelines or DEFAULT_PLANNING_PIPELINES),
