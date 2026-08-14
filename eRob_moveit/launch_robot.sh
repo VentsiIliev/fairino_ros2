@@ -197,7 +197,6 @@ cleanup_stale_zeroerr_processes() {
     "/opt/ros/.*/moveit_servo/servo_node"
     "/moveit_servo/servo_node"
     "/zeroerr/zeroerr_servo_node"
-    "robot_app_platform"
     "/opt/ros/.*/rviz2/rviz2.*zeroerr/share/zeroerr/config/moveit.rviz"
     "ros2 launch zeroerr"
     "EtherCatStart.sh"
