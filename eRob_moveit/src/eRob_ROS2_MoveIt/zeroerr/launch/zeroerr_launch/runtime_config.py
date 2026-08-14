@@ -252,3 +252,24 @@ def joint_limits_path_from_runtime(package_path: str) -> str:
         "config",
         "joint_limits.yaml",
     )
+
+
+def initial_positions_path_from_runtime(package_path: str) -> str:
+    rt = load_runtime_config(package_path)
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+
+    if profile:
+        candidate = os.path.join(
+            package_path,
+            "config",
+            profile,
+            "initial_positions.yaml",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+
+    return os.path.join(
+        package_path,
+        "config",
+        "initial_positions.yaml",
+    )

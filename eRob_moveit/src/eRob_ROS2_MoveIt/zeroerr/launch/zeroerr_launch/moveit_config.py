@@ -6,6 +6,7 @@ from launch.substitution import Substitution
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from zeroerr_launch.runtime_config import (
+    initial_positions_path_from_runtime,
     joint_limits_path_from_runtime,
     kinematics_path_from_runtime,
     moveit_controllers_path_from_runtime,
@@ -42,8 +43,12 @@ def build_moveit_config(
     moveit_controllers_path = moveit_controllers_path_from_runtime(package_path)
     kinematics_path = kinematics_path_from_runtime(package_path)
     joint_limits_path = joint_limits_path_from_runtime(package_path)
+    initial_positions_path = initial_positions_path_from_runtime(package_path)
 
-    mappings = {"robot_urdf": urdf_path}
+    mappings = {
+        "robot_urdf": urdf_path,
+        "initial_positions_file": initial_positions_path,
+    }
 
     if use_fake_hardware is not None:
         if isinstance(use_fake_hardware, bool):
@@ -73,3 +78,4 @@ def build_moveit_config(
         )
         .to_moveit_configs()
     )
+
