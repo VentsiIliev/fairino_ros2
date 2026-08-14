@@ -418,16 +418,40 @@ def _positions_in_config_order(robot_controller, seed_state=None):
     state = getattr(seed_state, "joint_state", seed_state)
     if state is None:
         state = robot_controller.current_joint_state
+
     names = list(getattr(state, "name", []) or [])
     positions = list(getattr(state, "position", []) or [])
+
     if not names or len(names) != len(positions):
         raise RuntimeError("current joint state is incomplete")
+
     by_name = dict(zip(names, positions))
-    joint_names = list(config.JOINT_NAMES)
-    missing = [name for name in joint_names if name not in by_name]
+
+    robot_context = getattr(robot_controller, "robot_context", None)
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
+
+    if not joint_names:
+        raise RuntimeError("no configured robot joints")
+
+    missing = [
+        name
+        for name in joint_names
+        if name not in by_name
+    ]
+
     if missing:
-        raise RuntimeError(f"current joint state missing joints: {missing}")
-    return joint_names, [float(by_name[name]) for name in joint_names]
+        raise RuntimeError(
+            f"current joint state missing joints: {missing}"
+        )
+
+    return joint_names, [
+        float(by_name[name])
+        for name in joint_names
+    ]
 
 
 def _positions_from_solution(joint_state, joint_names):
