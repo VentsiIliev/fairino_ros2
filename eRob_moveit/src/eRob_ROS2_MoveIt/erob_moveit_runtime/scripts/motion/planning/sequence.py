@@ -36,7 +36,22 @@ def _sec_to_duration(seconds):
     return Duration(sec=whole, nanosec=nanos)
 
 
-def _pose_goal_constraints(pose: Pose) -> Constraints:
+def _pose_goal_constraints(
+    rc,
+    pose: Pose,
+) -> Constraints:
+    robot_context = getattr(rc, "robot_context", None)
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
     constraints = Constraints()
 
     box = SolidPrimitive()
@@ -45,16 +60,17 @@ def _pose_goal_constraints(pose: Pose) -> Constraints:
     box.dimensions = [tolerance_m, tolerance_m, tolerance_m]
 
     position_constraint = PositionConstraint()
-    position_constraint.header.frame_id = config.BASE_LINK
-    position_constraint.link_name = config.EE_LINK
+    position_constraint.header.frame_id = base_link
+    position_constraint.link_name = ee_link
     position_constraint.constraint_region = BoundingVolume()
     position_constraint.constraint_region.primitives.append(box)
     position_constraint.constraint_region.primitive_poses.append(pose)
     position_constraint.weight = 1.0
 
     orientation_constraint = OrientationConstraint()
-    orientation_constraint.header.frame_id = config.BASE_LINK
-    orientation_constraint.link_name = config.EE_LINK
+
+    orientation_constraint.header.frame_id = base_link
+    orientation_constraint.link_name = ee_link
     orientation_constraint.orientation = pose.orientation
     tolerance_rad = max(1e-5, float(getattr(config, "SEQUENCE_ORIENTATION_TOLERANCE_RAD", 0.01)))
     orientation_constraint.absolute_x_axis_tolerance = tolerance_rad
@@ -69,8 +85,15 @@ def _pose_goal_constraints(pose: Pose) -> Constraints:
 
 
 def _build_motion_plan_request(rc, pose: Pose, segment: dict, start_state=None) -> MotionPlanRequest:
+    robot_context = getattr(rc, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
     req = MotionPlanRequest()
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = planning_group
     req.pipeline_id = str(getattr(config, "SEQUENCE_PLANNING_PIPELINE", "pilz_industrial_motion_planner"))
     motion_type = str(segment.get("motion_type") or "linear").strip().lower()
     req.planner_id = "PTP" if motion_type == "ptp" else "LIN"
@@ -78,7 +101,9 @@ def _build_motion_plan_request(rc, pose: Pose, segment: dict, start_state=None) 
     req.allowed_planning_time = float(getattr(config, "SEQUENCE_ALLOWED_PLANNING_TIME_S", 5.0))
     req.max_velocity_scaling_factor = max(0.0, min(1.0, float(segment["vel"]) / 100.0))
     req.max_acceleration_scaling_factor = max(0.0, min(1.0, float(segment["acc"]) / 100.0))
-    req.goal_constraints.append(_pose_goal_constraints(pose))
+    req.goal_constraints.append(
+        _pose_goal_constraints(rc, pose)
+    )
 
     if start_state is not None:
         req.start_state = start_state
