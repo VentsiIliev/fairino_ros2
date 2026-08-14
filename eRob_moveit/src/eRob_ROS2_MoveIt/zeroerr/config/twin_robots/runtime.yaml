@@ -1,24 +1,119 @@
+# Twin eRob runtime profile
+#
+# This profile describes two eRob arms in one MoveIt / ros2_control system.
+#
+# IMPORTANT:
+# The legacy flat runtime keys below intentionally point to robot1.
+# Existing single-robot runtime code can therefore continue operating robot1
+# while new multi-robot code uses PRIMARY_ROBOT / ROBOTS.
+
+# ============================================================
+# Robot description
+# ============================================================
+
 URDF_PATH: urdfs/twin_erob.urdf.xacro
 SRDF_PATH: eRobo3.srdf
 
+# Total number of joints represented by the twin system.
 NUM_JOINTS: 12
+
+# Expected EtherCAT topology:
+#   robot1 -> slaves 0..5
+#   robot2 -> slaves 6..11
 ETHERCAT_EXPECTED_SLAVES: 12
+
+
+# ============================================================
+# ros2_control
+# ============================================================
 
 CONTROLLERS_TO_SPAWN:
   - robot1_joint_trajectory_controller
   - robot2_joint_trajectory_controller
 
+# Servo is intentionally disabled for the twin profile until Servo is made
+# explicitly robot-aware. This avoids accidentally commanding the wrong arm.
 SERVO_ENABLED: false
 
-# ------------------------------------------------------------------
-# Legacy/single-arm runtime compatibility.
+
+# ============================================================
+# Multi-robot configuration
+# ============================================================
+
+# Robot used by legacy/single-robot runtime functionality while the runtime is
+# migrated to explicit robot selection.
+PRIMARY_ROBOT: robot1
+
+ROBOTS:
+
+  # ----------------------------------------------------------
+  # Robot 1
+  # ----------------------------------------------------------
+
+  robot1:
+    joint_names:
+      - robot1_Joint_1
+      - robot1_Joint_2
+      - robot1_Joint_3
+      - robot1_Joint_4
+      - robot1_Joint_5
+      - robot1_Joint_6
+
+    planning_group: robot1_arm
+
+    base_link: robot1_base_link
+    ee_link: robot1_ee_link
+    wrist_link: robot1_Link_6
+
+    cartesian_source_link: robot1_ee_link
+    collision_tip_link: robot1_tool0
+
+    action_follow_trajectory: /robot1_joint_trajectory_controller/follow_joint_trajectory
+
+  # ----------------------------------------------------------
+  # Robot 2
+  # ----------------------------------------------------------
+
+  robot2:
+    joint_names:
+      - robot2_Joint_1
+      - robot2_Joint_2
+      - robot2_Joint_3
+      - robot2_Joint_4
+      - robot2_Joint_5
+      - robot2_Joint_6
+
+    planning_group: robot2_arm
+
+    base_link: robot2_base_link
+    ee_link: robot2_ee_link
+    wrist_link: robot2_Link_6
+
+    cartesian_source_link: robot2_ee_link
+    collision_tip_link: robot2_tool0
+
+    action_follow_trajectory: /robot2_joint_trajectory_controller/follow_joint_trajectory
+
+
+# ============================================================
+# Legacy runtime compatibility
+# ============================================================
 #
-# The current erob_moveit_runtime architecture owns one planning group
-# and one FollowJointTrajectory action. For the first twin bring-up,
-# Robot 1 is the primary runtime-controlled arm.
-# Robot 2 remains available through MoveIt and its own ros2_control
-# trajectory controller.
-# ------------------------------------------------------------------
+# Existing erob_moveit_runtime code currently expects one set of:
+#
+#   JOINT_NAMES
+#   PLANNING_GROUP
+#   BASE_LINK
+#   EE_LINK
+#   WRIST_LINK
+#   CARTESIAN_SOURCE_LINK
+#   COLLISION_TIP_LINK
+#   ACTION_FOLLOW_TRAJECTORY
+#
+# Keep these mapped to PRIMARY_ROBOT (robot1) until the runtime components
+# are migrated to explicit per-robot configuration.
+#
+# DO NOT remove these yet.
 
 JOINT_NAMES:
   - robot1_Joint_1

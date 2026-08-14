@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
 
 import yaml
 
@@ -301,6 +302,16 @@ REQUIRED_KEYS = frozenset({
     'REST_LOG',
 })
 
+ROBOT_REQUIRED_KEYS = frozenset({
+    'joint_names',
+    'planning_group',
+    'base_link',
+    'ee_link',
+    'wrist_link',
+    'cartesian_source_link',
+    'collision_tip_link',
+    'action_follow_trajectory',
+})
 
 def _config_package() -> str:
     package_name = os.environ.get('EROB_CONFIG_PACKAGE', '').strip()
@@ -399,6 +410,98 @@ PATH_KEYS = frozenset({
 })
 
 
+def _validate_robot_configs(config: dict[str, Any]) -> None:
+    robots = config.get('ROBOTS')
+
+    # Optional for full backward compatibility with existing single-robot profiles.
+    if robots is None:
+        return
+
+    if not isinstance(robots, dict) or not robots:
+        raise RuntimeError(
+            'Runtime config ROBOTS must be a non-empty mapping'
+        )
+
+    all_joint_names: set[str] = set()
+    for robot_name, robot_config in robots.items():
+        name = str(robot_name or '').strip()
+
+        if not name:
+            raise RuntimeError(
+                'Runtime config ROBOTS contains an empty robot name'
+            )
+
+        if not isinstance(robot_config, dict):
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}] must be a mapping"
+            )
+
+        missing = sorted(
+            key
+            for key in ROBOT_REQUIRED_KEYS
+            if key not in robot_config
+            or robot_config[key] in (None, '')
+        )
+
+        if missing:
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}] is missing required keys: "
+                f"{', '.join(missing)}"
+            )
+
+        joint_names = robot_config['joint_names']
+
+        if not isinstance(joint_names, (list, tuple)) or not joint_names:
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}].joint_names "
+                'must be a non-empty list'
+            )
+
+        normalized_joint_names = [
+            str(joint_name).strip()
+            for joint_name in joint_names
+        ]
+
+        if any(not joint_name for joint_name in normalized_joint_names):
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}].joint_names "
+                'contains an empty joint name'
+            )
+
+        if len(set(normalized_joint_names)) != len(normalized_joint_names):
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}].joint_names "
+                'contains duplicate joint names'
+            )
+
+        overlapping_joint_names = sorted(
+            set(normalized_joint_names) & all_joint_names
+        )
+
+        if overlapping_joint_names:
+            raise RuntimeError(
+                f"Runtime config ROBOTS[{name!r}].joint_names overlaps "
+                f"another robot: {', '.join(overlapping_joint_names)}"
+            )
+
+        all_joint_names.update(normalized_joint_names)
+
+    primary_robot = str(
+        config.get('PRIMARY_ROBOT', '')
+    ).strip()
+
+    if len(robots) > 1 and not primary_robot:
+        raise RuntimeError(
+            'Runtime config PRIMARY_ROBOT is required when ROBOTS '
+            'contains more than one robot'
+        )
+
+    if primary_robot and primary_robot not in robots:
+        raise RuntimeError(
+            f"Runtime config PRIMARY_ROBOT {primary_robot!r} "
+            'does not exist in ROBOTS'
+        )
+
 def _load_runtime_config() -> dict[str, Any]:
     path = _runtime_yaml_path()
     if not path or not path.exists():
@@ -436,6 +539,9 @@ def _load_runtime_config() -> dict[str, Any]:
         raise RuntimeError(
             f"Runtime config {path} is missing required keys: {', '.join(missing)}"
         )
+
+    _validate_robot_configs(config)
+
     config['_RUNTIME_CONFIG_PATH'] = str(path)
     config['_ACTIVE_RUNTIME_CONFIG_PATH'] = str(active_path)
     config['WALL_BYPASS_LINKS'] = frozenset(config.get('WALL_BYPASS_LINKS', []))
@@ -447,6 +553,63 @@ def _load_runtime_config() -> dict[str, Any]:
 _CONFIG = _load_runtime_config()
 globals().update(_CONFIG)
 
+
+def get_robot_names() -> tuple[str, ...]:
+    """Return explicitly configured robot names."""
+    robots = _CONFIG.get('ROBOTS')
+
+    if not isinstance(robots, dict):
+        return ()
+
+    return tuple(str(name) for name in robots.keys())
+
+
+def get_primary_robot_name() -> str | None:
+    """Return the configured primary robot for multi-robot runtime."""
+    robots = _CONFIG.get('ROBOTS')
+
+    if not isinstance(robots, dict) or not robots:
+        return None
+
+    configured = str(
+        _CONFIG.get('PRIMARY_ROBOT', '')
+    ).strip()
+
+    if configured:
+        return configured
+
+    if len(robots) == 1:
+        return str(next(iter(robots)))
+
+    return None
+
+
+def get_robot_config(robot_name: str | None = None) -> dict[str, Any]:
+    """Return a copy of one explicitly configured ROBOTS entry."""
+    robots = _CONFIG.get('ROBOTS')
+
+    if not isinstance(robots, dict) or not robots:
+        raise RuntimeError(
+            'This runtime configuration does not define ROBOTS'
+        )
+
+    resolved_name = str(robot_name or '').strip()
+
+    if not resolved_name:
+        resolved_name = get_primary_robot_name() or ''
+
+    if not resolved_name:
+        raise RuntimeError(
+            'robot_name is required because no PRIMARY_ROBOT is configured'
+        )
+
+    if resolved_name not in robots:
+        available = ', '.join(str(name) for name in robots)
+        raise KeyError(
+            f"Unknown robot {resolved_name!r}; available robots: {available}"
+        )
+
+    return deepcopy(robots[resolved_name])
 
 def resolve_avoid_collisions(requested_value):
     """Resolve avoid_collisions flag based on global ENABLE_COLLISION_CHECKING.
