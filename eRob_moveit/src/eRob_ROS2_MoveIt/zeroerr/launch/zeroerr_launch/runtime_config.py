@@ -168,3 +168,23 @@ def load_state_publisher_params(package_path: str) -> dict:
     except Exception as exc:
         raise RuntimeError(f"Failed to read profile state publisher config: {profile_yaml}: {exc}")
     return _deep_merge(params, profile_params)
+
+def ros2_controllers_path_from_runtime(package_path: str) -> str:
+    rt = load_runtime_config(package_path)
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+
+    if profile:
+        candidate = os.path.join(
+            package_path,
+            "config",
+            profile,
+            "ros2_controllers.yaml",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+
+    return os.path.join(
+        package_path,
+        "config",
+        "ros2_controllers.yaml",
+    )

@@ -10,16 +10,21 @@ from zeroerr_launch.moveit_config import build_moveit_config
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-
+from zeroerr_launch.runtime_config import (
+        ros2_controllers_path_from_runtime,
+    )
 
 def generate_launch_description():
     package_path = get_package_share_directory("zeroerr")
     moveit_config = build_moveit_config("zeroerr", package_path)
 
-    ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
+
 
     control_cores = load_cpu_policy().control_cores
 
+    ros2_controllers_path = ros2_controllers_path_from_runtime(
+        package_path
+    )
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
