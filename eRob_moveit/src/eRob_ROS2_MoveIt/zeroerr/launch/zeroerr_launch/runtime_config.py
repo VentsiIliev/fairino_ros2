@@ -231,3 +231,24 @@ def kinematics_path_from_runtime(package_path: str) -> str:
         "config",
         "kinematics.yaml",
     )
+
+
+def joint_limits_path_from_runtime(package_path: str) -> str:
+    rt = load_runtime_config(package_path)
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+
+    if profile:
+        candidate = os.path.join(
+            package_path,
+            "config",
+            profile,
+            "joint_limits.yaml",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+
+    return os.path.join(
+        package_path,
+        "config",
+        "joint_limits.yaml",
+    )

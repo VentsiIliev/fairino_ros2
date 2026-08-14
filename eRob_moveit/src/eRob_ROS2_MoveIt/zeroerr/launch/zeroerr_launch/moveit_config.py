@@ -6,6 +6,7 @@ from launch.substitution import Substitution
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from zeroerr_launch.runtime_config import (
+    joint_limits_path_from_runtime,
     kinematics_path_from_runtime,
     moveit_controllers_path_from_runtime,
     srdf_path_from_runtime,
@@ -16,12 +17,12 @@ DEFAULT_PLANNING_PIPELINES = ["pilz_industrial_motion_planner", "ompl", "stomp"]
 
 
 def build_moveit_config(
-    package_name: str,
-    package_path: str,
-    *,
-    use_fake_hardware: Union[str, bool, Substitution, None] = None,
-    planning_pipelines: Optional[Sequence[str]] = None,
-    default_planning_pipeline: Optional[str] = None,
+        package_name: str,
+        package_path: str,
+        *,
+        use_fake_hardware: Union[str, bool, Substitution, None] = None,
+        planning_pipelines: Optional[Sequence[str]] = None,
+        default_planning_pipeline: Optional[str] = None,
 ):
     """Build the shared MoveItConfigs for the ZeroErr robot.
 
@@ -40,6 +41,7 @@ def build_moveit_config(
     srdf_path = srdf_path_from_runtime(package_path)
     moveit_controllers_path = moveit_controllers_path_from_runtime(package_path)
     kinematics_path = kinematics_path_from_runtime(package_path)
+    joint_limits_path = joint_limits_path_from_runtime(package_path)
 
     mappings = {"robot_urdf": urdf_path}
 
@@ -58,6 +60,9 @@ def build_moveit_config(
         .robot_description_semantic(file_path=srdf_path)
         .robot_description_kinematics(
             file_path=kinematics_path,
+        )
+        .joint_limits(
+            file_path=joint_limits_path,
         )
         .trajectory_execution(
             file_path=moveit_controllers_path,
