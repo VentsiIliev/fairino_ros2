@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import config
 from backend.moveit_robot_backend import MoveItRobotBackend
+from backend.runtime_unwind import unwind_joint6_with_rotational_path
 from motion.servo.cartesian_servo.moveit_cartesian_servo import MoveItCartesianServo
 from rclpy.duration import Duration
 from rclpy.time import Time
@@ -29,6 +30,23 @@ class _RobotScopedMoveItCartesianServo(MoveItCartesianServo):
         return TransformationUtils.tf2_to_transform(transform)
 
 
+class _RobotScopedMoveItRobotBackend(MoveItRobotBackend):
+    """MoveIt backend with legacy unwind bound to the selected robot context."""
+
+    def _unwind_joint6_with_rotational_path(
+        self,
+        vel=None,
+        acc=None,
+        queue_if_busy=True,
+    ):
+        return unwind_joint6_with_rotational_path(
+            self,
+            vel=vel,
+            acc=acc,
+            queue_if_busy=queue_if_busy,
+        )
+
+
 def create_robot_backend(node, workobject=None, ip: str = '0.0.0.0'):
     robot_context = getattr(node, "robot_context", None)
     base_frame = str(
@@ -46,7 +64,7 @@ def create_robot_backend(node, workobject=None, ip: str = '0.0.0.0'):
 
     backend_kind = str(getattr(config, 'ROBOT_BACKEND', 'moveit')).lower()
     if backend_kind in {'moveit', 'fairino', 'zeroerr'}:
-        return MoveItRobotBackend(
+        return _RobotScopedMoveItRobotBackend(
             ip=ip,
             node=node,
             workobject=workobject,
