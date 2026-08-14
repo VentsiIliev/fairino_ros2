@@ -71,22 +71,104 @@ def _restart_rest_process_enabled():
     }
 
 
+def _rest_session_id():
+    return os.environ.setdefault(
+        "EROB_REST_SESSION_ID",
+        f"{os.getpid()}:{int(time.time())}",
+    )
+
+
+def _pid_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _read_process_environ(pid):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            entries = f.read().split(b"\0")
+    except OSError:
+        return {}
+    result = {}
+    for entry in entries:
+        if b"=" not in entry:
+            continue
+        key, value = entry.split(b"=", 1)
+        result[key.decode(errors="ignore")] = value.decode(errors="ignore")
+    return result
+
+
+def _cleanup_stale_rest_server_processes():
+    rest_main = os.path.join(os.path.dirname(__file__), "rest", "main.py")
+    proc_dir = "/proc"
+    if not os.path.isdir(proc_dir):
+        return
+    current_pid = os.getpid()
+    for name in os.listdir(proc_dir):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == current_pid:
+            continue
+        env = _read_process_environ(pid)
+        if env.get("EROB_REST_MAIN") != rest_main:
+            continue
+        owner_pid_text = env.get("EROB_REST_OWNER_PID", "")
+        try:
+            owner_pid = int(owner_pid_text)
+        except ValueError:
+            owner_pid = 0
+        if owner_pid and _pid_exists(owner_pid):
+            continue
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            print(f"Stopped stale REST server process group for pid {pid}", file=sys.stderr)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                print(f"Stopped stale REST server pid {pid}", file=sys.stderr)
+            except OSError:
+                continue
+
+
 def _start_rest_server_process():
     rest_main = os.path.join(os.path.dirname(__file__), "rest", "main.py")
     env = dict(os.environ)
     env.setdefault("PYTHONFAULTHANDLER", "1")
     env.setdefault("PYTHONUNBUFFERED", "1")
-    return subprocess.Popen([sys.executable, rest_main], env=env)
+    env["EROB_REST_OWNER_PID"] = str(os.getpid())
+    env["EROB_REST_SESSION_ID"] = _rest_session_id()
+    env["EROB_REST_MAIN"] = rest_main
+    return subprocess.Popen([sys.executable, rest_main], env=env, start_new_session=True)
 
 
 def _stop_rest_server_process(process):
     if process is None or process.poll() is not None:
         return
-    process.terminate()
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except OSError:
+        process.terminate()
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.kill()
         process.wait(timeout=5)
 
 
@@ -95,6 +177,7 @@ def _supervise_rest_server_process(stop_event, process_holder):
     max_restart_delay_s = 30.0
     crash_window_s = 60.0
     crash_timestamps = []
+    _cleanup_stale_rest_server_processes()
     while not stop_event.is_set():
         started_at = time.monotonic()
         process = _start_rest_server_process()

@@ -3,6 +3,7 @@
 ROS2 Bridge Server - Exposes the shared MoveIt robot backend via REST API.
 """
 import logging
+import socket
 import sys
 import threading
 import time
@@ -71,6 +72,45 @@ def _as_dict(value, error_message: str) -> dict:
     return {"success": False, "error": error_message}
 
 
+def _configured_tcp_servers(host: str, port: int) -> list[tuple[str, str, int]]:
+    servers = [("REST HTTP", str(host or "0.0.0.0"), int(port))]
+    if bool(getattr(config, "REST_WS_STATE_ENABLED", True)):
+        servers.append((
+            "state WebSocket",
+            str(getattr(config, "REST_WS_STATE_HOST", host) or host or "0.0.0.0"),
+            int(getattr(config, "REST_WS_STATE_PORT", int(port) + 1)),
+        ))
+    if bool(getattr(config, "REST_WS_EXECUTION_ENABLED", True)):
+        servers.append((
+            "execution WebSocket",
+            str(getattr(config, "REST_WS_EXECUTION_HOST", host) or host or "0.0.0.0"),
+            int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
+        ))
+    return servers
+
+
+def _assert_tcp_servers_available(servers: list[tuple[str, str, int]]) -> None:
+    seen: set[tuple[str, int]] = set()
+    conflicts = []
+    for name, bind_host, bind_port in servers:
+        key = (bind_host, bind_port)
+        if key in seen:
+            continue
+        seen.add(key)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((bind_host, bind_port))
+            except OSError as exc:
+                conflicts.append(f"{name} {bind_host}:{bind_port} ({exc.strerror or exc})")
+    if conflicts:
+        conflict_text = "; ".join(conflicts)
+        raise RuntimeError(
+            "REST runtime cannot start because required TCP port(s) are unavailable: "
+            f"{conflict_text}"
+        )
+
+
 def start_rest_server(
     robot: IRobotBackend | None = None,
     node: RobotController | None = None,
@@ -112,6 +152,13 @@ def start_rest_server(
         robot_getter=lambda: robot,
         node_getter=lambda: node,
     )
+
+    try:
+        _assert_tcp_servers_available(_configured_tcp_servers(host, port))
+    except RuntimeError as exc:
+        update_startup_status("error", str(exc), ready=False, error=str(exc))
+        logger.error(str(exc))
+        raise
 
     def get_startup_status():
         with startup_lock:
