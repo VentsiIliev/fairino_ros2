@@ -7,9 +7,63 @@ Triggered from _cartesian_path_response when MoveIt returns 0% or fractional pat
 to distinguish between IK/reachability failures and actual collision states.
 """
 
+from copy import deepcopy
+
 import numpy as np
 import config
 from moveit_msgs.srv import GetPositionFK
+
+
+def _robot_identity(robot_controller):
+    robot_context = getattr(robot_controller, "robot_context", None)
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
+    return planning_group, ee_link, base_link, joint_names
+
+
+def _scope_joint_state(robot_controller, joint_state):
+    """Return a position-only joint state scoped and ordered to the active robot."""
+    if joint_state is None:
+        return None
+
+    names = list(getattr(joint_state, "name", []) or [])
+    positions = list(getattr(joint_state, "position", []) or [])
+    if not names or len(names) != len(positions):
+        return None
+
+    _, _, _, joint_names = _robot_identity(robot_controller)
+    if not joint_names:
+        state = deepcopy(joint_state)
+        state.velocity = []
+        state.effort = []
+        return state
+
+    position_by_name = dict(zip(names, positions))
+    if any(name not in position_by_name for name in joint_names):
+        return None
+
+    from sensor_msgs.msg import JointState
+
+    state = JointState()
+    state.header = deepcopy(getattr(joint_state, "header", state.header))
+    state.name = list(joint_names)
+    state.position = [float(position_by_name[name]) for name in joint_names]
+    return state
 
 
 def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
@@ -28,7 +82,7 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
 
     Args:
         robot_controller:    RobotController node
-        first_waypoint_pose: geometry_msgs/Pose — the ee_link pose of waypoint[0]
+        first_waypoint_pose: geometry_msgs/Pose — the active robot ee_link pose
         joint_state:         sensor_msgs/JointState — current joint positions
     """
     logger = robot_controller.get_logger()
@@ -39,11 +93,16 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
         logger.warning('[FK Diagnostic] /compute_fk service not available')
         return
 
-    from copy import deepcopy
+    _, ee_link, base_link, _ = _robot_identity(robot_controller)
+    scoped_joint_state = _scope_joint_state(robot_controller, joint_state)
+    if scoped_joint_state is None:
+        logger.warning('[FK Diagnostic] Active robot joint state is incomplete')
+        return
+
     fk_request = GetPositionFK.Request()
-    fk_request.header.frame_id = config.BASE_LINK
-    fk_request.fk_link_names = [config.EE_LINK]
-    fk_request.robot_state.joint_state = deepcopy(joint_state)
+    fk_request.header.frame_id = base_link
+    fk_request.fk_link_names = [ee_link]
+    fk_request.robot_state.joint_state = scoped_joint_state
     fk_request.robot_state.is_diff = False
 
     try:
@@ -73,7 +132,7 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
             logger.warning('[FK Diagnostic] FK returned no poses')
             return
 
-        # MoveIt's FK result for ee_link (metres → mm)
+        # MoveIt's FK result for the active ee_link (metres → mm)
         moveit_pose = fk_response.pose_stamped[0].pose
         moveit_pos = np.array([
             moveit_pose.position.x * 1000,
@@ -107,7 +166,7 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
 
         logger.info('=' * 60)
         logger.info('[FK Diagnostic] Comparing first waypoint vs MoveIt FK:')
-        logger.info(f'[FK Diagnostic] MoveIt FK ee_link:  X={moveit_pos[0]:.2f} Y={moveit_pos[1]:.2f} Z={moveit_pos[2]:.2f} mm')
+        logger.info(f'[FK Diagnostic] MoveIt FK {ee_link}: X={moveit_pos[0]:.2f} Y={moveit_pos[1]:.2f} Z={moveit_pos[2]:.2f} mm')
         logger.info(f'[FK Diagnostic] First waypoint:     X={waypoint_pos[0]:.2f} Y={waypoint_pos[1]:.2f} Z={waypoint_pos[2]:.2f} mm')
         logger.info(f'[FK Diagnostic] Position DIFF:      dX={pos_diff[0]:.2f} dY={pos_diff[1]:.2f} dZ={pos_diff[2]:.2f} mm')
         logger.info(f'[FK Diagnostic] Position distance:  {pos_dist:.2f} mm')
@@ -116,9 +175,9 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
         logger.info(f'[FK Diagnostic] Waypoint quat:      [{waypoint_quat[0]:.4f}, {waypoint_quat[1]:.4f}, {waypoint_quat[2]:.4f}, {waypoint_quat[3]:.4f}]')
 
         if pos_dist > 1.0:
-            logger.error(f'[FK Diagnostic] POSITION MISMATCH > 1mm! This may cause path planning failure.')
+            logger.error('[FK Diagnostic] POSITION MISMATCH > 1mm! This may cause path planning failure.')
         if angle_diff_deg > 1.0:
-            logger.error(f'[FK Diagnostic] ORIENTATION MISMATCH > 1 degree! This may cause path planning failure.')
+            logger.error('[FK Diagnostic] ORIENTATION MISMATCH > 1 degree! This may cause path planning failure.')
 
         logger.info('=' * 60)
 
@@ -128,7 +187,7 @@ def _diagnose_fk_mismatch(robot_controller, first_waypoint_pose, joint_state):
 
 def _diagnose_start_collision(robot_controller):
     """
-    Asynchronously check whether the current robot state is in collision and log
+    Asynchronously check whether the active robot state is in collision and log
     all offending contact pairs.
 
     Triggered automatically from _cartesian_path_response whenever MoveIt returns
@@ -144,7 +203,6 @@ def _diagnose_start_collision(robot_controller):
     """
     from moveit_msgs.srv import GetStateValidity
     from moveit_msgs.msg import RobotState
-    from sensor_msgs.msg import JointState
 
     logger = robot_controller.get_logger()
 
@@ -155,18 +213,19 @@ def _diagnose_start_collision(robot_controller):
         logger.warning('[CollisionDiag] /check_state_validity unavailable')
         return
 
-    js = robot_controller.current_joint_state
+    js = _scope_joint_state(robot_controller, robot_controller.current_joint_state)
     if js is None:
-        logger.warning('[CollisionDiag] No joint state available')
+        logger.warning('[CollisionDiag] No complete active robot joint state available')
         return
 
-    from copy import deepcopy
+    planning_group, _, _, _ = _robot_identity(robot_controller)
+
     rs = RobotState()
-    rs.joint_state = deepcopy(js)
+    rs.joint_state = js
 
     req = GetStateValidity.Request()
     req.robot_state = rs
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = planning_group
 
     def _cb(fut):
         """
