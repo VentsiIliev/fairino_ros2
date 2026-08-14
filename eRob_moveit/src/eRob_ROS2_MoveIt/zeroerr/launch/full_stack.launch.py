@@ -84,7 +84,7 @@ def generate_launch_description():
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
-        name="robot_state_publisher",
+        # name="robot_state_publisher",
         output="screen",
         respawn=True,
         parameters=[
@@ -141,7 +141,7 @@ def generate_launch_description():
     servo_node = Node(
         package="zeroerr",
         executable="zeroerr_servo_node",
-        name="servo_node",
+        # name="servo_node",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -160,7 +160,7 @@ def generate_launch_description():
     rviz = Node(
         package="rviz2",
         executable="rviz2",
-        name="rviz",
+        # name="rviz",
         output="log",
         prefix=low_priority_non_rt_prefix,
         arguments=["-d", rviz_config],
@@ -192,7 +192,7 @@ def generate_launch_description():
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        name="controller_manager",
+        # name="controller_manager",
         output="screen",
         prefix=control_prefix,
         parameters=[ros2_controllers_path],
@@ -263,7 +263,7 @@ def generate_launch_description():
         package="ethercat_manager",
         condition=UnlessCondition(use_fake_hardware),
         executable="ethercat_sdo_srv_server",
-        name="ethercat_sdo_srv_server",
+        # name="ethercat_sdo_srv_server",
         output="screen",
         prefix=low_priority_non_rt_prefix,
     )
@@ -272,7 +272,7 @@ def generate_launch_description():
         package="zeroerr",
         condition=UnlessCondition(use_fake_hardware),
         executable="zeroerr_error_monitor.py",
-        name="zeroerr_error_monitor",
+        # name="zeroerr_error_monitor",
         output="screen",
         emulate_tty=True,
         prefix=low_priority_non_rt_prefix,
@@ -288,7 +288,7 @@ def generate_launch_description():
         package="zeroerr",
         condition=UnlessCondition(use_fake_hardware),
         executable="zeroerr_drive_diagnostics.py",
-        name="zeroerr_drive_diagnostics",
+        # name="zeroerr_drive_diagnostics",
         output="screen",
         emulate_tty=True,
         prefix=low_priority_non_rt_prefix,
@@ -320,7 +320,7 @@ def generate_launch_description():
     ipp_helper_node = Node(
         package="erob_moveit_runtime",
         executable="ipp_helper",
-        name="ipp_helper",
+        # name="ipp_helper",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -334,7 +334,7 @@ def generate_launch_description():
     ruckig_helper_node = Node(
         package="erob_moveit_runtime",
         executable="ruckig_helper",
-        name="ruckig_helper",
+        # name="ruckig_helper",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -374,7 +374,7 @@ def generate_launch_description():
     linked_lin_helper_node = Node(
         package="erob_moveit_runtime",
         executable="linked_lin_helper",
-        name="linked_lin_helper",
+        # name="linked_lin_helper",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -388,7 +388,7 @@ def generate_launch_description():
     trajectory_state_validator_node = Node(
         package="erob_moveit_runtime",
         executable="trajectory_state_validator",
-        name="trajectory_state_validator",
+        # name="trajectory_state_validator",
         output="screen",
         prefix=planner_prefix,
         parameters=[
@@ -402,7 +402,7 @@ def generate_launch_description():
     zeroerr_state_publisher = Node(
         package="zeroerr",
         executable="zeroerr_state_publisher.py",
-        name="zeroerr_state_publisher",
+        # name="zeroerr_state_publisher",
         output="screen",
         prefix=non_rt_prefix,
         parameters=[
@@ -419,7 +419,7 @@ def generate_launch_description():
     zeroerr_runtime = Node(
         package="zeroerr",
         executable="zeroerr_runtime.py",
-        name="zeroerr_runtime",
+        # name="zeroerr_runtime",
         output="screen",
         emulate_tty=True,
         additional_env={
