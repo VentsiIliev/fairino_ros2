@@ -139,11 +139,21 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         self._drive_state_lock = Lock()
         self._drive_enable_lock = Lock()
         self._drive_operation_enabled_requested = False
-        self._drive_joint_order = list(config.JOINT_NAMES)
-        self._drive_mode_display = np.zeros(config.NUM_JOINTS, dtype=float)
-        self._drive_statusword = np.zeros(config.NUM_JOINTS, dtype=float)
-        self._drive_error_code = np.zeros(config.NUM_JOINTS, dtype=float)
-        self._drive_effort_actual = np.zeros(config.NUM_JOINTS, dtype=float)
+
+        robot_context = getattr(robot_controller, 'robot_context', None)
+        self._drive_joint_order = list(
+            getattr(robot_context, 'joint_names', ())
+            or getattr(config, 'JOINT_NAMES', [])
+            or []
+        )
+        self._drive_joint_count = len(self._drive_joint_order)
+        if self._drive_joint_count <= 0:
+            raise RuntimeError('[DriveEnable] No active robot joints configured')
+
+        self._drive_mode_display = np.zeros(self._drive_joint_count, dtype=float)
+        self._drive_statusword = np.zeros(self._drive_joint_count, dtype=float)
+        self._drive_error_code = np.zeros(self._drive_joint_count, dtype=float)
+        self._drive_effort_actual = np.zeros(self._drive_joint_count, dtype=float)
         self._drive_startup_snapshot_logged = False
         self._drive_pre_motion_snapshot_logged = False
         self._drive_enable_set_pub = robot_controller.create_publisher(
@@ -164,9 +174,27 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         )
 
     def on_joint_state(self, robot_controller, msg):
-        if len(msg.effort) >= config.NUM_JOINTS:
+        names = list(getattr(msg, 'name', []) or [])
+        efforts = list(getattr(msg, 'effort', []) or [])
+
+        if names and len(names) == len(efforts):
+            effort_by_name = dict(zip(names, efforts))
+            if all(name in effort_by_name for name in self._drive_joint_order):
+                values = [
+                    float(effort_by_name[name])
+                    for name in self._drive_joint_order
+                ]
+                with self._drive_state_lock:
+                    self._drive_effort_actual = np.array(values, dtype=float)
+                return
+
+        # Backward-compatible fallback for unnamed single-arm joint states.
+        if not names and len(efforts) >= self._drive_joint_count:
             with self._drive_state_lock:
-                self._drive_effort_actual = np.array(msg.effort[:config.NUM_JOINTS], dtype=float)
+                self._drive_effort_actual = np.array(
+                    efforts[:self._drive_joint_count],
+                    dtype=float,
+                )
 
     def set_drive_operation_enabled(self, robot_controller, enabled: bool) -> dict:
         if enabled and not robot_controller.is_hardware_ready_for_motion():
@@ -199,8 +227,8 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             )
             time.sleep(0.25)
 
-        pulse = np.ones(config.NUM_JOINTS, dtype=float)
-        zeros = np.zeros(config.NUM_JOINTS, dtype=float)
+        pulse = np.ones(self._drive_joint_count, dtype=float)
+        zeros = np.zeros(self._drive_joint_count, dtype=float)
         enable_msg = Float64MultiArray()
         disable_msg = Float64MultiArray()
         if enabled:
@@ -240,11 +268,11 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             return False
         with self._drive_state_lock:
             statusword = [int(round(value)) for value in self._drive_statusword.tolist()]
-        if len(statusword) < config.NUM_JOINTS:
+        if len(statusword) < self._drive_joint_count:
             return False
         return all(
             self._decode_statusword_state(value) == 'operation_enabled'
-            for value in statusword[:config.NUM_JOINTS]
+            for value in statusword[:self._drive_joint_count]
         )
 
     def get_drive_enable_fault_reason(self, robot_controller) -> str:
@@ -256,7 +284,7 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             statusword = [int(round(value)) for value in self._drive_statusword.tolist()]
         statusword_state = [
             self._decode_statusword_state(value)
-            for value in statusword[:config.NUM_JOINTS]
+            for value in statusword[:self._drive_joint_count]
         ]
         return (
             "drive enable was requested, but not all drives report operation_enabled "
@@ -270,10 +298,10 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             statusword = [int(round(value)) for value in self._drive_statusword.tolist()]
         statusword_state = [
             self._decode_statusword_state(value)
-            for value in statusword[:config.NUM_JOINTS]
+            for value in statusword[:self._drive_joint_count]
         ]
         actual_enabled = (
-            len(statusword_state) == config.NUM_JOINTS
+            len(statusword_state) == self._drive_joint_count
             and all(state == 'operation_enabled' for state in statusword_state)
         )
         return {
@@ -355,13 +383,11 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
     def _wait_for_drive_set_controllers_loaded(self, robot_controller, timeout_s: float) -> dict[str, str] | None:
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         missing_logged = None
-        last_states = None
 
         while True:
             controller_states = robot_controller._get_controller_states()
             if controller_states is None:
                 return None
-            last_states = controller_states
 
             missing = [
                 name for name in self._DRIVE_SET_CONTROLLER_NAMES
@@ -394,8 +420,8 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
             robot_controller._last_runtime_dynamic_input_ts = now
 
         joint_index = {name: idx for idx, name in enumerate(self._drive_joint_order)}
-        statusword = np.zeros(config.NUM_JOINTS, dtype=float)
-        error_code = np.zeros(config.NUM_JOINTS, dtype=float)
+        statusword = np.zeros(self._drive_joint_count, dtype=float)
+        error_code = np.zeros(self._drive_joint_count, dtype=float)
         mode_display = self._drive_mode_display.copy()
         for joint_name, interface_value in zip(msg.joint_names, msg.interface_values):
             index = joint_index.get(joint_name)
@@ -485,7 +511,7 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         if not status_values:
             return []
 
-        joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
+        joint_names = list(self._drive_joint_order or [])
         states = []
         for index, statusword in enumerate(status_values):
             joint_name = joint_names[index] if index < len(joint_names) else f'joint_{index + 1}'
@@ -536,8 +562,18 @@ class ZeroErrRuntimeAdapter(RuntimeBackendAdapter):
         # ZeroErr can publish /cartesian_position from the wrist/flange frame
         # while MoveIt still plans on ee_link. In that mode the registry stores
         # wrist/flange -> TCP and planning needs ee_link -> TCP.
-        source_link = str(getattr(config, "CARTESIAN_SOURCE_LINK", config.EE_LINK))
-        if source_link == config.WRIST_LINK and robot_controller.T_ee_link is not None:
+        robot_context = getattr(robot_controller, 'robot_context', None)
+        source_link = str(
+            getattr(robot_context, 'cartesian_source_link', '')
+            or getattr(config, 'CARTESIAN_SOURCE_LINK', '')
+            or getattr(robot_context, 'ee_link', '')
+            or getattr(config, 'EE_LINK', 'ee_link')
+        )
+        wrist_link = str(
+            getattr(robot_context, 'wrist_link', '')
+            or getattr(config, 'WRIST_LINK', 'wrist_link')
+        )
+        if source_link == wrist_link and robot_controller.T_ee_link is not None:
             return np.linalg.inv(robot_controller.T_ee_link) @ registry_tool_transform
         return registry_tool_transform
 
