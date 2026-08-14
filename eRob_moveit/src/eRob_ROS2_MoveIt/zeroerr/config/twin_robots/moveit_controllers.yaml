@@ -1,0 +1,31 @@
+moveit_controller_manager:
+  moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - robot1_joint_trajectory_controller
+    - robot2_joint_trajectory_controller
+
+  robot1_joint_trajectory_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - robot1_Joint_1
+      - robot1_Joint_2
+      - robot1_Joint_3
+      - robot1_Joint_4
+      - robot1_Joint_5
+      - robot1_Joint_6
+
+  robot2_joint_trajectory_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: false
+    joints:
+      - robot2_Joint_1
+      - robot2_Joint_2
+      - robot2_Joint_3
+      - robot2_Joint_4
+      - robot2_Joint_5
+      - robot2_Joint_6
