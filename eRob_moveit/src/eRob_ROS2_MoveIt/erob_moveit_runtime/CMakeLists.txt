@@ -66,6 +66,7 @@ install(FILES
   scripts/monitor_window.py
   scripts/runtime_initializer.py
   scripts/robot_controller.py
+  scripts/robot_runtime_context.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
