@@ -84,14 +84,14 @@ Launches the robot system with proper environment setup.
 
 **Usage:**
 ```bash
-# Launch default demo.launch.py
+# Launch default full_stack.launch.py
 ./launch_robot.sh
 
 # Launch specific launch file
-./launch_robot.sh demo.launch.py
+./launch_robot.sh full_stack.launch.py
 
 # Launch with additional arguments
-./launch_robot.sh demo.launch.py use_sim_time:=true
+./launch_robot.sh full_stack.launch.py use_sim_time:=true
 ```
 
 **What it does:**
@@ -178,7 +178,7 @@ source install/setup.bash
 ### Launch
 ```bash
 source /home/ilv/ros2_ws/install/setup.bash
-ros2 launch fairino5_v6_moveit2_config demo.launch.py
+ros2 launch fairino5_v6_moveit2_config full_stack.launch.py
 ```
 
 ---

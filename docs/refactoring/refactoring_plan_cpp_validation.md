@@ -390,7 +390,7 @@ What happened:
   because no controller with this name exists`.
 - Both source and installed `zeroerr/config/ros2_controllers.yaml` already
   define `drive_enable_set_controller` and `drive_disable_set_controller`.
-- `zeroerr/launch/demo.launch.py` spawns `drive_enable_set_controller` at 3s
+- `zeroerr/launch/full_stack.launch.py` spawns `drive_enable_set_controller` at 3s
   and `drive_disable_set_controller` at 4s. Runtime auto-enable could call the
   STRICT controller switch before the second controller was loaded.
 
@@ -853,7 +853,7 @@ Issues / repo facts found:
   This is safer for the GUI but makes the visible ready time no faster than the
   slowest required helper, currently launched at fixed timers around 5.0s,
   6.5s, 8.0s and 8.5s.
-- Branch-level launch difference from master: `zeroerr/launch/demo.launch.py`
+- Branch-level launch difference from master: `zeroerr/launch/full_stack.launch.py`
   replaced MoveIt's `generate_demo_launch(moveit_config)` with a manually
   assembled launch graph for fake-hardware support. Real-hardware timer values
   for runtime/state/helper nodes stayed roughly the same, but the launch graph,
@@ -5490,10 +5490,10 @@ eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/config.py
 eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/planner_support_service.py
 eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/planner_context.py
 eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/robot_controller.py
-eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/demo.launch.py
+eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/full_stack.launch.py
 eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/ethercat_only.launch.py
 eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/scripts/EtherCatStart.sh
-eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py
+eRob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/full_stack.launch.py
 ```
 
 What was done:
@@ -5505,9 +5505,9 @@ What was done:
 - Added linked-LIN service availability to `RobotController`
   `get_motion_stack_fault_reason()`.
 - Added `linked_lin_helper` launch nodes to:
-  - ZeroErr full demo launch
+  - ZeroErr full stack launch
   - ZeroErr EtherCAT-only launch
-  - Fairino MoveIt config demo launch
+  - Fairino MoveIt config full stack launch
 - Added `ptp_helper` and `linked_lin_helper` to the ZeroErr non-RT process
   pinning list in `EtherCatStart.sh`.
 
@@ -5530,9 +5530,9 @@ python3 -m py_compile \
   erob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/planner_support_service.py \
   erob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/motion/planning/planner_context.py \
   erob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/robot_controller.py \
-  erob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/demo.launch.py \
+  erob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/full_stack.launch.py \
   erob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/ethercat_only.launch.py \
-  erob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/demo.launch.py
+  erob_moveit/src/eRob_ROS2_MoveIt/fairino5_v6_moveit2_config/launch/full_stack.launch.py
 
 bash -n eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/scripts/EtherCatStart.sh
 

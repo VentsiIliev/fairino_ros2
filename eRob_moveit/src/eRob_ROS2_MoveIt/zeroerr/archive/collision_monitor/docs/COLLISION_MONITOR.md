@@ -288,7 +288,7 @@ Baseline capture is only a rest measurement. It is not enough by itself. Thresho
 - GUI:
   - [zeroerr_collision_monitor_gui.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/scripts/zeroerr_collision_monitor_gui.py)
 - launch defaults:
-  - [demo.launch.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/demo.launch.py)
+  - [full_stack.launch.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/full_stack.launch.py)
   - [ethercat_only.launch.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/zeroerr/launch/ethercat_only.launch.py)
 - shared dynamics code:
   - [external_torque_estimator.py](/home/ilv/ros2_ws/eRob_moveit/src/eRob_ROS2_MoveIt/erob_moveit_runtime/scripts/safety/collision_detection/external_torque_estimator.py)

@@ -10,7 +10,7 @@ from motion.servo.cartesian_servo.i_cartesian_servo import (
     CartesianServoResult,
 )
 import config
-from rest_api_support import (
+from rest.api_support import (
     MOTION_ERROR_DESCRIPTIONS,
     parse_cartesian_servo_start_request,
     parse_cartesian_servo_update_request,
@@ -20,9 +20,9 @@ from rest_api_support import (
     parse_jog_request,
     parse_move_linear_request,
     parse_servo_jog_start_request,
-    validate_pose_from_start,
 )
-from utils.work_object import WorkObject
+from runtime_gateway.base import RuntimeGateway
+from runtime_gateway.local import LocalRuntimeGateway
 
 
 logger = logging.getLogger("erob_moveit_runtime_api")
@@ -91,28 +91,25 @@ class RuntimeApi:
         runtime_state_snapshot_getter: Callable[[], dict[str, Any]],
         *,
         port: int,
+        gateway=None,
     ):
         self._robot_getter = robot_getter
         self._node_getter = node_getter
         self._startup_status_getter = startup_status_getter
         self._runtime_state_snapshot_getter = runtime_state_snapshot_getter
+        self._gateway = gateway
         self._port = int(port)
 
-    @property
-    def robot(self):
-        return self._robot_getter()
-
-    @property
-    def node(self):
-        return self._node_getter()
-
-    @property
-    def cartesian_servo(self):
-        robot = self.robot
-        return robot.cartesian_servo if robot is not None else None
+    def _gateway_or_local(self) -> RuntimeGateway:
+        if self._gateway is not None:
+            return self._gateway
+        return LocalRuntimeGateway(
+            robot_getter=self._robot_getter,
+            node_getter=self._node_getter,
+        )
 
     def _task_id(self):
-        return getattr(self.robot.node, "last_submitted_task_id", None)
+        return self._gateway_or_local().last_submitted_task_id()
 
     def _motion_result(self, result: int) -> ApiResponse:
         task_id = self._task_id()
@@ -134,21 +131,16 @@ class RuntimeApi:
         return motion_error(result)
 
     def _require_motion_stack_ready(self) -> ApiResponse | None:
-        node = self.node
-        if node is None:
+        gateway = self._gateway_or_local()
+        if not gateway.is_runtime_initialized():
             return response_error("robot runtime is still starting", 503)
-        is_ready = getattr(node, "is_motion_stack_ready", None)
-        if not callable(is_ready):
+        if gateway.is_motion_stack_ready():
             return None
-        if is_ready():
-            return None
-        get_reason = getattr(node, "get_motion_stack_fault_reason", None)
-        reason = get_reason() if callable(get_reason) else "motion stack not ready"
         return response_error(
             "motion stack is not ready",
             503,
             motion_stack_ready=False,
-            motion_stack_fault=reason,
+            motion_stack_fault=gateway.get_motion_stack_fault_reason(),
             startup=self._startup_status_getter(),
             runtime=self._runtime_state_snapshot_getter(),
         )
@@ -163,12 +155,7 @@ class RuntimeApi:
             return not_ready
 
         logger.info("Received move/linear request with data %s", data)
-        try:
-            from motion.move_linear_timing import begin as begin_move_linear_timing
-            begin_move_linear_timing(self.node, source="/move/linear")
-        except Exception:
-            pass
-        result = self.robot.move_liner(
+        result = self._gateway_or_local().move_linear(
             payload["position"],
             tool=payload["tool"],
             user=payload["user"],
@@ -189,7 +176,7 @@ class RuntimeApi:
             return not_ready
 
         logger.info("Received move/ptp request with data %s", data)
-        result = self.robot.move_ptp(
+        result = self._gateway_or_local().move_ptp(
             payload["position"],
             tool=payload["tool"],
             user=payload["user"],
@@ -209,11 +196,11 @@ class RuntimeApi:
         if not_ready is not None:
             return not_ready
 
-        self.robot.node.get_logger().info(
+        logger.info(
             f"Executing path with {len(payload['path'])} waypoints, vel={payload['vel']}, acc={payload['acc']}"
         )
         try:
-            result = self.robot.execute_path(
+            result = self._gateway_or_local().execute_path(
                 payload["path"],
                 rx=payload["rx"],
                 ry=payload["ry"],
@@ -226,7 +213,7 @@ class RuntimeApi:
             )
         except Exception as exc:
             traceback.print_exc()
-            self.robot.node.get_logger().error(f"Error executing path: {exc}")
+            logger.error(f"Error executing path: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
         return self._motion_result(result)
 
@@ -239,9 +226,9 @@ class RuntimeApi:
         if not_ready is not None:
             return not_ready
 
-        self.robot.node.get_logger().info(f"Executing sequence with {len(payload['segments'])} segments")
+        logger.info(f"Executing sequence with {len(payload['segments'])} segments")
         try:
-            result = self.robot.execute_sequence(
+            result = self._gateway_or_local().execute_sequence(
                 payload["segments"],
                 tool=payload["tool"],
                 user=payload["user"],
@@ -249,7 +236,7 @@ class RuntimeApi:
             )
         except Exception as exc:
             traceback.print_exc()
-            self.robot.node.get_logger().error(f"Error executing sequence: {exc}")
+            logger.error(f"Error executing sequence: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
         task_id = self._task_id()
@@ -301,11 +288,11 @@ class RuntimeApi:
         if not_ready is not None:
             return not_ready
 
-        self.robot.node.get_logger().info(
+        logger.info(
             f"Executing ordered motion chain with {len(payload['segments'])} segments"
         )
         try:
-            result = self.robot.execute_ordered_motion_chain(
+            result = self._gateway_or_local().execute_ordered_motion_chain(
                 segments=payload["segments"],
                 tool=payload["tool"],
                 user=payload["user"],
@@ -314,7 +301,7 @@ class RuntimeApi:
             )
         except Exception as exc:
             traceback.print_exc()
-            self.robot.node.get_logger().error(f"Error executing ordered motion chain: {exc}")
+            logger.error(f"Error executing ordered motion chain: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
         return self._motion_result(result)
 
@@ -338,7 +325,7 @@ class RuntimeApi:
             return not_ready
 
         try:
-            result = self.robot.unwind_joint6(
+            result = self._gateway_or_local().unwind_joint6(
                 blocking=blocking,
                 queue_if_busy=queue_if_busy,
                 vel=vel,
@@ -346,47 +333,47 @@ class RuntimeApi:
             )
         except Exception as exc:
             traceback.print_exc()
-            self.robot.node.get_logger().error(f"Error executing explicit Joint_6 unwind: {exc}")
+            logger.error(f"Error executing explicit Joint_6 unwind: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
         return self._motion_result(result)
 
     def safety_walls_enabled(self) -> ApiResponse:
-        body = as_dict(self.robot.get_safety_walls_status(), "invalid safety wall status")
+        body = as_dict(self._gateway_or_local().get_safety_walls_status(), "invalid safety wall status")
         success = not body.get("error")
         return ApiResponse({**body, "success": success, "enabled": bool(body.get("enabled", False))}, 200 if success else 503)
 
     def safety_walls_status(self) -> ApiResponse:
-        body = as_dict(self.robot.get_safety_walls_status(), "invalid safety wall status")
+        body = as_dict(self._gateway_or_local().get_safety_walls_status(), "invalid safety wall status")
         success = not body.get("error")
         return ApiResponse({**body, "success": success}, 200 if success else 503)
 
     def enable_safety_walls(self) -> ApiResponse:
-        body = as_dict(self.robot.enable_safety_walls(), "invalid safety wall status")
+        body = as_dict(self._gateway_or_local().enable_safety_walls(), "invalid safety wall status")
         success = bool(body.get("enabled", False)) and not body.get("error")
         return ApiResponse({**body, "success": success}, 200 if success else 500)
 
     def disable_safety_walls(self) -> ApiResponse:
-        body = as_dict(self.robot.disable_safety_walls(), "invalid safety wall status")
+        body = as_dict(self._gateway_or_local().disable_safety_walls(), "invalid safety wall status")
         success = not bool(body.get("enabled", True)) and not body.get("error")
         return ApiResponse({**body, "success": success}, 200 if success else 500)
 
     def current_position(self) -> ApiResponse:
-        pos = self.robot.get_current_position()
+        pos = self._gateway_or_local().get_current_position()
         if pos is None:
             return response_error("current position unavailable", 503)
         return ApiResponse({"success": True, "position": pos})
 
     def flange_position(self) -> ApiResponse:
-        pos = self.robot.get_current_flange_position()
+        pos = self._gateway_or_local().get_current_flange_position()
         if pos is None:
             return response_error("current flange position unavailable", 503)
         return ApiResponse({"success": True, "position": pos})
 
     def tool_registry(self) -> ApiResponse:
-        return ApiResponse({"success": True, **config.get_tool_registry_snapshot()})
+        return ApiResponse({"success": True, **self._gateway_or_local().tool_registry()})
 
     def active_tool(self) -> ApiResponse:
-        return ApiResponse({"success": True, "tool_name": getattr(self.node, "active_tool_name", "TOOL_0")})
+        return ApiResponse({"success": True, "tool_name": self._gateway_or_local().active_tool_name()})
 
     def set_active_tool(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
@@ -397,30 +384,28 @@ class RuntimeApi:
                 tool_name = str(payload.get("name") or payload.get("tool_name") or "").strip()
                 if not tool_name:
                     raise ValueError("tool_id or tool_name is required")
-            self.node.set_tool(tool_name)
-            return ApiResponse({"success": True, "tool_name": getattr(self.node, "active_tool_name", tool_name)})
+            tool_name = self._gateway_or_local().set_active_tool(tool_name)
+            return ApiResponse({"success": True, "tool_name": tool_name})
         except ValueError as exc:
             return ApiResponse({"success": False, "error": str(exc)}, 400)
         except Exception as exc:
-            self.node.get_logger().error(f"REST /tool/active exception: {exc}\n{traceback.format_exc()}")
+            logger.error(f"REST /tool/active exception: {exc}\n{traceback.format_exc()}")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
     def update_tool_registry(self, tool_id: int, data: dict[str, Any] | None) -> ApiResponse:
         try:
             payload = data or {}
-            snapshot = config.update_tool_registry(
+            snapshot = self._gateway_or_local().update_tool_registry(
                 tool_id=tool_id,
                 name=payload.get("name"),
                 transform=payload.get("transform"),
                 persist=bool(payload.get("persist", False)),
             )
-            if getattr(self.node, "active_tool_name", None) == config.resolve_tool_name(tool_id):
-                self.node.set_tool(config.resolve_tool_name(tool_id))
             return ApiResponse({"success": True, **snapshot})
         except ValueError as exc:
             return ApiResponse({"success": False, "error": str(exc)}, 400)
         except Exception as exc:
-            self.node.get_logger().error(f"REST /tool/registry exception: {exc}\n{traceback.format_exc()}")
+            logger.error(f"REST /tool/registry exception: {exc}\n{traceback.format_exc()}")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
     def validate_pose(self, data: dict[str, Any] | None) -> ApiResponse:
@@ -428,7 +413,7 @@ class RuntimeApi:
             payload = data or {}
             target_position = payload.get("target_position") or payload.get("position")
             start_position = payload.get("start_position")
-            self.node.get_logger().info(
+            logger.info(
                 "REST /reachability/pose request: "
                 f"start={start_position} target={target_position} "
                 f"tool={payload.get('tool', 0)} user={payload.get('user', 0)} "
@@ -437,26 +422,23 @@ class RuntimeApi:
             if not target_position or len(target_position) != 6:
                 return response_error("Invalid target_position format", 400, reachable=False)
             if start_position is None:
-                start_position = self.robot.get_current_position()
+                start_position = self._gateway_or_local().get_current_position()
             if not start_position or len(start_position) != 6:
                 return response_error("Invalid or unavailable start_position", 400, reachable=False)
 
-            result = validate_pose_from_start(
-                self.node,
-                self.robot,
+            result = self._gateway_or_local().validate_pose(
                 start_position=start_position,
                 target_position=target_position,
                 tool=payload.get("tool", 0),
                 user=payload.get("user", 0),
                 start_joint_state_payload=payload.get("start_joint_state"),
             )
-            result = to_jsonable(result)
             http_status = 200 if result.get("reachable") else 409 if result.get("reason") == "cartesian_path_partial" else 400
-            log_fn = self.node.get_logger().info if result.get("reachable") else self.node.get_logger().warning
+            log_fn = logger.info if result.get("reachable") else logger.warning
             log_fn(f"REST /reachability/pose response: http={http_status} result={result}")
             return ApiResponse({**result, "success": bool(result.get("reachable"))}, http_status)
         except Exception as exc:
-            self.node.get_logger().error(f"REST /reachability/pose exception: {exc}\n{traceback.format_exc()}")
+            logger.error(f"REST /reachability/pose exception: {exc}\n{traceback.format_exc()}")
             return ApiResponse({
                 "success": False,
                 "reachable": False,
@@ -465,30 +447,13 @@ class RuntimeApi:
             }, 500)
 
     def current_velocity(self) -> ApiResponse:
-        vel = self.robot.get_current_velocity()
+        vel = self._gateway_or_local().get_current_velocity()
         if vel is None:
             return response_error("current velocity unavailable", 503)
         return ApiResponse({"success": True, "velocity": vel})
 
     def stop_motion(self) -> ApiResponse:
-        self.robot.node.get_logger().info("[runtime_api] Stopping motion")
-        stop_result = self.robot.stop_motion()
-        if not isinstance(stop_result, dict):
-            stop_result = {
-                "state": "ERROR",
-                "result": -2,
-                "success": False,
-                "stopped": False,
-                "error": f"Unexpected stop result type: {type(stop_result).__name__}",
-            }
-        return ApiResponse({
-            "stop_state": stop_result.get("state", "ERROR"),
-            "stopped": bool(stop_result.get("stopped", False)),
-            "result": stop_result.get("result", -2),
-            "success": bool(stop_result.get("success", False)),
-            "queue_cleared": int(stop_result.get("queue_cleared", 0)),
-            **({"error": stop_result["error"]} if stop_result.get("error") else {}),
-        })
+        return ApiResponse(self._gateway_or_local().stop_motion())
 
     def set_workobject(self, data: dict[str, Any] | None) -> ApiResponse:
         payload = data or {}
@@ -496,72 +461,31 @@ class RuntimeApi:
         if not origin or len(origin) != 6:
             return response_error("Invalid origin format", 400)
         try:
-            self.robot.set_workobject(WorkObject(origin=origin), user_id=payload.get("user_id", 0))
+            self._gateway_or_local().set_workobject(origin, user_id=payload.get("user_id", 0))
         except Exception as exc:
-            self.node.get_logger().error(f"Workobject endpoint error: {exc}")
+            logger.error(f"Workobject endpoint error: {exc}")
             return response_error(str(exc), 500)
         return ApiResponse({"success": True, "origin": origin, "user_id": payload.get("user_id", 0)})
 
     def status(self) -> ApiResponse:
-        status = self.robot.node.status_publisher.get_status_dict()
-        get_ordered_status = getattr(self.robot, "get_ordered_motion_chain_status", None)
-        if callable(get_ordered_status):
-            status["ordered_motion_chain"] = to_jsonable(get_ordered_status())
-        status["success"] = True
-        status.update(self._runtime_state_snapshot_getter())
-        return ApiResponse(status)
+        return ApiResponse(self._gateway_or_local().status())
 
     def ordered_motion_chain_status(self) -> ApiResponse:
-        get_ordered_status = getattr(self.robot, "get_ordered_motion_chain_status", None)
-        if not callable(get_ordered_status):
+        status = self._gateway_or_local().ordered_motion_chain_status()
+        if status.get("supported") is False:
             return ApiResponse({"success": True, "supported": False, "active": False})
-        status = as_dict(get_ordered_status(), "invalid ordered motion chain status")
         success = not status.get("error")
         return ApiResponse({**status, "success": success}, 200 if success else 500)
 
     def state_snapshot(self) -> ApiResponse:
-        position = self.robot.get_current_position()
-        flange_position = self.robot.get_current_flange_position()
-        velocity = self.robot.get_current_velocity()
-        unavailable = []
-        if position is None:
-            unavailable.append("position")
-        if flange_position is None:
-            unavailable.append("flange_position")
-        if velocity is None:
-            unavailable.append("velocity")
-        return ApiResponse({
-            "success": not unavailable,
-            "partial": bool(unavailable),
-            "unavailable_fields": unavailable,
-            "position": position,
-            "flange_position": flange_position,
-            "velocity": velocity,
-            "status": self.robot.node.status_publisher.get_status_dict(),
-            "active_tool": getattr(self.node, "active_tool_name", "TOOL_0"),
-            "safety_walls": self.robot.get_safety_walls_status(),
-            **self._runtime_state_snapshot_getter(),
-        })
+        return ApiResponse(self._gateway_or_local().state_snapshot())
 
     def state_kinematics(self) -> ApiResponse:
-        position = self.robot.get_current_position()
-        velocity = self.robot.get_current_velocity()
-        acceleration = self.robot.get_current_acceleration()
-        if position is None:
-            return ApiResponse({"success": False, "error": "current position unavailable"}, 503)
-        unavailable = []
-        if velocity is None:
-            unavailable.append("velocity")
-        if acceleration is None:
-            unavailable.append("acceleration")
-        return ApiResponse({
-            "success": not unavailable,
-            "partial": bool(unavailable),
-            "unavailable_fields": unavailable,
-            "position": position,
-            "velocity": velocity,
-            "acceleration": acceleration,
-        }, 200 if not unavailable else 206)
+        result = self._gateway_or_local().state_kinematics()
+        if result.get("error") is not None:
+            return ApiResponse(result, 503)
+        unavailable = result.get("unavailable_fields", [])
+        return ApiResponse(result, 200 if not unavailable else 206)
 
     def jog(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
@@ -569,7 +493,7 @@ class RuntimeApi:
             not_ready = self._require_motion_stack_ready()
             if not_ready is not None:
                 return not_ready
-            result = self.robot.start_jog(
+            result = self._gateway_or_local().jog(
                 payload["axis"],
                 payload["direction"],
                 payload["step"],
@@ -585,7 +509,7 @@ class RuntimeApi:
         except ValueError as exc:
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
         except Exception as exc:
-            self.robot.node.get_logger().error(f"Jog endpoint error: {exc}")
+            logger.error(f"Jog endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def servo_jog_start(self, data: dict[str, Any] | None) -> ApiResponse:
@@ -594,7 +518,7 @@ class RuntimeApi:
             not_ready = self._require_motion_stack_ready()
             if not_ready is not None:
                 return not_ready
-            result = self.robot.start_servo_jog(
+            result = self._gateway_or_local().servo_jog_start(
                 payload["axis"],
                 payload["direction"],
                 payload["vel"],
@@ -611,17 +535,17 @@ class RuntimeApi:
         except ValueError as exc:
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
         except Exception as exc:
-            self.robot.node.get_logger().error(f"ServoJog start endpoint error: {exc}")
+            logger.error(f"ServoJog start endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def servo_jog_stop(self) -> ApiResponse:
         try:
-            result = self.robot.stop_servo_jog()
+            result = self._gateway_or_local().servo_jog_stop()
             if result == 0:
                 return ApiResponse({"result": result, "success": True, "state": "stopped"})
             return motion_error(result)
         except Exception as exc:
-            self.robot.node.get_logger().error(f"ServoJog stop endpoint error: {exc}")
+            logger.error(f"ServoJog stop endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def set_digital_output(self, data: dict[str, Any] | None) -> ApiResponse:
@@ -640,12 +564,12 @@ class RuntimeApi:
             return ApiResponse({"result": -1, "success": False, "error": "value must be 0 or 1"}, 400)
 
         try:
-            result = self.robot.setDigitalOutput(port, value)
+            result = self._gateway_or_local().set_digital_output(port, value)
             if result == 0:
                 return ApiResponse({"result": 0, "success": True, "port": port, "value": value})
             return ApiResponse({"result": result, "success": False, "port": port, "value": value}, 500)
         except Exception as exc:
-            self.robot.node.get_logger().error(f"Digital output endpoint error: {exc}")
+            logger.error(f"Digital output endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def drive_command_response(self, command_result: dict, desired_enabled: bool) -> ApiResponse:
@@ -670,7 +594,7 @@ class RuntimeApi:
             }, 200)
         verify_timeout_s = max(float(getattr(config, "STARTUP_AUTO_ENABLE_DRIVES_VERIFY_TIMEOUT_S", 5.0)), 0.1)
         verify_deadline = time.monotonic() + verify_timeout_s
-        drive_status = as_dict(self.node.get_drive_operation_status(), "unexpected drive status result type")
+        drive_status = self._gateway_or_local().drive_operation_status()
 
         while command_accepted and time.monotonic() < verify_deadline:
             actual_enabled = bool(drive_status.get("actual_enabled", False))
@@ -680,7 +604,7 @@ class RuntimeApi:
             if not desired_enabled and not actual_enabled and not requested_enabled:
                 break
             time.sleep(0.05)
-            drive_status = as_dict(self.node.get_drive_operation_status(), "unexpected drive status result type")
+            drive_status = self._gateway_or_local().drive_operation_status()
             if not drive_status.get("success", True):
                 break
 
@@ -708,56 +632,42 @@ class RuntimeApi:
 
     def enable_drive_operation(self) -> ApiResponse:
         try:
-            result = to_jsonable(self.node.set_drive_operation_enabled(True))
+            result = self._gateway_or_local().set_drive_operation_enabled(True)
             return self.drive_command_response(result, desired_enabled=True)
         except Exception as exc:
-            self.node.get_logger().error(f"Drive enable endpoint error: {exc}")
+            logger.error(f"Drive enable endpoint error: {exc}")
             logger.exception("Drive enable endpoint error")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
     def disable_drive_operation(self) -> ApiResponse:
         try:
-            result = to_jsonable(self.node.set_drive_operation_enabled(False))
+            result = self._gateway_or_local().set_drive_operation_enabled(False)
             return self.drive_command_response(result, desired_enabled=False)
         except Exception as exc:
-            self.node.get_logger().error(f"Drive disable endpoint error: {exc}")
+            logger.error(f"Drive disable endpoint error: {exc}")
             logger.exception("Drive disable endpoint error")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
     def drive_operation_status(self) -> ApiResponse:
         try:
-            hardware_ready = bool(self.node.is_hardware_ready_for_motion())
-            return ApiResponse({
-                **to_jsonable(self.node.get_drive_operation_status()),
-                "hardware_ready": hardware_ready,
-                "hardware_fault": None if hardware_ready else self.node.get_hardware_fault_reason(),
-            })
+            return ApiResponse(self._gateway_or_local().drive_operation_status())
         except Exception as exc:
-            self.node.get_logger().error(f"Drive status endpoint error: {exc}")
+            logger.error(f"Drive status endpoint error: {exc}")
             logger.exception("Drive status endpoint error")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
     def motion_interlock_status(self) -> ApiResponse:
-        return ApiResponse({"success": True, **to_jsonable(self.node.get_motion_interlock_status())})
+        return ApiResponse({"success": True, **self._gateway_or_local().motion_interlock_status()})
 
     def reset_motion_interlock(self) -> ApiResponse:
-        result = to_jsonable(self.node.reset_motion_interlock())
-        hardware_ready = bool(self.node.is_hardware_ready_for_motion())
-        return ApiResponse({
-            **result,
-            "hardware_ready": hardware_ready,
-            "hardware_fault": None if hardware_ready else self.node.get_hardware_fault_reason(),
-            "motion_interlock": to_jsonable(self.node.get_motion_interlock_status()),
-        })
+        return ApiResponse(self._gateway_or_local().reset_motion_interlock())
 
     def _cartesian_servo_result(
             self,
             result: CartesianServoResult,
     ) -> ApiResponse:
 
-        servo = self.cartesian_servo
-
-        status = servo.get_status() if servo is not None else None
+        status = self._gateway_or_local().cartesian_servo_status()
 
         status_body = None
         if status is not None:
@@ -813,8 +723,8 @@ class RuntimeApi:
         if not_ready is not None:
             return not_ready
 
-        servo = self.cartesian_servo
-        if servo is None:
+        gateway = self._gateway_or_local()
+        if not gateway.cartesian_servo_available():
             return response_error(
                 "Cartesian Servo is not available",
                 503,
@@ -828,7 +738,7 @@ class RuntimeApi:
         )
 
         try:
-            result = servo.start(
+            result = gateway.cartesian_servo_start(
                 frame=payload["frame"],
                 tool=payload["tool"],
                 user=payload["user"],
@@ -848,15 +758,15 @@ class RuntimeApi:
         except ValueError as exc:
             return response_error(str(exc), 400)
 
-        servo = self.cartesian_servo
-        if servo is None:
+        gateway = self._gateway_or_local()
+        if not gateway.cartesian_servo_available():
             return response_error(
                 "Cartesian Servo is not available",
                 503,
             )
 
         try:
-            result = servo.update(
+            result = gateway.cartesian_servo_update(
                 linear_mm_s=payload["linear_mm_s"],
                 angular_deg_s=payload["angular_deg_s"],
             )
@@ -867,8 +777,8 @@ class RuntimeApi:
         return self._cartesian_servo_result(result)
 
     def cartesian_servo_stop(self) -> ApiResponse:
-        servo = self.cartesian_servo
-        if servo is None:
+        gateway = self._gateway_or_local()
+        if not gateway.cartesian_servo_available():
             return response_error(
                 "Cartesian Servo is not available",
                 503,
@@ -877,7 +787,7 @@ class RuntimeApi:
         logger.info("Received Cartesian Servo stop")
 
         try:
-            result = servo.stop()
+            result = gateway.cartesian_servo_stop()
         except Exception as exc:
             logger.exception("Cartesian Servo stop failed")
             return response_error(str(exc), 500)

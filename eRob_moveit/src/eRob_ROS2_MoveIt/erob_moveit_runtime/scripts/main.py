@@ -11,7 +11,7 @@ import subprocess
 
 from monitor_window import MonitorWindow
 from runtime_initializer import initialize_robot_runtime
-from rest_server import start_rest_server
+from rest.server import start_rest_server
 import config
 
 
@@ -68,8 +68,8 @@ def _restart_rest_process_enabled():
 
 
 def _start_rest_server_process():
-    rest_server_main = os.path.join(os.path.dirname(__file__), "rest_server_main.py")
-    return subprocess.Popen([sys.executable, rest_server_main])
+    rest_main = os.path.join(os.path.dirname(__file__), "rest", "main.py")
+    return subprocess.Popen([sys.executable, rest_main])
 
 
 def _stop_rest_server_process(process):

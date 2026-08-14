@@ -121,7 +121,7 @@ So DC synchronization may still need tuning later, but this log points first to 
   - `default: .nan`
 - `zeroerr/config/zeroErr1.yaml` does the same with the opposite factor sign.
 - `ethercat_generic_cia402_drive.cpp` tries to set the default target position from the last actual position, but command-interface values can still override this when they are non-NaN.
-- `demo.launch.py` starts `WaitForSlavesOp.sh`, but controller spawners, SDO monitor, helpers, and other nodes are not all gated on its completion.
+- `full_stack.launch.py` starts `WaitForSlavesOp.sh`, but controller spawners, SDO monitor, helpers, and other nodes are not all gated on its completion.
 
 **Fix Candidates**
 
@@ -260,7 +260,7 @@ So DC synchronization may still need tuning later, but this log points first to 
 
 - Build passed:
   - `colcon build --packages-select ethercat_generic_cia402_drive erob_moveit_runtime zeroerr --cmake-args -DBUILD_TESTING=OFF`
-  - `python3 -m py_compile erob_moveit_runtime/scripts/rest_server.py erob_moveit_runtime/scripts/robot_controller.py`
+  - `python3 -m py_compile erob_moveit_runtime/scripts/rest/server.py erob_moveit_runtime/scripts/robot_controller.py`
 - Hardware result pending.
 
 ## 2026-06-26 - Fix Attempt: Watchdog OP Recovery Request
@@ -455,7 +455,7 @@ That means the launch sequence was still allowing runtime and diagnostic nodes t
 
 **Fix Applied**
 
-Updated `zeroerr/launch/demo.launch.py` so these components start only after `WaitForSlavesOp.sh` exits:
+Updated `zeroerr/launch/full_stack.launch.py` so these components start only after `WaitForSlavesOp.sh` exits:
 
 - `zeroerr_error_monitor.py`
 - drive enable/disable controller spawners
@@ -608,7 +608,7 @@ Do not modify the commanded joint position in the EtherCAT plugin during initial
 
 **Interpretation**
 
-The active trajectory controller is the likely source of the zero position targets before the first real command. The default MoveIt demo launch spawns and activates `manipulator_controller` immediately. That leaves a long boot window where an active position controller exists but has not received a valid trajectory yet.
+The active trajectory controller is the likely source of the zero position targets before the first real command. The default MoveIt full-stack launch spawns and activates `manipulator_controller` immediately. That leaves a long boot window where an active position controller exists but has not received a valid trajectory yet.
 
 The fix should control controller activation, not rewrite EtherCAT PDO position targets.
 
@@ -650,7 +650,7 @@ Relaunch without unplugging/replugging the EtherCAT cable and check:
 
 **Fix Applied**
 
-- `demo.launch.py` and `ethercat_only.launch.py` keep the manipulator controller as the position-control path.
+- `full_stack.launch.py` and `ethercat_only.launch.py` keep the manipulator controller as the position-control path.
 - The experimental torque-control path was archived and removed from active launch/runtime configuration.
   - normal trajectory activation refuses to proceed if any drag/torque controller is still active.
 

@@ -103,7 +103,7 @@ This distinction prevents identical consecutive tool-change poses from failing w
 
 ## REST API Endpoints
 
-Both `rest_server.py` (embedded) and `fairino_bridge_server.py` (standalone) expose the same interface.
+Both `rest/server.py` (embedded) and `fairino_bridge_server.py` (standalone) expose the same interface.
 
 ### Motion Endpoints — Response Shapes
 
@@ -174,7 +174,7 @@ Returns the current Cartesian velocity `[vx, vy, vz]` in mm/s published by the C
 
 ### `/jog` — Input Validation And Busy Semantics
 
-`rest_server.py` validates `axis` and `direction` against `RobotAxis` / `Direction` enums
+`rest/server.py` validates `axis` and `direction` against `RobotAxis` / `Direction` enums
 and returns HTTP 400 with a descriptive error before calling the robot:
 
 ```json
@@ -225,7 +225,7 @@ No failure mode from the underlying `set_workobject()` call; always returns HTTP
 {"status": "ok", "ros2_active": true}
 ```
 
-### `/status` (GET) — `rest_server.py` only
+### `/status` (GET) — `rest/server.py` only
 
 Returns the live robot status dict from `robot_status_publisher.py`.
 

@@ -1,6 +1,6 @@
 # ZeroErr Runtime REST API Endpoint Flows
 
-This document describes the REST control flow in `scripts/rest_server.py`.
+This document describes the REST control flow in `scripts/rest/server.py`.
 It is written for frontend/backend integration work: each section explains what
 the endpoint calls, what can fail, and what response shape to expect.
 

@@ -138,7 +138,7 @@ Key `runtime.yaml` groups:
 
 ```
 REST POST /move/cartesian
-  → rest_server.py
+  → rest/server.py
   → MoveItRobotBackend (IRobotBackend impl)
       applies workobject + tool transforms
   → RobotController.send_cartesian_goal()

@@ -7,9 +7,12 @@ fairino5_v6_moveit2_config/
 ├── scripts/
 │   ├── main.py
 │   ├── robot_controller.py
-│   ├── rest_server.py
-│   ├── rest_api_support.py
 │   ├── config.py
+│   ├── rest/
+│   │   ├── main.py
+│   │   ├── server.py
+│   │   ├── api_support.py
+│   │   └── openapi.py
 │   ├── backend/
 │   ├── motion/
 │   │   ├── strategies.py
@@ -76,7 +79,7 @@ Responsibilities:
 
 ### REST Layer
 
-`rest_server.py` exposes HTTP endpoints for:
+`rest/server.py` exposes HTTP endpoints for:
 - point moves
 - path execution
 - jog
@@ -91,10 +94,12 @@ The REST server can run in:
 - embedded mode
   - reuses an existing `RobotController`
 
-`rest_api_support.py` holds the non-routing REST helpers:
+`rest/api_support.py` holds the non-routing REST helpers:
 - motion error to HTTP mapping
 - jog payload parsing / normalization
 - pose reachability validation via IK + state validity
+
+`rest/openapi.py` holds the OpenAPI spec and Swagger HTML served by the docs routes.
 
 ## Motion Flow
 

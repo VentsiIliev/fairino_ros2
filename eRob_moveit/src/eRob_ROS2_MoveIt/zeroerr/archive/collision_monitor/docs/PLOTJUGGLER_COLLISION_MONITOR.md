@@ -78,9 +78,9 @@ ros2 run plotjuggler plotjuggler
 
 Then subscribe to the `/zeroerr/collision_monitor/plot/*` topics and select only the series you want to see.
 
-### Optional auto-launch with ZeroErr demo
+### Optional auto-launch with ZeroErr full stack
 
-You can also start PlotJuggler automatically with the ZeroErr demo launch:
+You can also start PlotJuggler automatically with the ZeroErr full stack launch:
 
 ```bash
 export ZEROERR_PLOTJUGGLER=1

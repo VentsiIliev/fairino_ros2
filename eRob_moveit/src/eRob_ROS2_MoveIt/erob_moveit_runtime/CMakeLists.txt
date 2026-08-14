@@ -56,7 +56,6 @@ ament_python_install_package(erob_state_publisher)
 install(PROGRAMS
   scripts/main.py
   scripts/simple_monitor_gui.py
-  scripts/rest_server_main.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -65,14 +64,12 @@ install(FILES
   scripts/config.py
   scripts/enums.py
   scripts/monitor_window.py
-  scripts/rest_api_support.py
-  scripts/rest_server.py
   scripts/runtime_initializer.py
   scripts/robot_controller.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-foreach(module_dir api backend motion runtime_api runtime_websockets safety status utils)
+foreach(module_dir api backend motion rest runtime_api runtime_gateway runtime_websockets safety status utils)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/${module_dir})
     install(DIRECTORY scripts/${module_dir}
       DESTINATION lib/${PROJECT_NAME}

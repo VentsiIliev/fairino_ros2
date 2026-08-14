@@ -17,8 +17,10 @@ from robot_controller import RobotController
 from backend.backend_factory import create_robot_backend
 from backend.i_robot_backend import IRobotBackend
 from runtime_api.handlers import RuntimeApi
+from runtime_gateway.local import LocalRuntimeGateway
 from runtime_websockets.execution_server import start_execution_websocket_server
 from runtime_websockets.state_server import start_state_websocket_server
+from rest.openapi import OPENAPI_SPEC, SWAGGER_HTML
 import config
 
 
@@ -34,291 +36,6 @@ if not logger.handlers:
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
-
-OPENAPI_SPEC = {
-    "openapi": "3.0.3",
-    "info": {
-        "title": "ZeroErr Robot Runtime API",
-        "version": "1.0.0",
-        "description": "REST API for startup polling, robot motion, state, tools, safety walls, drives, and interlocks.",
-    },
-    "servers": [{"url": "/"}],
-    "paths": {
-        "/health": {"get": {"tags": ["startup"], "summary": "HTTP/runtime health"}},
-        "/startup/status": {"get": {"tags": ["startup"], "summary": "Startup progress for frontend polling"}},
-        "/status": {"get": {"tags": ["state"], "summary": "Robot execution, queue, runtime, drive, and interlock status"}},
-        "/state/snapshot": {"get": {"tags": ["state"], "summary": "Combined UI state snapshot"}},
-        "/state/kinematics": {"get": {"tags": ["state"], "summary": "Current TCP position, velocity, and acceleration"}},
-        "/position/current": {"get": {"tags": ["state"], "summary": "Current TCP position"}},
-        "/position/flange": {"get": {"tags": ["state"], "summary": "Current flange position"}},
-        "/velocity/current": {"get": {"tags": ["state"], "summary": "Current TCP velocity"}},
-        "/move/linear": {"post": {"tags": ["motion"], "summary": "Queue or execute a linear move"}},
-        "/move/ptp": {"post": {"tags": ["motion"], "summary": "Queue or execute a point-to-point move"}},
-        "/execute/path": {"post": {"tags": ["motion"], "summary": "Execute a waypoint path"}},
-        "/execute/sequence": {"post": {"tags": ["motion"], "summary": "Execute mixed motion segments"}},
-        "/execute/ordered_motion_chain": {"post": {"tags": ["motion"], "summary": "Execute ordered motion chain"}},
-        "/execute/ordered_motion_chain/status": {"get": {"tags": ["motion"], "summary": "Ordered motion chain status"}},
-        "/unwind/joint6": {"post": {"tags": ["motion"], "summary": "Unwind joint 6"}},
-        "/servo/cartesian/start": {
-            "post": {
-                "tags": ["servo"],
-                "summary": "Start Cartesian Servo session",
-            }
-        },
-
-        "/servo/cartesian/update": {
-            "post": {
-                "tags": ["servo"],
-                "summary": "Update Cartesian Servo velocity command",
-            }
-        },
-
-        "/servo/cartesian/stop": {
-            "post": {
-                "tags": ["servo"],
-                "summary": "Stop Cartesian Servo session",
-            }
-        },
-        "/jog": {"post": {"tags": ["motion"], "summary": "Jog along one robot axis"}},
-        "/servojog/start": {"post": {"tags": ["servo"], "summary": "Start continuous ServoJog"}},
-        "/servojog/stop": {"post": {"tags": ["servo"], "summary": "Stop continuous ServoJog"}},
-        "/stop": {"post": {"tags": ["motion"], "summary": "Stop active motion and clear queued work"}},
-        "/reachability/pose": {"post": {"tags": ["planning"], "summary": "Validate pose reachability from a start pose"}},
-        "/workobject/set": {"post": {"tags": ["frames"], "summary": "Set active work object origin"}},
-        "/tool/registry": {"get": {"tags": ["tools"], "summary": "Get tool registry"}},
-        "/tool/registry/{tool_id}": {
-            "post": {
-                "tags": ["tools"],
-                "summary": "Update one tool registry entry",
-                "parameters": [{"name": "tool_id", "in": "path", "required": True, "schema": {"type": "integer"}}],
-            }
-        },
-        "/tool/active": {
-            "get": {"tags": ["tools"], "summary": "Get active tool"},
-            "post": {"tags": ["tools"], "summary": "Set active tool"},
-        },
-        "/safety/walls/enabled": {"get": {"tags": ["safety"], "summary": "Check whether safety walls are enabled"}},
-        "/safety/walls/status": {"get": {"tags": ["safety"], "summary": "Safety wall status"}},
-        "/safety/walls/enable": {"post": {"tags": ["safety"], "summary": "Enable safety walls"}},
-        "/safety/walls/disable": {"post": {"tags": ["safety"], "summary": "Disable safety walls"}},
-        "/io/digital_output": {"post": {"tags": ["io"], "summary": "Set digital output"}},
-        "/drive/status": {"get": {"tags": ["drives"], "summary": "Drive operation-enable status"}},
-        "/drive/enable": {"post": {"tags": ["drives"], "summary": "Request and verify drive operation enable"}},
-        "/drive/disable": {"post": {"tags": ["drives"], "summary": "Request and verify drive operation disable"}},
-        "/motion/interlock/status": {"get": {"tags": ["interlock"], "summary": "Motion interlock status"}},
-        "/motion/interlock/reset": {"post": {"tags": ["interlock"], "summary": "Reset motion interlock"}},
-    },
-}
-
-
-def _json_schema(schema_type="object", **extra):
-    return {"type": schema_type, **extra}
-
-
-def _json_request_body(example: dict | None = None, required: bool = False) -> dict:
-    media_type = {"schema": _json_schema("object")}
-    if example is not None:
-        media_type["example"] = example
-    return {
-        "required": required,
-        "content": {
-            "application/json": media_type,
-        },
-    }
-
-
-def _apply_openapi_details():
-    default_response = {
-        "description": "JSON response",
-        "content": {
-            "application/json": {
-                "schema": _json_schema("object"),
-            },
-        },
-    }
-    for path_item in OPENAPI_SPEC["paths"].values():
-        for operation in path_item.values():
-            operation.setdefault("responses", {"200": default_response})
-
-    post_examples = {
-        "/move/linear": {
-            "position": [300, 0, 300, 180, 0, 0],
-            "tool": 0,
-            "user": 0,
-            "vel": 20,
-            "acc": 20,
-            "blocking": False,
-            "trajectory_optimizer": "RUCKIG",
-        },
-        "/move/ptp": {
-            "position": [300, 0, 300, 180, 0, 0],
-            "tool": 0,
-            "user": 0,
-            "vel": 20,
-            "acc": 20,
-            "blocking": False,
-        },
-        "/execute/path": {
-            "path": [[300, 0, 300, 180, 0, 0], [320, 0, 300, 180, 0, 0]],
-            "vel": 20,
-            "acc": 20,
-            "blocking": False,
-            "orientation_mode": "constant",
-        },
-        "/execute/sequence": {
-            "segments": [
-                {"motion_type": "linear", "position": [300, 0, 300, 180, 0, 0], "vel": 20, "acc": 20},
-                {"motion_type": "ptp", "position": [320, 0, 300, 180, 0, 0], "vel": 20, "acc": 20},
-            ],
-            "tool": 0,
-            "user": 0,
-            "blocking": False,
-        },
-        "/execute/ordered_motion_chain": {
-            "segments": [
-                {"type": "linear", "label": "approach", "position": [300, 0, 300, 180, 0, 0], "vel": 20, "acc": 20}
-            ],
-            "tool": 0,
-            "user": 0,
-            "blocking": True,
-            "trajectory_optimizer": "RUCKIG",
-        },
-        "/unwind/joint6": {"blocking": True, "queue_if_busy": True, "vel": 20, "acc": 20},
-        "/jog": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
-        "/servojog/start": {"axis": "X", "direction": "PLUS", "linear_mm_s": 10, "angular_deg_s": 3, "frame": "user", "user": 0, "tool": 0},
-        "/servojog/stop": {},
-        "/servo/cartesian/start": {
-            "frame": "user",
-            "user": 0,
-            "tool": 1,
-        },
-
-        "/servo/cartesian/update": {
-            "linear_mm_s": [0.0, 0.0, -10.0],
-            "angular_deg_s": [0.0, 0.0, 0.0],
-        },
-
-        "/servo/cartesian/stop": {},
-        "/reachability/pose": {
-            "target_position": [300, 0, 300, 180, 0, 0],
-            "start_position": [280, 0, 300, 180, 0, 0],
-            "tool": 0,
-            "user": 0,
-        },
-        "/workobject/set": {"origin": [0, 0, 0, 0, 0, 0], "user_id": 0},
-        "/tool/registry/{tool_id}": {
-            "name": "TOOL_1",
-            "transform": [0, 0, 170, 0, 0, 0],
-            "persist": False,
-        },
-        "/tool/active": {"tool_id": 1},
-        "/io/digital_output": {"port": 0, "value": 1},
-        "/stop": {},
-        "/safety/walls/enable": {},
-        "/safety/walls/disable": {},
-        "/drive/enable": {},
-        "/drive/disable": {},
-        "/motion/interlock/reset": {},
-    }
-    for path, example in post_examples.items():
-        operation = OPENAPI_SPEC["paths"].get(path, {}).get("post")
-        if operation is not None:
-            operation["requestBody"] = _json_request_body(example, required=bool(example))
-
-    OPENAPI_SPEC["paths"]["/jog"]["post"]["requestBody"] = {
-        "required": True,
-        "content": {
-            "application/json": {
-                "schema": {
-                    "type": "object",
-                    "required": ["axis", "direction", "step", "vel", "acc"],
-                    "properties": {
-                        "axis": {"type": "string", "enum": ["X", "Y", "Z", "RX", "RY", "RZ"]},
-                        "direction": {"type": "string", "enum": ["PLUS", "MINUS"]},
-                        "step": {"type": "number"},
-                        "vel": {"type": "number"},
-                        "acc": {"type": "number"},
-                        "frame": {"oneOf": [{"type": "string", "enum": ["base", "user", "tool"]}, {"type": "integer"}]},
-                        "user": {"type": "integer"},
-                        "tool": {"type": "integer"},
-                    },
-                },
-                "example": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
-            },
-        },
-    }
-
-    OPENAPI_SPEC["paths"]["/servojog/start"]["post"]["requestBody"] = {
-        "required": True,
-        "content": {
-            "application/json": {
-                "schema": {
-                    "type": "object",
-                    "required": ["axis", "direction"],
-                    "properties": {
-                        "axis": {"type": "string", "enum": ["X", "Y", "Z", "RX", "RY", "RZ"]},
-                        "direction": {"type": "string", "enum": ["PLUS", "MINUS", "POSITIVE", "NEGATIVE"]},
-                        "linear_mm_s": {"type": "number"},
-                        "angular_deg_s": {"type": "number"},
-                        "vel": {"type": "number"},
-                        "acc": {"type": "number"},
-                        "frame": {"oneOf": [{"type": "string", "enum": ["base", "user", "tool"]}, {"type": "integer"}]},
-                        "user": {"type": "integer"},
-                        "tool": {"type": "integer"},
-                    },
-                },
-                "example": {"axis": "X", "direction": "PLUS", "linear_mm_s": 10, "angular_deg_s": 3, "frame": "user", "user": 0, "tool": 0},
-            },
-        },
-    }
-
-    drive_command_responses = {
-        "200": {"description": "Command verified against current drive status"},
-        "202": {"description": "Command accepted but drive status has not matched yet"},
-        "500": {"description": "Command failed or returned unexpected state"},
-        "503": {"description": "Hardware not ready"},
-    }
-    OPENAPI_SPEC["paths"]["/drive/enable"]["post"]["responses"] = drive_command_responses
-    OPENAPI_SPEC["paths"]["/drive/disable"]["post"]["responses"] = drive_command_responses
-    OPENAPI_SPEC["paths"]["/execute/sequence"]["post"]["responses"] = {
-        "200": {"description": "Blocking sequence completed with final result 0"},
-        "202": {"description": "Sequence queued or accepted for asynchronous planning/execution"},
-        "400": {"description": "Invalid sequence request"},
-        "409": {"description": "Drive not enabled or controller execution failure"},
-        "500": {"description": "Internal or planning failure"},
-        "503": {"description": "MoveIt service, queue, or hardware not ready"},
-    }
-
-
-_apply_openapi_details()
-
-
-SWAGGER_HTML = """<!doctype html>
-<html>
-<head>
-  <title>ZeroErr Robot Runtime API</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-  <style>body { margin: 0; background: #fff; }</style>
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    window.onload = function() {
-      SwaggerUIBundle({
-        url: "/openapi.json",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        displayRequestDuration: true,
-        tryItOutEnabled: true,
-        supportedSubmitMethods: ["get", "post"]
-      });
-    };
-  </script>
-</body>
-</html>
-"""
 
 
 def _to_jsonable(value):
@@ -391,12 +108,20 @@ def start_rest_server(
             })
             startup_state.update(extra)
 
+    gateway = LocalRuntimeGateway(
+        robot_getter=lambda: robot,
+        node_getter=lambda: node,
+    )
+
     def get_startup_status():
         with startup_lock:
             status = dict(startup_state)
-        status["ros2_active"] = robot is not None
-        if robot is not None and node is not None and status.get("error") is None:
-            motion_stack_ready = bool(node.is_motion_stack_ready())
+        runtime_status = gateway.startup_status()
+        status["ros2_active"] = bool(runtime_status.get("ros2_active", False))
+        if status.get("error") is not None:
+            return status
+        if runtime_status.get("ros2_active"):
+            motion_stack_ready = bool(runtime_status.get("motion_stack_ready", False))
             status["motion_stack_ready"] = motion_stack_ready
             if motion_stack_ready:
                 status["phase"] = "ready"
@@ -407,30 +132,8 @@ def start_rest_server(
                 status["phase"] = "motion_stack_warming"
                 status["message"] = "Robot runtime is initialized; motion stack is still warming up"
                 status["ready"] = False
-                status["motion_stack_fault"] = node.get_motion_stack_fault_reason()
+                status["motion_stack_fault"] = runtime_status.get("motion_stack_fault")
         return status
-
-    def runtime_state_snapshot() -> dict:
-        if robot is None or node is None:
-            return {
-                "runtime_ready": False,
-                "runtime_initialized": False,
-                "startup": get_startup_status(),
-            }
-        drive_status = _to_jsonable(node.get_drive_operation_status())
-        motion_interlock = _to_jsonable(node.get_motion_interlock_status())
-        hardware_ready = bool(node.is_hardware_ready_for_motion())
-        motion_stack_ready = bool(node.is_motion_stack_ready())
-        return {
-            "runtime_ready": motion_stack_ready,
-            "runtime_initialized": True,
-            "hardware_ready": hardware_ready,
-            "hardware_fault": None if hardware_ready else node.get_hardware_fault_reason(),
-            "motion_stack_ready": motion_stack_ready,
-            "motion_stack_fault": None if motion_stack_ready else node.get_motion_stack_fault_reason(),
-            "drive": drive_status,
-            "motion_interlock": motion_interlock,
-        }
 
     def drive_command_response(command_result: dict, desired_enabled: bool):
         command_result = _to_jsonable(command_result)
@@ -619,8 +322,9 @@ def start_rest_server(
         robot_getter=lambda: robot,
         node_getter=lambda: node,
         startup_status_getter=get_startup_status,
-        runtime_state_snapshot_getter=runtime_state_snapshot,
+        runtime_state_snapshot_getter=gateway.runtime_state_snapshot,
         port=port,
+        gateway=gateway,
     )
 
     def api_response(response):

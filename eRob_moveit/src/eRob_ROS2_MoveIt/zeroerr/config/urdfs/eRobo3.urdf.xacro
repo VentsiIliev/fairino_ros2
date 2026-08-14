@@ -4,7 +4,7 @@
     <!--
         Runtime-selected robot model.
 
-        demo.launch.py sets ZEROERR_ROBOT_URDF from runtime.yaml and also passes
+        full_stack.launch.py sets ZEROERR_ROBOT_URDF from runtime.yaml and also passes
         robot_urdf explicitly through MoveItConfigsBuilder.
     -->
     <xacro:arg
