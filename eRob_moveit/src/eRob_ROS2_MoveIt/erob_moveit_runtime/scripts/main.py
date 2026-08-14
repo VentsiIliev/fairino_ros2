@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from setproctitle import setproctitle
+
+setproctitle("zeroerr_runtime-main")
 import atexit
 import signal
 import sys

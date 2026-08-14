@@ -13,7 +13,9 @@ would occur if a different DH parameterisation were used.
 All other topics (/joint_velocity, /joint_acceleration, /cartesian_velocity,
 /cartesian_acceleration) are handled by the shared CartesianPublisherBase.
 """
+from setproctitle import setproctitle
 
+setproctitle("zeroerr_state_publisher")
 from typing import Optional
 
 import rclpy

@@ -1,145 +1,34 @@
 import os
-import yaml
+import sys
 
 from ament_index_python.packages import get_package_share_directory
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from zeroerr_launch.cpu_policy import load_cpu_policy
+from zeroerr_launch.moveit_config import build_moveit_config
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
-
-
-def _resolve_config_path(config_yaml: str, value: str) -> str:
-    path = str(value or "").strip()
-    if not path:
-        return ""
-    if path.startswith("package://"):
-        package_and_rel = path[len("package://"):]
-        package_name, _, rel_path = package_and_rel.partition("/")
-        if package_name and rel_path:
-            return os.path.join(get_package_share_directory(package_name), rel_path)
-    if os.path.isabs(path):
-        return path
-    return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
-
-
-def _load_yaml(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f) or {}
-
-def _load_runtime_config(package_path: str) -> dict:
-    rt_yaml = os.path.join(package_path, "config", "runtime.yaml")
-    with open(rt_yaml) as f:
-        rt = yaml.safe_load(f) or {}
-    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
-    if profile:
-        profile_yaml = os.path.join(package_path, "config", profile, "runtime.yaml")
-        with open(profile_yaml) as f:
-            rt.update(yaml.safe_load(f) or {})
-        rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
-    else:
-        rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
-    return rt
-
-
-def _runtime_urdf_path(package_path: str) -> str:
-    rt = _load_runtime_config(package_path)
-    return _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
-
-
-def _runtime_srdf_path(package_path: str) -> str | None:
-    rt = _load_runtime_config(package_path)
-    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("SRDF_PATH", ""))
-    return path if path and os.path.isfile(path) else None
-
-
-def _expand_cpu_list(value: str) -> set[int]:
-    cpus: set[int] = set()
-    for part in str(value or "").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "-" in part:
-            start, end = [int(item) for item in part.split("-", 1)]
-            cpus.update(range(start, end + 1))
-        else:
-            cpus.add(int(part))
-    return cpus
-
-
-def _compact_cpu_list(cpus: set[int]) -> str:
-    if not cpus:
-        return "0"
-    values = sorted(cpus)
-    ranges = []
-    start = previous = values[0]
-    for value in values[1:]:
-        if value == previous + 1:
-            previous = value
-            continue
-        ranges.append((start, previous))
-        start = previous = value
-    ranges.append((start, previous))
-    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges)
-
-
-def _kernel_isolated_cores() -> str:
-    try:
-        with open("/sys/devices/system/cpu/isolated") as f:
-            isolated = f.read().strip()
-            if isolated:
-                return isolated
-    except Exception:
-        pass
-    try:
-        with open("/proc/cmdline") as f:
-            for token in f.read().split():
-                if token.startswith("isolcpus=") or token.startswith("nohz_full="):
-                    value = token.split("=", 1)[1]
-                    for prefix in ("managed_irq,", "domain,", "nohz,"):
-                        value = value.replace(prefix, "")
-                    return value
-    except Exception:
-        pass
-    return ""
-
-
-def _default_non_rt_cores() -> str:
-    all_cpus = set(range(os.cpu_count() or 1))
-    isolated = _expand_cpu_list(_kernel_isolated_cores())
-    non_rt = all_cpus - isolated
-    return _compact_cpu_list(non_rt or all_cpus)
-
-
-def _env_core_list(name: str, default: str) -> str:
-    value = os.environ.get(name, "").strip()
-    return value or default
 
 
 def generate_launch_description():
     package_path = get_package_share_directory("zeroerr")
-    urdf_path = _runtime_urdf_path(package_path)
-    moveit_config = (
-        MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
-        .robot_description(
-            file_path="config/urdfs/eRobo3.urdf.xacro",
-            mappings={"robot_urdf": urdf_path},
-        )
-        .robot_description_semantic(file_path=_runtime_srdf_path(package_path))
-        .planning_pipelines(
-            default_planning_pipeline="pilz_industrial_motion_planner",
-            pipelines=["ompl", "stomp", "pilz_industrial_motion_planner"],
-        )
-        .to_moveit_configs()
+    moveit_config = build_moveit_config(
+        "zeroerr",
+        package_path,
+        planning_pipelines=["ompl", "stomp", "pilz_industrial_motion_planner"],
+        default_planning_pipeline="pilz_industrial_motion_planner",
     )
 
 
 
-    non_rt_cores = _env_core_list("ZEROERR_NON_RT_CORES", _default_non_rt_cores())
-    planner_cores = _env_core_list("ZEROERR_PLANNER_CORES", non_rt_cores)
-    planner_prefix = f"taskset -c {planner_cores}"
+    cpu_policy = load_cpu_policy()
+    planner_prefix = cpu_policy.planner_prefix
 
     ld = LaunchDescription()
     ld.add_action(DeclareBooleanLaunchArg("debug", default_value=False))

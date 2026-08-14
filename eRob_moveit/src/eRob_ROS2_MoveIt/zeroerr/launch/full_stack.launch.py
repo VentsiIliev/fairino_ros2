@@ -1,269 +1,29 @@
 import os
+import sys
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
-def _runtime_yaml_path(package_path: str) -> str:
-    return os.path.join(package_path, "config", "runtime.yaml")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from zeroerr_launch.cpu_policy import (
+    load_cpu_policy,
+    load_servo_policy,
+)
+from zeroerr_launch.moveit_config import build_moveit_config
+from zeroerr_launch.runtime_config import (
+    load_state_publisher_params,
+    runtime_value,
+    urdf_path_from_runtime,
+)
 
 
-def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
-    return os.path.join(package_path, "config", profile, "runtime.yaml")
-
-
-def _contour_ik_yaml_path(package_path: str) -> str:
-    return os.path.join(package_path, "config", "contour_ik_config.yaml")
-
-
-def _profile_contour_ik_yaml_path(package_path: str, profile: str) -> str:
-    return os.path.join(package_path, "config", profile, "contour_ik_config.yaml")
-
-
-def _extra_runtime_yaml_paths(package_path: str) -> list[str]:
-    return [
-        os.path.join(package_path, "config", "contour_ik_config.yaml"),
-        os.path.join(package_path, "config", "ptp_config.yaml"),
-    ]
-
-
-def _profile_extra_runtime_yaml_paths(package_path: str, profile: str) -> list[str]:
-    return [
-        os.path.join(package_path, "config", profile, "contour_ik_config.yaml"),
-        os.path.join(package_path, "config", profile, "ptp_config.yaml"),
-    ]
-
-
-def _merge_config(base: dict, override: dict) -> dict:
-    merged = dict(base)
-    merged.update(override)
-    return merged
-
-
-def _resolve_config_path(config_yaml: str, value: str) -> str:
-    path = str(value or "").strip()
-    if not path:
-        return ""
-    if path.startswith("package://"):
-        package_and_rel = path[len("package://"):]
-        package_name, _, rel_path = package_and_rel.partition("/")
-        if package_name and rel_path:
-            return os.path.join(get_package_share_directory(package_name), rel_path)
-    if os.path.isabs(path):
-        return path
-    return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
-
-
-def _load_runtime_config(package_path: str) -> dict:
-    rt_yaml = _runtime_yaml_path(package_path)
-    try:
-        with open(rt_yaml) as f:
-            rt = yaml.safe_load(f) or {}
-    except Exception:
-        raise RuntimeError(f"Failed to read runtime config: {rt_yaml}")
-
-    for config_yaml in _extra_runtime_yaml_paths(package_path):
-        if not os.path.isfile(config_yaml):
-            continue
-        with open(config_yaml) as f:
-            rt = _merge_config(rt, yaml.safe_load(f) or {})
-
-    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
-    if profile:
-        profile_yaml = _profile_runtime_yaml_path(package_path, profile)
-        if not os.path.isfile(profile_yaml):
-            raise RuntimeError(
-                f"runtime.yaml requested ACTIVE_PROFILE '{profile}', but profile config was not found: {profile_yaml}"
-            )
-        with open(profile_yaml) as f:
-            profile_rt = yaml.safe_load(f) or {}
-        merged = _merge_config(rt, profile_rt)
-        for profile_config_yaml in _profile_extra_runtime_yaml_paths(package_path, profile):
-            if not os.path.isfile(profile_config_yaml):
-                continue
-            with open(profile_config_yaml) as f:
-                merged = _merge_config(merged, yaml.safe_load(f) or {})
-        merged["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
-        return merged
-    rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
-    return rt
-
-
-def _urdf_path_from_runtime(package_path: str) -> str:
-    rt = _load_runtime_config(package_path)
-    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
-    if path and os.path.isfile(path):
-        return path
-    raise RuntimeError(
-        f"runtime config must define a valid URDF_PATH. Resolved value: {path}"
-    )
-
-
-def _srdf_path_from_runtime(package_path: str) -> str | None:
-    rt = _load_runtime_config(package_path)
-    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("SRDF_PATH", ""))
-    if path and os.path.isfile(path):
-        return path
-    return None
-
-
-def _runtime_value(package_path: str, key: str, default):
-    try:
-        rt = _load_runtime_config(package_path)
-        return rt.get(key, default)
-    except Exception:
-        return default
-
-
-def _expand_cpu_list(value: str) -> set[int]:
-    cpus: set[int] = set()
-    for part in str(value or "").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "-" in part:
-            start, end = [int(item) for item in part.split("-", 1)]
-            cpus.update(range(start, end + 1))
-        else:
-            cpus.add(int(part))
-    return cpus
-
-
-def _compact_cpu_list(cpus: set[int]) -> str:
-    if not cpus:
-        return "0"
-    values = sorted(cpus)
-    ranges = []
-    start = previous = values[0]
-    for value in values[1:]:
-        if value == previous + 1:
-            previous = value
-            continue
-        ranges.append((start, previous))
-        start = previous = value
-    ranges.append((start, previous))
-    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges)
-
-
-def _online_cpu_count() -> int:
-    try:
-        with open("/sys/devices/system/cpu/online") as f:
-            cpus = _expand_cpu_list(f.read().strip())
-            if cpus:
-                return len(cpus)
-    except Exception:
-        pass
-    return os.cpu_count() or 1
-
-
-def _kernel_isolated_cores() -> str:
-    try:
-        with open("/sys/devices/system/cpu/isolated") as f:
-            isolated = f.read().strip()
-            if isolated:
-                return isolated
-    except Exception:
-        pass
-    try:
-        with open("/proc/cmdline") as f:
-            for token in f.read().split():
-                if token.startswith("isolcpus=") or token.startswith("nohz_full="):
-                    value = token.split("=", 1)[1]
-                    for prefix in ("managed_irq,", "domain,", "nohz,"):
-                        value = value.replace(prefix, "")
-                    return value
-    except Exception:
-        pass
-    return ""
-
-
-def _default_non_rt_cores() -> str:
-    all_cpus = set(range(_online_cpu_count()))
-    isolated = _expand_cpu_list(_kernel_isolated_cores())
-    non_rt = all_cpus - isolated
-    return _compact_cpu_list(non_rt or all_cpus)
-
-
-def _default_control_cores() -> str:
-    isolated = _expand_cpu_list(_kernel_isolated_cores())
-    if isolated:
-        return str(max(isolated))
-    return str(max(_online_cpu_count() - 1, 0))
-
-
-def _env_core_list(name: str, default: str) -> str:
-    value = os.environ.get(name, "").strip()
-    return value or default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name, "").strip().lower()
-    if not value:
-        return default
-    return value in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, default: float) -> float:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def _state_publisher_yaml_path(package_path: str) -> str:
-    return os.path.join(package_path, "config", "erob_state_publisher_config.yaml")
-
-
-def _profile_state_publisher_yaml_path(package_path: str, profile: str) -> str:
-    return os.path.join(package_path, "config", profile, "erob_state_publisher_config.yaml")
-
-
-def _extract_node_params(config: dict) -> dict:
-    return dict(config.get("zeroerr_state_publisher", {}).get("ros__parameters", {}) or {})
-
-
-def _load_state_publisher_params(package_path: str) -> dict:
-    base_yaml = _state_publisher_yaml_path(package_path)
-    try:
-        with open(base_yaml) as f:
-            params = _extract_node_params(yaml.safe_load(f) or {})
-    except Exception as exc:
-        raise RuntimeError(f"Failed to read state publisher config: {base_yaml}: {exc}")
-
-    rt = _load_runtime_config(package_path)
-    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
-    if not profile:
-        return params
-
-    profile_yaml = _profile_state_publisher_yaml_path(package_path, profile)
-    if not os.path.isfile(profile_yaml):
-        return params
-
-    try:
-        with open(profile_yaml) as f:
-            profile_params = _extract_node_params(yaml.safe_load(f) or {})
-    except Exception as exc:
-        raise RuntimeError(f"Failed to read profile state publisher config: {profile_yaml}: {exc}")
-    return _deep_merge(params, profile_params)
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
-from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_static_virtual_joint_tfs_launch
 
 
@@ -277,47 +37,34 @@ def generate_launch_description():
     )
     os.environ["DISPLAY"] = os.environ.get("DISPLAY", ":1")
     ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
-    non_rt_cores = _env_core_list("ZEROERR_NON_RT_CORES", _default_non_rt_cores())
-    planner_cores = _env_core_list("ZEROERR_PLANNER_CORES", non_rt_cores)
-    low_priority_cores = _env_core_list("ZEROERR_LOW_PRIORITY_CORES", non_rt_cores)
-    control_cores = _env_core_list("ZEROERR_CONTROL_CORES", _default_control_cores())
-    non_rt_prefix = f"taskset -c {non_rt_cores}"
-    planner_prefix = f"taskset -c {planner_cores}"
-    low_priority_non_rt_prefix = f"taskset -c {low_priority_cores} nice -n 19"
-    control_prefix = f"taskset -c {control_cores}"
+    cpu_policy = load_cpu_policy()
+    non_rt_prefix = cpu_policy.non_rt_prefix
+    planner_prefix = cpu_policy.planner_prefix
+    low_priority_non_rt_prefix = cpu_policy.low_priority_prefix
+    control_prefix = cpu_policy.control_prefix
 
     package_path = get_package_share_directory("zeroerr")
-    urdf_path = _urdf_path_from_runtime(package_path)
+    urdf_path = urdf_path_from_runtime(package_path)
     os.environ["ZEROERR_ROBOT_URDF"] = urdf_path
 
-    moveit_config = (
-        MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
-        .robot_description(
-            file_path="config/urdfs/eRobo3.urdf.xacro",
-            mappings={
-                "robot_urdf": urdf_path,
-                "use_fake_hardware": default_fake_hardware,
-            },
-        )
-        .robot_description_semantic(file_path=_srdf_path_from_runtime(package_path))
-        .planning_pipelines(pipelines=["pilz_industrial_motion_planner","ompl","stomp"])
-        .to_moveit_configs()
-    )
-
-    robot_description_xml = moveit_config.robot_description["robot_description"]
-    selected_hardware = (
-        "GenericSystem"
-        if "mock_components/GenericSystem" in robot_description_xml
-        else "EthercatDriver"
-        if "ethercat_driver/EthercatDriver" in robot_description_xml
-        else "UNKNOWN"
-    )
-    print(
-        f"[ZEROERR] Expanded robot_description hardware: {selected_hardware}",
-        flush=True,
+    moveit_config = build_moveit_config(
+        "zeroerr",
+        package_path,
+        use_fake_hardware=use_fake_hardware,
     )
 
     demo_ld = LaunchDescription()
+
+    demo_ld.add_action(
+        LogInfo(
+            msg=[
+                "[ZEROERR] Expanded robot_description hardware: ",
+                PythonExpression(
+                    ["'GenericSystem' if '", use_fake_hardware, "' == 'true' else 'EthercatDriver'"]
+                ),
+            ]
+        )
+    )
 
     demo_ld.add_action(
         DeclareLaunchArgument(
@@ -386,15 +133,10 @@ def generate_launch_description():
     with open(servo_yaml) as f:
         servo_config = yaml.safe_load(f) or {}
 
-    servo_low_cpu = _env_bool("ZEROERR_SERVO_LOW_CPU", _online_cpu_count() <= 4)
-    if servo_low_cpu:
-        servo_period = _env_float("ZEROERR_SERVO_PERIOD", 0.02)
-        servo_config["update_period"] = servo_period
-        servo_config["publish_period"] = servo_period
-        servo_realtime = _env_bool("ZEROERR_SERVO_REALTIME", False)
-    else:
-        servo_period = float(servo_config.get("publish_period", 0.01))
-        servo_realtime = _env_bool("ZEROERR_SERVO_REALTIME", True)
+    servo_policy = load_servo_policy(servo_config)
+    if servo_policy.low_cpu:
+        servo_config["update_period"] = servo_policy.period
+        servo_config["publish_period"] = servo_policy.period
 
     servo_node = Node(
         package="zeroerr",
@@ -404,9 +146,9 @@ def generate_launch_description():
         prefix=planner_prefix,
         parameters=[
             {"moveit_servo": servo_config},
-            {"update_period": servo_period},
+            {"update_period": servo_policy.period},
             {"planning_group_name": "manipulator"},
-            {"zeroerr_servo_realtime": servo_realtime},
+            {"zeroerr_servo_realtime": servo_policy.realtime},
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
@@ -433,19 +175,19 @@ def generate_launch_description():
     )
     demo_ld.add_action(rviz)
 
-    ros2_controllers_yaml = os.path.join(
-        package_path,
-        "config",
-        (
-            "ros2_controllers_fake.yaml"
-            if default_fake_hardware == "true"
-            else "ros2_controllers.yaml"
-        ),
+    config_dir = os.path.join(package_path, "config")
+    fake_controllers_yaml = os.path.join(config_dir, "ros2_controllers_fake.yaml")
+    real_controllers_yaml = os.path.join(config_dir, "ros2_controllers.yaml")
+    ros2_controllers_path = PythonExpression(
+        [
+            "'", fake_controllers_yaml, "' if '",
+            use_fake_hardware,
+            "' == 'true' else '", real_controllers_yaml, "'",
+        ]
     )
 
-    print(
-        f"[ZEROERR] ros2_control config: {ros2_controllers_yaml}",
-        flush=True,
+    demo_ld.add_action(
+        LogInfo(msg=["[ZEROERR] ros2_control config: ", ros2_controllers_path])
     )
     ros2_control_node = Node(
         package="controller_manager",
@@ -453,7 +195,7 @@ def generate_launch_description():
         name="controller_manager",
         output="screen",
         prefix=control_prefix,
-        parameters=[ros2_controllers_yaml],
+        parameters=[ros2_controllers_path],
         remappings=[
             ("/controller_manager/robot_description", "/robot_description"),
         ],
@@ -477,16 +219,21 @@ def generate_launch_description():
     demo_ld.add_action(joint_state_broadcaster_spawner)
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
-    state_publisher_params = _load_state_publisher_params(package_path)
+    state_publisher_params = load_state_publisher_params(package_path)
 
     demo_ld.add_action(
         LogInfo(
-            msg="\n"
+            msg=[
+                "\n"
                 "========================================\n"
                 "  ZeroErr MoveIt2 System Starting Up\n"
                 "========================================\n"
-                f"Hardware mode: {'FAKE / GenericSystem' if default_fake_hardware == 'true' else 'REAL / EtherCAT'}\n"
-                "========================================\n"
+                "Hardware mode: ",
+                PythonExpression(
+                    ["'FAKE / GenericSystem' if '", use_fake_hardware, "' == 'true' else 'REAL / EtherCAT'"]
+                ),
+                "\n========================================\n",
+            ]
         )
     )
 
@@ -548,7 +295,7 @@ def generate_launch_description():
         parameters=[{
             "master_id": 0,
             "slave_count": 6,
-            "poll_period_sec": float(_runtime_value(
+            "poll_period_sec": float(runtime_value(
                 package_path,
                 "ZEROERR_DRIVE_DIAGNOSTICS_POLL_PERIOD_S",
                 5.0,
@@ -661,10 +408,10 @@ def generate_launch_description():
         parameters=[
             state_publisher_params,
             {
-                "cartesian_source_link": _runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
-                "publish_hz": float(_runtime_value(package_path, "STATE_PUBLISH_RATE_HZ", 50.0)),
-                "joint_publish_hz": float(_runtime_value(package_path, "JOINT_DERIVATIVE_PUBLISH_RATE_HZ", 0.0)),
-                "joint_input_hz": float(_runtime_value(package_path, "JOINT_STATE_INPUT_RATE_HZ", 0.0)),
+                "cartesian_source_link": runtime_value(package_path, "CARTESIAN_SOURCE_LINK", "ee_link"),
+                "publish_hz": float(runtime_value(package_path, "STATE_PUBLISH_RATE_HZ", 50.0)),
+                "joint_publish_hz": float(runtime_value(package_path, "JOINT_DERIVATIVE_PUBLISH_RATE_HZ", 0.0)),
+                "joint_input_hz": float(runtime_value(package_path, "JOINT_STATE_INPUT_RATE_HZ", 0.0)),
             },
         ],
     )
@@ -676,7 +423,7 @@ def generate_launch_description():
         output="screen",
         emulate_tty=True,
         additional_env={
-            "EROB_RUNTIME_HEADLESS": str(_runtime_value(package_path, "RUNTIME_HEADLESS", "0")),
+            "EROB_RUNTIME_HEADLESS": str(runtime_value(package_path, "RUNTIME_HEADLESS", "0")),
             "ZEROERR_USE_RVIZ": LaunchConfiguration("use_rviz"),
         },
         prefix=non_rt_prefix,
@@ -735,11 +482,11 @@ def generate_launch_description():
     delayed_zeroerr_actions = [
         TimerAction(period=10.0, actions=[ethercat_sdo_server]),
     ]
-    if bool(_runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
+    if bool(runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
         delayed_zeroerr_actions.append(
             TimerAction(period=42.0, actions=[zeroerr_drive_diagnostics])
         )
-    if bool(_runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
+    if bool(runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
         delayed_zeroerr_actions.append(
             TimerAction(period=50.0, actions=[zeroerr_error_monitor])
         )

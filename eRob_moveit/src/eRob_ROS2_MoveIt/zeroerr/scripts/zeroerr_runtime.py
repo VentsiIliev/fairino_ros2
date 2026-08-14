@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from setproctitle import setproctitle
+
+setproctitle("zeroerr_runtime")
+
 import os
 import runpy
 import sys

@@ -1,131 +1,24 @@
-from moveit_configs_utils import MoveItConfigsBuilder
+import os
+import sys
+
+from ament_index_python.packages import get_package_share_directory
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from zeroerr_launch.moveit_config import build_moveit_config
+from zeroerr_launch.runtime_config import urdf_path_from_runtime
+
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess, SetEnvironmentVariable
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
-import os
-import yaml
-
-
-def _runtime_yaml_path(package_path: str) -> str:
-    return os.path.join(package_path, "config", "runtime.yaml")
-
-
-def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
-    return os.path.join(package_path, "config", profile, "runtime.yaml")
-
-
-def _contour_ik_yaml_path(package_path: str) -> str:
-    return os.path.join(package_path, "config", "contour_ik_config.yaml")
-
-
-def _profile_contour_ik_yaml_path(package_path: str, profile: str) -> str:
-    return os.path.join(package_path, "config", profile, "contour_ik_config.yaml")
-
-
-def _extra_runtime_yaml_paths(package_path: str) -> list[str]:
-    return [
-        os.path.join(package_path, "config", "contour_ik_config.yaml"),
-        os.path.join(package_path, "config", "ptp_config.yaml"),
-    ]
-
-
-def _profile_extra_runtime_yaml_paths(package_path: str, profile: str) -> list[str]:
-    return [
-        os.path.join(package_path, "config", profile, "contour_ik_config.yaml"),
-        os.path.join(package_path, "config", profile, "ptp_config.yaml"),
-    ]
-
-
-def _merge_config(base: dict, override: dict) -> dict:
-    merged = dict(base)
-    merged.update(override)
-    return merged
-
-
-def _resolve_config_path(config_yaml: str, value: str) -> str:
-    path = str(value or "").strip()
-    if not path:
-        return ""
-    if path.startswith("package://"):
-        package_and_rel = path[len("package://"):]
-        package_name, _, rel_path = package_and_rel.partition("/")
-        if package_name and rel_path:
-            return os.path.join(get_package_share_directory(package_name), rel_path)
-    if os.path.isabs(path):
-        return path
-    return os.path.normpath(os.path.join(os.path.dirname(config_yaml), path))
-
-
-def _load_runtime_config(package_path: str) -> dict:
-    rt_yaml = _runtime_yaml_path(package_path)
-    try:
-        with open(rt_yaml) as f:
-            rt = yaml.safe_load(f) or {}
-    except Exception:
-        raise RuntimeError(f"Failed to read runtime config: {rt_yaml}")
-
-    for config_yaml in _extra_runtime_yaml_paths(package_path):
-        if not os.path.isfile(config_yaml):
-            continue
-        with open(config_yaml) as f:
-            rt = _merge_config(rt, yaml.safe_load(f) or {})
-
-    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
-    if profile:
-        profile_yaml = _profile_runtime_yaml_path(package_path, profile)
-        if not os.path.isfile(profile_yaml):
-            raise RuntimeError(
-                f"runtime.yaml requested ACTIVE_PROFILE '{profile}', but profile config was not found: {profile_yaml}"
-            )
-        with open(profile_yaml) as f:
-            profile_rt = yaml.safe_load(f) or {}
-        merged = _merge_config(rt, profile_rt)
-        for profile_config_yaml in _profile_extra_runtime_yaml_paths(package_path, profile):
-            if not os.path.isfile(profile_config_yaml):
-                continue
-            with open(profile_config_yaml) as f:
-                merged = _merge_config(merged, yaml.safe_load(f) or {})
-        merged["_ACTIVE_RUNTIME_CONFIG_PATH"] = profile_yaml
-        return merged
-    rt["_ACTIVE_RUNTIME_CONFIG_PATH"] = rt_yaml
-    return rt
-
-
-def _urdf_path_from_runtime(package_path: str) -> str:
-    rt = _load_runtime_config(package_path)
-    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("URDF_PATH", ""))
-    if path and os.path.isfile(path):
-        return path
-    raise RuntimeError(
-        f"runtime config must define a valid URDF_PATH. Resolved value: {path}"
-    )
-
-
-def _srdf_path_from_runtime(package_path: str) -> str | None:
-    rt = _load_runtime_config(package_path)
-    path = _resolve_config_path(rt["_ACTIVE_RUNTIME_CONFIG_PATH"], rt.get("SRDF_PATH", ""))
-    if path and os.path.isfile(path):
-        return path
-    return None
 
 
 def generate_launch_description():
-    os.environ["ZEROERR_ROBOT_URDF"] = _urdf_path_from_runtime(
-        get_package_share_directory("zeroerr")
-    )
-
-    moveit_config = (
-        MoveItConfigsBuilder("eRobo3", package_name="zeroerr")
-        .robot_description(
-            file_path="config/urdfs/eRobo3.urdf.xacro",
-            mappings={"robot_urdf": _urdf_path_from_runtime(get_package_share_directory("zeroerr"))},
-        )
-        .robot_description_semantic(file_path=_srdf_path_from_runtime(get_package_share_directory("zeroerr")))
-        .to_moveit_configs()
-    )
-
     package_path = get_package_share_directory("zeroerr")
+    os.environ["ZEROERR_ROBOT_URDF"] = urdf_path_from_runtime(package_path)
+
+    moveit_config = build_moveit_config("zeroerr", package_path)
+
     ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
 

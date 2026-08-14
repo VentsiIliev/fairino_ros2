@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-
 from __future__ import annotations
+
+from setproctitle import setproctitle
+
+setproctitle("zeroerr_error_monitor")
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
