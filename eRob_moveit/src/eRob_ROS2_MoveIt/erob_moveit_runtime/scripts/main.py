@@ -4,18 +4,13 @@ import signal
 import sys
 import os
 
-from threading import Thread
+from threading import Event, Thread
 
 import rclpy
 import subprocess
 
-from rclpy.executors import ExternalShutdownException
-from rclpy.node import Node
-
-from utils.work_object import WorkObject
 from monitor_window import MonitorWindow
-from robot_controller import RobotController
-from backend.backend_factory import create_robot_backend
+from runtime_initializer import initialize_robot_runtime
 from rest_server import start_rest_server
 import config
 
@@ -44,12 +39,6 @@ def _remove_runtime_pid_file(pid_file):
             pass
 
 
-def ros_spin_thread(node):
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
-
 def open_rest_logs_terminal():
     subprocess.Popen([
         "gnome-terminal",
@@ -60,12 +49,72 @@ def open_rest_logs_terminal():
     ])
 
 
+def _separate_rest_process_enabled():
+    return os.environ.get("EROB_REST_SEPARATE_PROCESS", "1").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _restart_rest_process_enabled():
+    return os.environ.get("EROB_REST_RESTART_ON_CRASH", "1").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _start_rest_server_process():
+    rest_server_main = os.path.join(os.path.dirname(__file__), "rest_server_main.py")
+    return subprocess.Popen([sys.executable, rest_server_main])
+
+
+def _stop_rest_server_process(process):
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _supervise_rest_server_process(stop_event, process_holder):
+    restart_delay_s = 2.0
+    while not stop_event.is_set():
+        process = _start_rest_server_process()
+        process_holder["process"] = process
+
+        while process.poll() is None:
+            if stop_event.wait(timeout=0.5):
+                _stop_rest_server_process(process)
+                break
+
+        return_code = process.poll()
+        process_holder["process"] = None
+        if stop_event.is_set():
+            break
+        if return_code == 0 or not _restart_rest_process_enabled():
+            break
+
+        print(
+            f"REST server exited with code {return_code}; restarting in {restart_delay_s:.1f}s",
+            file=sys.stderr,
+        )
+        stop_event.wait(timeout=restart_delay_s)
+
 
 def main():
     pid_file = _write_runtime_pid_file()
     atexit.register(_remove_runtime_pid_file, pid_file)
+    stop_event = Event()
 
     def handle_shutdown_signal(signum, _frame):
+        stop_event.set()
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGINT, handle_shutdown_signal)
@@ -85,29 +134,12 @@ def main():
         app = QApplication(sys.argv)
 
     runtime = {}
+    rest_process = {"process": None}
 
     def initialize_runtime(update_status):
-        update_status("initializing_ros", "ROS client library is initializing")
-        rclpy.init()
-
-        update_status("constructing_robot_controller", "Robot controller is initializing")
-        ros_node = RobotController()
-        runtime["ros_node"] = ros_node
-
-        # Start spinning the node before monitor-dependent setup so timer
-        # callbacks and TF transforms can be processed during startup.
-        update_status("spinning_ros", "ROS node is spinning")
-        thread = Thread(target=ros_spin_thread, args=(ros_node,), daemon=True)
-        thread.start()
-
-        # Load default workobject from per-robot runtime.yaml
-        # (DEFAULT_WORKOBJECT: [x,y,z,rx,ry,rz])
-        update_status("creating_backend", "Robot backend is being created")
-        wo_params = config.DEFAULT_WORKOBJECT
-        work_object = WorkObject(*wo_params) if any(v != 0 for v in wo_params) else None
-        robot_backend = create_robot_backend(node=ros_node, workobject=work_object, ip="192.168.58.2")
+        robot_backend, ros_node = initialize_robot_runtime(update_status)
         runtime["robot_backend"] = robot_backend
-        ros_node.robot = robot_backend
+        runtime["ros_node"] = ros_node
 
         # win = MonitorWindow(ros_node, robot_backend)
         # ros_node.ui_callback = win.ros_update
@@ -122,6 +154,17 @@ def main():
         allow_starting_without_robot=True,
     )
     try:
+        if _separate_rest_process_enabled():
+            if app is not None:
+                Thread(
+                    target=_supervise_rest_server_process,
+                    args=(stop_event, rest_process),
+                    daemon=True,
+                ).start()
+                sys.exit(app.exec())
+            _supervise_rest_server_process(stop_event, rest_process)
+            return
+
         if app is not None:
             rest_thread = Thread(
                 target=start_rest_server,
@@ -135,10 +178,12 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        stop_event.set()
         ros_node = runtime.get("ros_node")
         if ros_node is not None:
             ros_node.destroy_node()
         rclpy.try_shutdown()
+        _stop_rest_server_process(rest_process.get("process"))
 
 if __name__ == '__main__':
     main()

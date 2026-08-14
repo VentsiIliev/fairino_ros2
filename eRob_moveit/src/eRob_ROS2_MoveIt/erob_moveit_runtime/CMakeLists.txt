@@ -67,6 +67,7 @@ install(FILES
   scripts/monitor_window.py
   scripts/rest_api_support.py
   scripts/rest_server.py
+  scripts/runtime_initializer.py
   scripts/robot_controller.py
   DESTINATION lib/${PROJECT_NAME}
 )
