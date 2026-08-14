@@ -1,0 +1,541 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="eRobo3">
+
+    <!-- ============================================================ -->
+    <!-- Planning groups                                              -->
+    <!-- ============================================================ -->
+
+    <!--
+        Robot 1 is an independent 6-DOF planning group.
+
+        Using a chain is cleaner for kinematics plugins such as TRAC-IK:
+            robot1_base_link -> robot1_ee_link
+    -->
+    <group name="robot1_arm">
+        <chain
+            base_link="robot1_base_link"
+            tip_link="robot1_ee_link"
+        />
+    </group>
+
+    <!-- Robot 2 -->
+    <group name="robot2_arm">
+        <chain
+            base_link="robot2_base_link"
+            tip_link="robot2_ee_link"
+        />
+    </group>
+
+    <!--
+        Composite group containing both robots.
+
+        This is useful for:
+            - combined robot state
+            - collision checking
+            - coordinated planning experiments
+
+        We will NOT configure a 12-DOF TRAC-IK solver for this group.
+    -->
+    <group name="dual_arms">
+        <group name="robot1_arm"/>
+        <group name="robot2_arm"/>
+    </group>
+
+
+    <!-- ============================================================ -->
+    <!-- Named states - Robot 1                                       -->
+    <!-- ============================================================ -->
+
+    <group_state name="home" group="robot1_arm">
+        <joint name="robot1_Joint_1" value="-1.57"/>
+        <joint name="robot1_Joint_2" value="-0.35"/>
+        <joint name="robot1_Joint_3" value="-0.7"/>
+        <joint name="robot1_Joint_4" value="-0.52"/>
+        <joint name="robot1_Joint_5" value="-1.57"/>
+        <joint name="robot1_Joint_6" value="0"/>
+    </group_state>
+
+
+    <!-- ============================================================ -->
+    <!-- Named states - Robot 2                                       -->
+    <!-- ============================================================ -->
+
+    <group_state name="home" group="robot2_arm">
+        <joint name="robot2_Joint_1" value="-1.57"/>
+        <joint name="robot2_Joint_2" value="-0.35"/>
+        <joint name="robot2_Joint_3" value="-0.7"/>
+        <joint name="robot2_Joint_4" value="-0.52"/>
+        <joint name="robot2_Joint_5" value="-1.57"/>
+        <joint name="robot2_Joint_6" value="0"/>
+    </group_state>
+
+
+    <!-- ============================================================ -->
+    <!-- Named state - Both robots                                    -->
+    <!-- ============================================================ -->
+
+    <group_state name="home" group="dual_arms">
+        <joint name="robot1_Joint_1" value="-1.57"/>
+        <joint name="robot1_Joint_2" value="-0.35"/>
+        <joint name="robot1_Joint_3" value="-0.7"/>
+        <joint name="robot1_Joint_4" value="-0.52"/>
+        <joint name="robot1_Joint_5" value="-1.57"/>
+        <joint name="robot1_Joint_6" value="0"/>
+
+        <joint name="robot2_Joint_1" value="-1.57"/>
+        <joint name="robot2_Joint_2" value="-0.35"/>
+        <joint name="robot2_Joint_3" value="-0.7"/>
+        <joint name="robot2_Joint_4" value="-0.52"/>
+        <joint name="robot2_Joint_5" value="-1.57"/>
+        <joint name="robot2_Joint_6" value="0"/>
+    </group_state>
+
+
+    <!-- ============================================================ -->
+    <!-- Robot 1 self-collision exclusions                            -->
+    <!-- ============================================================ -->
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_Link_2"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_base_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_base_link_inertial"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_2"
+        link2="robot1_Link_3"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_3"
+        link2="robot1_Link_4"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_4"
+        link2="robot1_Link_5"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_5"
+        link2="robot1_Link_6"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_6"
+        link2="robot1_ee_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_tool0"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_6"
+        link2="robot1_tool0"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_tool0"
+        link2="robot1_tcp"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_tcp"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot1_Link_6"
+        link2="robot1_tcp"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_1"
+        link2="robot1_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_2"
+        link2="robot1_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_2"
+        link2="robot1_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_2"
+        link2="robot1_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_3"
+        link2="robot1_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_5"
+        link2="robot1_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_5"
+        link2="robot1_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_6"
+        link2="robot1_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_Link_6"
+        link2="robot1_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_Link_1"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_Link_2"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot1_ee_link"
+        link2="robot1_Link_5"
+        reason="Never"/>
+
+
+    <!-- ============================================================ -->
+    <!-- Robot 2 self-collision exclusions                            -->
+    <!-- ============================================================ -->
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_Link_2"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_base_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_base_link_inertial"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_2"
+        link2="robot2_Link_3"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_3"
+        link2="robot2_Link_4"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_4"
+        link2="robot2_Link_5"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_5"
+        link2="robot2_Link_6"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_6"
+        link2="robot2_ee_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_tool0"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_6"
+        link2="robot2_tool0"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_tool0"
+        link2="robot2_tcp"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_tcp"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="robot2_Link_6"
+        link2="robot2_tcp"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_1"
+        link2="robot2_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_2"
+        link2="robot2_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_2"
+        link2="robot2_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_2"
+        link2="robot2_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_3"
+        link2="robot2_Link_6"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_5"
+        link2="robot2_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_5"
+        link2="robot2_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_6"
+        link2="robot2_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_Link_6"
+        link2="robot2_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_base_link"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_base_link_inertial"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_Link_1"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_Link_2"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="robot2_ee_link"
+        link2="robot2_Link_5"
+        reason="Never"/>
+
+
+    <!-- ============================================================ -->
+    <!-- Shared table vs Robot 1                                      -->
+    <!-- ============================================================ -->
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_base_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_base_link_inertial"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_1"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_2"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot1_Link_6"
+        reason="Never"/>
+
+
+    <!-- ============================================================ -->
+    <!-- Shared table vs Robot 2                                      -->
+    <!-- ============================================================ -->
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_base_link"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_base_link_inertial"
+        reason="Adjacent"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_1"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_2"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_3"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_4"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_5"
+        reason="Never"/>
+
+    <disable_collisions
+        link1="table"
+        link2="robot2_Link_6"
+        reason="Never"/>
+
+
+    <!-- ============================================================ -->
+    <!-- Shared environment internal collision                        -->
+    <!-- ============================================================ -->
+
+    <!--
+        table and mounting_surface occupy the same physical volume
+        in the current twin URDF.
+
+        They therefore must not be considered a collision pair.
+    -->
+    <disable_collisions
+        link1="table"
+        link2="mounting_surface"
+        reason="Adjacent"/>
+
+
+    <!--
+        IMPORTANT:
+
+        There are intentionally NO collision-disable entries between:
+
+            robot1_*  <->  robot2_*
+
+        Therefore MoveIt remains responsible for detecting collisions
+        between the two physical robots.
+    -->
+
+</robot>
