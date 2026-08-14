@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:macro
+        name="erob_control_joint"
+        params="
+            joint_name
+            module_name
+            slave_position
+            slave_config
+            initial_position
+            use_fake_hardware">
+
+        <joint name="${joint_name}">
+
+            <command_interface name="position"/>
+
+            <state_interface name="position">
+                <param name="initial_value">${initial_position}</param>
+            </state_interface>
+
+            <state_interface name="velocity"/>
+            <state_interface name="effort"/>
+
+            <xacro:unless value="${use_fake_hardware}">
+
+                <command_interface name="reset_fault"/>
+                <command_interface name="enable_set"/>
+                <command_interface name="disable_set"/>
+
+                <state_interface name="statusword"/>
+                <state_interface name="error_code"/>
+                <state_interface name="mode_display"/>
+
+                <ec_module name="${module_name}">
+
+                    <plugin>
+                        ethercat_generic_plugins/EcCiA402Drive
+                    </plugin>
+
+                    <param name="alias">0</param>
+
+                    <param name="position">
+                        ${slave_position}
+                    </param>
+
+                    <param name="slave_config">
+                        ${slave_config}
+                    </param>
+
+                </ec_module>
+
+            </xacro:unless>
+
+        </joint>
+
+    </xacro:macro>
+
+</robot>
