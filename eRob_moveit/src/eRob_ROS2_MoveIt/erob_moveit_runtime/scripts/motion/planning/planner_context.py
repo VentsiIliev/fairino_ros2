@@ -18,6 +18,7 @@ class PlannerContext:
         trajectory_optimizer,
     ):
         self._node = node
+        self.robot_context = getattr(node, "robot_context", None)
         self._state_store = state_store
         self._motion = motion_coordinator
         self.motion_queue = motion_queue
