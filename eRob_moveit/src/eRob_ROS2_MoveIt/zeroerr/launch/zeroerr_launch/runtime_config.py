@@ -169,6 +169,7 @@ def load_state_publisher_params(package_path: str) -> dict:
         raise RuntimeError(f"Failed to read profile state publisher config: {profile_yaml}: {exc}")
     return _deep_merge(params, profile_params)
 
+
 def ros2_controllers_path_from_runtime(package_path: str) -> str:
     rt = load_runtime_config(package_path)
     profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
@@ -189,6 +190,7 @@ def ros2_controllers_path_from_runtime(package_path: str) -> str:
         "ros2_controllers.yaml",
     )
 
+
 def moveit_controllers_path_from_runtime(package_path: str) -> str:
     rt = load_runtime_config(package_path)
     profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
@@ -207,4 +209,25 @@ def moveit_controllers_path_from_runtime(package_path: str) -> str:
         package_path,
         "config",
         "moveit_controllers.yaml",
+    )
+
+
+def kinematics_path_from_runtime(package_path: str) -> str:
+    rt = load_runtime_config(package_path)
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+
+    if profile:
+        candidate = os.path.join(
+            package_path,
+            "config",
+            profile,
+            "kinematics.yaml",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+
+    return os.path.join(
+        package_path,
+        "config",
+        "kinematics.yaml",
     )

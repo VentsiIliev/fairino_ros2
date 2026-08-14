@@ -6,6 +6,7 @@ from launch.substitution import Substitution
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from zeroerr_launch.runtime_config import (
+    kinematics_path_from_runtime,
     moveit_controllers_path_from_runtime,
     srdf_path_from_runtime,
     urdf_path_from_runtime,
@@ -38,6 +39,7 @@ def build_moveit_config(
     urdf_path = urdf_path_from_runtime(package_path)
     srdf_path = srdf_path_from_runtime(package_path)
     moveit_controllers_path = moveit_controllers_path_from_runtime(package_path)
+    kinematics_path = kinematics_path_from_runtime(package_path)
 
     mappings = {"robot_urdf": urdf_path}
 
@@ -54,6 +56,9 @@ def build_moveit_config(
             mappings=mappings,
         )
         .robot_description_semantic(file_path=srdf_path)
+        .robot_description_kinematics(
+            file_path=kinematics_path,
+        )
         .trajectory_execution(
             file_path=moveit_controllers_path,
         )
