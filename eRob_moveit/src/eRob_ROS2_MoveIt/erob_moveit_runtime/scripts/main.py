@@ -43,6 +43,30 @@ def _remove_runtime_pid_file(pid_file):
             pass
 
 
+def _write_rest_pid_file(pid):
+    pid_file = os.environ.get("ZEROERR_REST_PID_FILE", "").strip()
+    if not pid_file:
+        return None
+    with open(pid_file, "w") as f:
+        f.write(f"{pid}\n")
+    return pid_file
+
+
+def _remove_rest_pid_file(pid_file, pid):
+    if not pid_file:
+        return
+    try:
+        with open(pid_file) as f:
+            recorded_pid = f.read().strip()
+    except OSError:
+        return
+    if recorded_pid == str(pid):
+        try:
+            os.unlink(pid_file)
+        except OSError:
+            pass
+
+
 def open_rest_logs_terminal():
     subprocess.Popen([
         "gnome-terminal",
@@ -148,15 +172,19 @@ def _start_rest_server_process():
     env["EROB_REST_OWNER_PID"] = str(os.getpid())
     env["EROB_REST_SESSION_ID"] = _rest_session_id()
     env["EROB_REST_MAIN"] = rest_main
-    return subprocess.Popen([sys.executable, rest_main], env=env, start_new_session=True)
+    process = subprocess.Popen([sys.executable, rest_main], env=env, start_new_session=True)
+    _write_rest_pid_file(process.pid)
+    return process
 
 
 def _stop_rest_server_process(process):
     if process is None or process.poll() is not None:
         return
+    pid_file = os.environ.get("ZEROERR_REST_PID_FILE", "").strip()
     try:
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
     except ProcessLookupError:
+        _remove_rest_pid_file(pid_file, process.pid)
         return
     except OSError:
         process.terminate()
@@ -170,6 +198,7 @@ def _stop_rest_server_process(process):
         except OSError:
             process.kill()
         process.wait(timeout=5)
+    _remove_rest_pid_file(pid_file, process.pid)
 
 
 def _supervise_rest_server_process(stop_event, process_holder):
@@ -189,6 +218,10 @@ def _supervise_rest_server_process(stop_event, process_holder):
                 break
 
         return_code = process.poll()
+        _remove_rest_pid_file(
+            os.environ.get("ZEROERR_REST_PID_FILE", "").strip(),
+            process.pid,
+        )
         process_holder["process"] = None
         if stop_event.is_set():
             break

@@ -54,6 +54,7 @@ ZEROERR_USE_FAKE_HARDWARE="${ZEROERR_USE_FAKE_HARDWARE:-0}"
 ZEROERR_ROS_PID=""
 ZEROERR_MONITOR_PID_FILE="/tmp/zeroerr_slave_monitor.pid"
 ZEROERR_RUNTIME_PID_FILE="/tmp/zeroerr_runtime.pid"
+ZEROERR_REST_PID_FILE="${ZEROERR_REST_PID_FILE:-/tmp/zeroerr_rest_server.pid}"
 FAIRINO_ROS_PID=""
 
 # Command-line options.
@@ -167,6 +168,7 @@ kill_matching_processes() {
 }
 
 cleanup_stale_zeroerr_processes() {
+  kill_pid_file_process "${ZEROERR_REST_PID_FILE}"
   kill_pid_file_process "${ZEROERR_RUNTIME_PID_FILE}"
 
   local patterns=(
@@ -190,6 +192,9 @@ cleanup_stale_zeroerr_processes() {
     "zeroerr_runtime.py"
     "/erob_moveit_runtime/.*/main.py"
     "/lib/erob_moveit_runtime/main.py"
+    "/erob_moveit_runtime/.*/rest/main.py"
+    "/lib/erob_moveit_runtime/rest/main.py"
+    "python3 .*erob_moveit_runtime.*/rest/main.py"
     "ipp_helper"
     "ruckig_helper"
     "contour_ik_helper"
@@ -209,6 +214,7 @@ cleanup_stale_zeroerr_processes() {
 }
 
 cleanup_stale_fairino_processes() {
+  kill_pid_file_process "${ZEROERR_REST_PID_FILE}"
   kill_pid_file_process "${ZEROERR_RUNTIME_PID_FILE}"
 
   local patterns=(
@@ -226,6 +232,9 @@ cleanup_stale_fairino_processes() {
     "/opt/ros/.*/rviz2/rviz2"
     "/erob_moveit_runtime/.*/main.py"
     "/lib/erob_moveit_runtime/main.py"
+    "/erob_moveit_runtime/.*/rest/main.py"
+    "/lib/erob_moveit_runtime/rest/main.py"
+    "python3 .*erob_moveit_runtime.*/rest/main.py"
     "fairino_state_publisher.py"
     "zeroerr_runtime.py"
     "ipp_helper"
@@ -341,6 +350,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 export ZEROERR_RUNTIME_PID_FILE
+export ZEROERR_REST_PID_FILE
 
 echo "Using AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-}"
 echo "Using ROS_DOMAIN_ID=${ROS_DOMAIN_ID} ROS_AUTOMATIC_DISCOVERY_RANGE=${ROS_AUTOMATIC_DISCOVERY_RANGE} ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
