@@ -60,7 +60,6 @@ from config import (
     SERVICE_APPLY_IPP,
     SERVICE_APPLY_RUCKIG,
     URDF_PATH,
-    NUM_JOINTS,
     COLLISION_RATE_THRESHOLDS,
     COLLISION_SUSTAINED_THRESHOLDS,
     COLLISION_CONFIRMATION_SAMPLES,
@@ -1315,7 +1314,8 @@ class RobotController(Node):
             name: position
             for name, position in zip(state_names, state_positions)
         }
-        joint_names = list(config.JOINT_NAMES)
+        joint_names = list(self.robot_context.joint_names)
+        joint_count = len(joint_names)
         missing = [name for name in joint_names if name not in position_by_name]
         if missing:
             self.get_logger().warning(
@@ -1329,14 +1329,14 @@ class RobotController(Node):
 
         start_pt = JointTrajectoryPoint()
         start_pt.positions = list(positions)
-        start_pt.velocities = [0.0] * NUM_JOINTS
-        start_pt.accelerations = [0.0] * NUM_JOINTS
+        start_pt.velocities = [0.0] * joint_count
+        start_pt.accelerations = [0.0] * joint_count
         start_pt.time_from_start = Duration(sec=0, nanosec=0)
 
         end_pt = JointTrajectoryPoint()
         end_pt.positions = list(positions)
-        end_pt.velocities = [0.0] * NUM_JOINTS
-        end_pt.accelerations = [0.0] * NUM_JOINTS
+        end_pt.velocities = [0.0] * joint_count
+        end_pt.accelerations = [0.0] * joint_count
         end_pt.time_from_start = Duration(sec=0, nanosec=200_000_000)
 
         traj.points = [start_pt, end_pt]
