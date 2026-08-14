@@ -59,10 +59,6 @@ from config import (
     SERVICE_MOTION_SEQUENCE,
     SERVICE_APPLY_IPP,
     SERVICE_APPLY_RUCKIG,
-    COLLISION_TIP_LINK,
-    BASE_LINK,
-    WRIST_LINK,
-    EE_LINK,
     URDF_PATH,
     NUM_JOINTS,
     COLLISION_RATE_THRESHOLDS,
@@ -425,7 +421,14 @@ class RobotController(Node):
 
         try:
             attached = AttachedCollisionObject()
-            attached.link_name = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+            attached.link_name = str(
+                getattr(
+                    config,
+                    "ACTIVE_TOOL_COLLISION_LINK",
+                    self.robot_context.ee_link,
+                )
+                or self.robot_context.ee_link
+            )
             attached.touch_links = [
                 str(link)
                 for link in getattr(config, "ACTIVE_TOOL_COLLISION_TOUCH_LINKS", []) or []
@@ -503,7 +506,7 @@ class RobotController(Node):
     def _publish_active_tcp_tf(self, stamp, T_tcp, quaternion):
         transform = TransformStamped()
         transform.header.stamp = stamp
-        transform.header.frame_id = BASE_LINK
+        transform.header.frame_id = self.robot_context.base_link
         transform.child_frame_id = "active_tcp"
         transform.transform.translation.x = float(T_tcp[0, 3])
         transform.transform.translation.y = float(T_tcp[1, 3])
@@ -531,7 +534,7 @@ class RobotController(Node):
 
     def _make_source_sphere_marker(self, stamp, origin):
         marker = Marker()
-        marker.header.frame_id = BASE_LINK
+        marker.header.frame_id = self.robot_context.base_link
         marker.header.stamp = stamp
         marker.ns = "active_tool"
         marker.id = 90
@@ -552,7 +555,7 @@ class RobotController(Node):
 
     def _make_source_to_tcp_marker(self, stamp, source_origin, tcp_origin):
         marker = Marker()
-        marker.header.frame_id = BASE_LINK
+        marker.header.frame_id = self.robot_context.base_link
         marker.header.stamp = stamp
         marker.ns = "active_tool"
         marker.id = 91
@@ -572,7 +575,7 @@ class RobotController(Node):
 
     def _make_tcp_sphere_marker(self, stamp, origin, quaternion):
         marker = Marker()
-        marker.header.frame_id = BASE_LINK
+        marker.header.frame_id = self.robot_context.base_link
         marker.header.stamp = stamp
         marker.ns = "active_tool"
         marker.id = 0
@@ -600,7 +603,7 @@ class RobotController(Node):
         axis_length = 0.06
         for idx in range(3):
             marker = Marker()
-            marker.header.frame_id = BASE_LINK
+            marker.header.frame_id = self.robot_context.base_link
             marker.header.stamp = stamp
             marker.ns = "active_tool"
             marker.id = idx + 1
@@ -637,7 +640,14 @@ class RobotController(Node):
         quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
 
         marker = Marker()
-        marker.header.frame_id = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+        marker.header.frame_id = str(
+            getattr(
+                config,
+                "ACTIVE_TOOL_COLLISION_LINK",
+                self.robot_context.ee_link,
+            )
+            or self.robot_context.ee_link
+        )
         marker.header.stamp = stamp
         marker.ns = "active_tool_collision"
         marker.id = 200
@@ -661,7 +671,7 @@ class RobotController(Node):
 
     def _make_tcp_label_marker(self, stamp, origin, source_origin=None):
         marker = Marker()
-        marker.header.frame_id = BASE_LINK
+        marker.header.frame_id = self.robot_context.base_link
         marker.header.stamp = stamp
         marker.ns = "active_tool"
         marker.id = 10
@@ -756,9 +766,16 @@ class RobotController(Node):
         if self.tcp_loaded:
             return
 
-        if self.tf_buffer.can_transform(WRIST_LINK, EE_LINK, rclpy.time.Time()):
+        if self.tf_buffer.can_transform(
+                self.robot_context.wrist_link,
+                self.robot_context.ee_link,
+                rclpy.time.Time(),
+        ):
             try:
-                self.T_ee_link = self.get_tcp_transform(WRIST_LINK, EE_LINK)
+                self.T_ee_link = self.get_tcp_transform(
+                    self.robot_context.wrist_link,
+                    self.robot_context.ee_link,
+                )
                 print(f"[RobotController] Loaded ee_link transform:\n{self.T_ee_link}")
                 if self.active_tool_name in tool_registry:
                     registry_transform = self._build_registry_tool_transform(self.active_tool_name)
@@ -784,19 +801,37 @@ class RobotController(Node):
             except Exception as e:
                 self.get_logger().warning(f"TCP transform lookup failed: {e}")
 
-    def get_tcp_transform(self, from_frame=WRIST_LINK, to_frame=EE_LINK):
+    def get_tcp_transform(
+            self,
+            from_frame=None,
+            to_frame=None,
+    ):
+        from_frame = (
+            str(from_frame).strip()
+            if from_frame is not None
+            else self.robot_context.wrist_link
+        )
+
+        to_frame = (
+            str(to_frame).strip()
+            if to_frame is not None
+            else self.robot_context.ee_link
+        )
+
         try:
             trans: TransformStamped = self.tf_buffer.lookup_transform(
                 from_frame,
                 to_frame,
                 rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=1.0)
+                timeout=rclpy.duration.Duration(seconds=1.0),
             )
             T = TransformationUtils.tf2_to_transform(trans)
             print(f"[RobotController] Loaded TCP transform:\n{T}")
             return T
         except Exception as e:
-            self.get_logger().warning(f"Could not get TCP transform from tf: {e}")
+            self.get_logger().warning(
+                f"Could not get TCP transform from tf: {e}"
+            )
             return np.eye(4)
 
     def execute(self, strategy, queue_if_busy=True):
