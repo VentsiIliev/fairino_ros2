@@ -1,0 +1,48 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    robot1_joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    robot2_joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+
+robot1_joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - robot1_Joint_1
+      - robot1_Joint_2
+      - robot1_Joint_3
+      - robot1_Joint_4
+      - robot1_Joint_5
+      - robot1_Joint_6
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+
+robot2_joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - robot2_Joint_1
+      - robot2_Joint_2
+      - robot2_Joint_3
+      - robot2_Joint_4
+      - robot2_Joint_5
+      - robot2_Joint_6
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
