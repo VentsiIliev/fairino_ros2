@@ -1,0 +1,14 @@
+initial_positions:
+  robot1_Joint_1: -1.57
+  robot1_Joint_2: -0.35
+  robot1_Joint_3: -0.7
+  robot1_Joint_4: -0.52
+  robot1_Joint_5: -1.57
+  robot1_Joint_6: 0.0
+
+  robot2_Joint_1: -1.57
+  robot2_Joint_2: -0.35
+  robot2_Joint_3: -0.7
+  robot2_Joint_4: -0.52
+  robot2_Joint_5: -1.57
+  robot2_Joint_6: 0.0

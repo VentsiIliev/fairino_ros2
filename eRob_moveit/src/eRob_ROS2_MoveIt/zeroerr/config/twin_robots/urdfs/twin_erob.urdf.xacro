@@ -1,0 +1,128 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="twin_eRobo3">
+
+  <!-- Reusable single-arm macro -->
+  <xacro:include
+      filename="$(find zeroerr)/config/urdfs/erob_arm_macro.xacro"/>
+
+  <!-- ============================================================ -->
+  <!-- Shared world                                                -->
+  <!-- ============================================================ -->
+
+  <link name="world"/>
+
+
+  <!-- ============================================================ -->
+  <!-- Robot 1                                                     -->
+  <!-- ============================================================ -->
+
+  <xacro:erob_arm prefix="robot1_"/>
+
+  <joint name="world_to_robot1_base" type="fixed">
+    <parent link="world"/>
+    <child link="robot1_base_link"/>
+
+    <!--
+        Initial test placement:
+        Robot 1 is 0.7 m to the left of world origin.
+    -->
+    <origin
+        xyz="-0.7 0 0"
+        rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- ============================================================ -->
+  <!-- Robot 2                                                     -->
+  <!-- ============================================================ -->
+
+  <xacro:erob_arm prefix="robot2_"/>
+
+  <joint name="world_to_robot2_base" type="fixed">
+    <parent link="world"/>
+    <child link="robot2_base_link"/>
+
+    <!--
+        Initial test placement:
+        Robot 2 is 0.7 m to the right and rotated 180 degrees,
+        so the two robots face each other.
+    -->
+    <origin
+        xyz="0.7 0 0"
+        rpy="0 0 3.141592653589793"/>
+  </joint>
+
+
+  <!-- ============================================================ -->
+  <!-- Shared table                                                -->
+  <!-- ============================================================ -->
+
+  <link name="table">
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
+      <geometry>
+        <box size="2.0 2.0 0.03"/>
+      </geometry>
+      <material name="table_material">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
+      <geometry>
+        <box size="2.0 2.0 0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="world_to_table" type="fixed">
+    <parent link="world"/>
+    <child link="table"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- ============================================================ -->
+  <!-- Shared mounting surface                                     -->
+  <!-- ============================================================ -->
+
+  <link name="mounting_surface">
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
+      <geometry>
+        <box size="2.0 2.0 0.03"/>
+      </geometry>
+      <material name="mounting_surface_debug_material">
+        <color rgba="0.0 0.9 0.2 0.65"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.015" rpy="0 0 0"/>
+      <geometry>
+        <box size="2.0 2.0 0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="world_to_mounting_surface" type="fixed">
+    <parent link="world"/>
+    <child link="mounting_surface"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- ============================================================ -->
+  <!-- Shared materials                                            -->
+  <!-- ============================================================ -->
+
+  <material name="table_material">
+    <color rgba="1 1 1 1"/>
+  </material>
+
+  <material name="mounting_surface_debug_material">
+    <color rgba="0.0 0.9 0.2 0.65"/>
+  </material>
+
+</robot>

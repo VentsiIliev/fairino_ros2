@@ -1,0 +1,5 @@
+URDF_PATH: urdfs/twin_erob.urdf.xacro
+SRDF_PATH: eRobo3.srdf
+
+NUM_JOINTS: 12
+ETHERCAT_EXPECTED_SLAVES: 12
