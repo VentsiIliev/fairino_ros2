@@ -342,6 +342,14 @@ class BlendBuilder:
         return merged, effective_radii
 
 
+def _planning_group(planning_node, config_obj) -> str:
+    robot_context = getattr(planning_node, "robot_context", None)
+    return str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config_obj, "PLANNING_GROUP", "manipulator")
+    )
+
+
 def wait_moveit_state_validity(
     planning_node,
     config_obj,
@@ -364,7 +372,7 @@ def wait_moveit_state_validity(
     joint_state.position = [float(value) for value in joint_positions]
     request.robot_state.joint_state = joint_state
     request.robot_state.is_diff = True
-    request.group_name = str(config_obj.PLANNING_GROUP)
+    request.group_name = _planning_group(planning_node, config_obj)
 
     future = client.call_async(request)
     deadline = time.monotonic() + float(timeout_s)
@@ -403,7 +411,7 @@ def wait_moveit_trajectory_state_validation(
         for joint_positions in joint_positions_batch
         for value in joint_positions
     ]
-    request.group_name = str(config_obj.PLANNING_GROUP)
+    request.group_name = _planning_group(planning_node, config_obj)
     request.check_collisions = bool(getattr(config_obj, "ORDERED_BLEND_BATCH_CHECK_COLLISIONS", True))
     request.max_workers = int(getattr(config_obj, "ORDERED_BLEND_BATCH_VALIDATION_WORKERS", 4))
 
