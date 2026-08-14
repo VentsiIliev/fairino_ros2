@@ -129,7 +129,11 @@ def _validate_cartesian_trajectory_state_validity_async(
             return
         index = indexes[validation["next_offset"]]
         validation["next_offset"] += 1
-        req = _make_state_validity_request(joint_names, points[index].positions)
+        req = _make_state_validity_request(
+            robot_controller,
+            joint_names,
+            points[index].positions,
+        )
         future = client.call_async(req)
         validation["future"] = future
 
@@ -165,7 +169,14 @@ def _validate_cartesian_trajectory_state_validity_async(
     return True
 
 
-def _make_state_validity_request(joint_names, positions):
+def _make_state_validity_request(robot_controller, joint_names, positions):
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
     js = JointState()
     js.name = list(joint_names)
     js.position = [float(value) for value in positions]
@@ -175,7 +186,7 @@ def _make_state_validity_request(joint_names, positions):
 
     req = GetStateValidity.Request()
     req.robot_state = state
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = planning_group
     return req
 
 
@@ -657,14 +668,31 @@ def _interpolate_pose(start_pose, target_pose, t: float):
 def _request_cartesian_diag_ik_async(robot_controller, pose, seed_joint_state, avoid_collisions: bool):
     from moveit_msgs.srv import GetPositionIK
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
     ik_client = robot_controller.get_ik_client()
     if ik_client is None or not ik_client.wait_for_service(timeout_sec=1.0):
         raise TimeoutError("MoveIt IK service unavailable")
 
     req = GetPositionIK.Request()
-    req.ik_request.group_name = config.PLANNING_GROUP
-    req.ik_request.ik_link_name = config.EE_LINK
-    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.group_name = planning_group
+    req.ik_request.ik_link_name = ee_link
+    req.ik_request.pose_stamped.header.frame_id = base_link
     req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = pose
     req.ik_request.avoid_collisions = bool(avoid_collisions)
@@ -679,6 +707,13 @@ def _request_cartesian_diag_ik_async(robot_controller, pose, seed_joint_state, a
 def _request_cartesian_diag_validity_async(robot_controller, joint_state):
     from moveit_msgs.srv import GetStateValidity
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
     client = robot_controller.get_state_validity_client()
     if client is None or not client.wait_for_service(timeout_sec=1.0):
         raise TimeoutError("MoveIt state validity service unavailable")
@@ -686,7 +721,7 @@ def _request_cartesian_diag_validity_async(robot_controller, joint_state):
     req = GetStateValidity.Request()
     req.robot_state.joint_state = deepcopy(joint_state)
     req.robot_state.is_diff = False
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = planning_group
     return client.call_async(req)
 
 
@@ -1279,12 +1314,41 @@ def _apply_time_param(rc, trajectory, vel_scaling, acc_scaling, gen, log_prefix=
     )
 
 
-def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
-                              start_state=None, avoid_collisions=False):
+def _build_cartesian_request(
+    rc,
+    poses,
+    max_step,
+    vel_scaling,
+    acc_scaling,
+    start_state=None,
+    avoid_collisions=False,
+):
+    robot_context = getattr(rc, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
     req = GetCartesianPath.Request()
-    req.header.frame_id               = config.BASE_LINK
-    req.group_name                    = config.PLANNING_GROUP
-    req.link_name                     = config.EE_LINK
+    req.header.frame_id = base_link
+    req.group_name = planning_group
+    req.link_name = ee_link
     req.waypoints                     = poses
     req.max_step                      = max_step
     req.jump_threshold                = 0.0
@@ -1294,13 +1358,65 @@ def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
 
     if start_state is not None:
         req.start_state = start_state
+
     elif rc.current_joint_state is not None:
-        state = deepcopy(rc.current_joint_state)
-        state.header.stamp = rc.get_clock().now().to_msg()
-        req.start_state.joint_state = state
-        req.start_state.is_diff = False
+        live_state = rc.current_joint_state
+
+        state_names = list(
+            getattr(live_state, "name", []) or []
+        )
+        state_positions = list(
+            getattr(live_state, "position", []) or []
+        )
+
+        if (
+                joint_names
+                and state_names
+                and len(state_names) == len(state_positions)
+        ):
+            position_by_name = dict(
+                zip(state_names, state_positions)
+            )
+
+            missing = [
+                name
+                for name in joint_names
+                if name not in position_by_name
+            ]
+
+            if not missing:
+                state = deepcopy(live_state)
+                state.header.stamp = rc.get_clock().now().to_msg()
+
+                state.name = list(joint_names)
+                state.position = [
+                    float(position_by_name[name])
+                    for name in joint_names
+                ]
+
+                state.velocity = []
+                state.effort = []
+
+                req.start_state.joint_state = state
+                req.start_state.is_diff = False
+
+            else:
+                rc.get_logger().warning(
+                    '[Plan] Current joint state missing active robot joints: '
+                    f'{missing}'
+                )
+
+        else:
+            rc.get_logger().warning(
+                '[Plan] Current joint state is incomplete — '
+                'trajectory start state not populated'
+            )
+
     else:
-        rc.get_logger().warning('[Plan] No current joint state — trajectory may mismatch')
+        rc.get_logger().warning(
+            '[Plan] No current joint state — trajectory may mismatch'
+        )
+
     return req
 
 
