@@ -23,7 +23,6 @@ import numpy as np
 from time import perf_counter
 import config
 
-
 _ORIENTATION_DIRECT_JACOBIAN_TOL_DEG = 0.5
 _ORIENTATION_ONLY_MOVE_STEP_M = 0.01
 _SHORT_MOVE_ORIENTATION_INTERP_MM = 80.0
@@ -68,8 +67,8 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
     drz = ((target_mm[5] - start_mm[5] + 180.0) % 360.0) - 180.0
     orientation_delta_deg = max(abs(drx), abs(dry), abs(drz))
     interpolate_orientation = (
-        distance_mm <= _SHORT_MOVE_ORIENTATION_INTERP_MM
-        and orientation_delta_deg >= _SHORT_MOVE_ORIENTATION_INTERP_MIN_DELTA_DEG
+            distance_mm <= _SHORT_MOVE_ORIENTATION_INTERP_MM
+            and orientation_delta_deg >= _SHORT_MOVE_ORIENTATION_INTERP_MIN_DELTA_DEG
     )
 
     waypoints = []
@@ -94,13 +93,13 @@ def _generate_adaptive_waypoints(start_mm, target_mm):
 
 
 def _execute_jacobian_move(
-    robot_controller,
-    poses,
-    delta_m,
-    vel_scaling,
-    acc_scaling,
-    *,
-    avoid_collisions=True,
+        robot_controller,
+        poses,
+        delta_m,
+        vel_scaling,
+        acc_scaling,
+        *,
+        avoid_collisions=True,
 ):
     robot_controller.get_logger().info(
         f'[Single Point] Sub-5mm ({delta_m * 1000:.3f}mm): Jacobian direct (skip MoveIt)')
@@ -137,7 +136,8 @@ def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling, trajec
     gen = _begin_execution(robot_controller)
     try:
         from motion.move_linear_timing import mark as mark_move_linear_timing
-        mark_move_linear_timing(robot_controller, "cartesian_service_dispatch", waypoints=robot_controller._last_cartesian_request_waypoints)
+        mark_move_linear_timing(robot_controller, "cartesian_service_dispatch",
+                                waypoints=robot_controller._last_cartesian_request_waypoints)
     except Exception:
         pass
     service_call_started_at = perf_counter()
@@ -163,6 +163,23 @@ def _resolve_start_state(robot_controller, start_pose):
     from moveit_msgs.srv import GetPositionIK
     import time
 
+    robot_context = getattr(robot_controller, "robot_context", None)
+
+    planning_group = str(
+        getattr(robot_context, "planning_group", "")
+        or getattr(config, "PLANNING_GROUP", "manipulator")
+    )
+
+    ee_link = str(
+        getattr(robot_context, "ee_link", "")
+        or getattr(config, "EE_LINK", "ee_link")
+    )
+
+    base_link = str(
+        getattr(robot_context, "base_link", "")
+        or getattr(config, "BASE_LINK", "base_link")
+    )
+
     ik_client = robot_controller.get_ik_client()
     if ik_client is None or not ik_client.wait_for_service(timeout_sec=0.5):
         robot_controller.get_logger().warning(
@@ -170,9 +187,9 @@ def _resolve_start_state(robot_controller, start_pose):
         return None
 
     req = GetPositionIK.Request()
-    req.ik_request.group_name = config.PLANNING_GROUP
-    req.ik_request.ik_link_name = config.EE_LINK
-    req.ik_request.pose_stamped.header.frame_id = config.BASE_LINK
+    req.ik_request.group_name = planning_group
+    req.ik_request.ik_link_name = ee_link
+    req.ik_request.pose_stamped.header.frame_id = base_link
     req.ik_request.pose_stamped.header.stamp = robot_controller.get_clock().now().to_msg()
     req.ik_request.pose_stamped.pose = start_pose
     req.ik_request.avoid_collisions = True
@@ -180,10 +197,47 @@ def _resolve_start_state(robot_controller, start_pose):
     req.ik_request.timeout.nanosec = 0
 
     if robot_controller.current_joint_state is not None:
-        seed = deepcopy(robot_controller.current_joint_state)
-        seed.header.stamp = robot_controller.get_clock().now().to_msg()
-        req.ik_request.robot_state.joint_state = seed
-        req.ik_request.robot_state.is_diff = False
+        live_state = robot_controller.current_joint_state
+
+        state_names = list(
+            getattr(live_state, "name", []) or []
+        )
+        state_positions = list(
+            getattr(live_state, "position", []) or []
+        )
+
+        if state_names and len(state_names) == len(state_positions):
+            position_by_name = dict(
+                zip(state_names, state_positions)
+            )
+
+            joint_names = list(
+                getattr(robot_context, "joint_names", ())
+                or getattr(config, "JOINT_NAMES", [])
+                or []
+            )
+
+            if joint_names and all(
+                    name in position_by_name
+                    for name in joint_names
+            ):
+                seed = deepcopy(live_state)
+                seed.header.stamp = (
+                    robot_controller.get_clock().now().to_msg()
+                )
+                seed.name = list(joint_names)
+                seed.position = [
+                    float(position_by_name[name])
+                    for name in joint_names
+                ]
+
+                # Do not accidentally leave 12-element derivative arrays
+                # attached to a 6-joint seed.
+                seed.velocity = []
+                seed.effort = []
+
+                req.ik_request.robot_state.joint_state = seed
+                req.ik_request.robot_state.is_diff = False
 
     future = ik_client.call_async(req)
     deadline = time.time() + 1.5
@@ -204,38 +258,104 @@ def _resolve_start_state(robot_controller, start_pose):
             f'[Single Point] IK start-state sync failed: {exc} — using live joint state')
         return None
 
-    error_code = getattr(getattr(resp, "error_code", None), "val", None)
+    error_code = getattr(
+        getattr(resp, "error_code", None),
+        "val",
+        None,
+    )
+
     solution = getattr(resp, "solution", None)
     joint_state = getattr(solution, "joint_state", None)
-    positions = list(getattr(joint_state, "position", []) or [])
-    names = list(getattr(joint_state, "name", []) or [])
-    if len(positions) < 6 or not names:
+
+    solution_names = list(
+        getattr(joint_state, "name", []) or []
+    )
+
+    solution_positions = list(
+        getattr(joint_state, "position", []) or []
+    )
+
+    joint_names = list(
+        getattr(robot_context, "joint_names", ())
+        or getattr(config, "JOINT_NAMES", [])
+        or []
+    )
+
+    usable_solution = (
+            bool(joint_names)
+            and bool(solution_names)
+            and len(solution_names) == len(solution_positions)
+    )
+
+    if usable_solution:
+        position_by_name = dict(
+            zip(solution_names, solution_positions)
+        )
+
+        usable_solution = all(
+            name in position_by_name
+            for name in joint_names
+        )
+
+    if not usable_solution:
         live_joint_state = robot_controller.current_joint_state
-        live_names = list(getattr(live_joint_state, "name", []) or []) if live_joint_state is not None else []
-        live_positions = list(getattr(live_joint_state, "position", []) or []) if live_joint_state is not None else []
+
+        live_names = (
+            list(getattr(live_joint_state, "name", []) or [])
+            if live_joint_state is not None
+            else []
+        )
+
+        live_positions = (
+            list(getattr(live_joint_state, "position", []) or [])
+            if live_joint_state is not None
+            else []
+        )
+
         robot_controller.get_logger().warning(
             '[Single Point] IK start-state sync returned no usable joint solution '
-            f'(error_code={error_code}, names={names}, positions={len(positions)}) — using live joint state')
+            f'(error_code={error_code}, '
+            f'names={solution_names}, '
+            f'positions={len(solution_positions)}) '
+            '— using live joint state'
+        )
+
         if live_names and live_positions:
             robot_controller.get_logger().warning(
-                f'[Single Point] Live joint state fallback: '
-                f'{[(name, round(pos, 6)) for name, pos in zip(live_names, live_positions)]}')
-        robot_controller.get_logger().warning(
-            '[Single Point] Requested Cartesian start pose: '
-            f'X={start_pose.position.x * 1000:.2f} Y={start_pose.position.y * 1000:.2f} '
-            f'Z={start_pose.position.z * 1000:.2f} '
-            f'Q=[{start_pose.orientation.x:.4f}, {start_pose.orientation.y:.4f}, '
-            f'{start_pose.orientation.z:.4f}, {start_pose.orientation.w:.4f}]')
-        robot_controller.get_logger().warning(
-            '[Single Point] IK start-state sync returned no usable joint solution — using live joint state')
+                '[Single Point] Live joint state fallback: ')
+            robot_controller.get_logger().warning(
+                '[Single Point] Live joint state fallback: '
+                f'{[(name, round(pos, 6)) for name, pos in zip(live_names, live_positions)]}'
+            )
+
+            robot_controller.get_logger().warning(
+                '[Single Point] Requested Cartesian start pose: '
+                f'X={start_pose.position.x * 1000:.2f} '
+                f'Y={start_pose.position.y * 1000:.2f} '
+                f'Z={start_pose.position.z * 1000:.2f} '
+                f'Q=[{start_pose.orientation.x:.4f}, '
+                f'{start_pose.orientation.y:.4f}, '
+                f'{start_pose.orientation.z:.4f}, '
+                f'{start_pose.orientation.w:.4f}]'
+            )
+
         return None
 
+    ordered_positions = [
+        float(position_by_name[name])
+        for name in joint_names
+    ]
+
     start_state = RobotState()
-    start_state.joint_state.name = names
-    start_state.joint_state.position = positions
+    start_state.joint_state.name = list(joint_names)
+    start_state.joint_state.position = ordered_positions
     start_state.is_diff = False
+
     robot_controller.get_logger().info(
-        '[Single Point] Using IK-synchronized start state for Cartesian planning')
+        '[Single Point] Using IK-synchronized start state '
+        f'for {planning_group}'
+    )
+
     return start_state
 
 
@@ -275,7 +395,8 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         return -2
     try:
         from motion.move_linear_timing import mark as mark_move_linear_timing
-        mark_move_linear_timing(robot_controller, "cartesian_service_ready", duration_s=perf_counter() - service_wait_started_at)
+        mark_move_linear_timing(robot_controller, "cartesian_service_ready",
+                                duration_s=perf_counter() - service_wait_started_at)
     except Exception:
         pass
 
@@ -286,7 +407,8 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         return err
     try:
         from motion.move_linear_timing import mark as mark_move_linear_timing
-        mark_move_linear_timing(robot_controller, "cartesian_poses_built", duration_s=perf_counter() - pose_build_started_at, poses=len(poses))
+        mark_move_linear_timing(robot_controller, "cartesian_poses_built",
+                                duration_s=perf_counter() - pose_build_started_at, poses=len(poses))
     except Exception:
         pass
 
@@ -328,7 +450,8 @@ def _execute_single_point(robot_controller, start_wp, target_wp, vel_scaling, ac
         return config.MOTION_ERROR_HARDWARE_NOT_READY
     try:
         from motion.move_linear_timing import mark as mark_move_linear_timing
-        mark_move_linear_timing(robot_controller, "motion_stack_ready", duration_s=perf_counter() - stack_check_started_at)
+        mark_move_linear_timing(robot_controller, "motion_stack_ready",
+                                duration_s=perf_counter() - stack_check_started_at)
     except Exception:
         pass
 
@@ -377,7 +500,8 @@ def send_cartesian_goal(robot_controller, x_mm, y_mm, z_mm, rx, ry, rz, vel_scal
     robot_controller.force_safety_update()
     try:
         from motion.move_linear_timing import mark as mark_move_linear_timing
-        mark_move_linear_timing(robot_controller, "preplan_safety_update", duration_s=perf_counter() - safety_started_at)
+        mark_move_linear_timing(robot_controller, "preplan_safety_update",
+                                duration_s=perf_counter() - safety_started_at)
     except Exception:
         pass
     avoid_collisions = resolve_avoid_collisions(avoid_collisions)
