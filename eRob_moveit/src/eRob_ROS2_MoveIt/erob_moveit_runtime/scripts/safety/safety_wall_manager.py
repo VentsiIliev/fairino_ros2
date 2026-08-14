@@ -48,6 +48,11 @@ class SafetyWallManager:
             marker_publish_interval: Interval for marker publishing (seconds)
         """
         self.node = node
+        robot_context = getattr(node, "robot_context", None)
+        self.base_link = str(
+            getattr(robot_context, "base_link", "")
+            or getattr(config, "BASE_LINK", "base_link")
+        )
         self.safety_workspace = workspace.copy() if workspace is not None else {}
         self.safety_margin = margin
         self.safety_enabled = enabled
@@ -72,9 +77,13 @@ class SafetyWallManager:
         # Don't publish immediately - wait for explicit force_update() call
         # This speeds up initialization
         if self.safety_workspace:
-            self.node.get_logger().info('[SafetyWallManager] Initialized (deferred publishing)')
+            self.node.get_logger().info(
+                f'[SafetyWallManager] Initialized (deferred publishing, frame={self.base_link})'
+            )
         else:
-            self.node.get_logger().info('[SafetyWallManager] Initialized without workspace')
+            self.node.get_logger().info(
+                f'[SafetyWallManager] Initialized without workspace (frame={self.base_link})'
+            )
 
     # ========== Public API Methods ==========
 
@@ -83,7 +92,7 @@ class SafetyWallManager:
         Validate if a position is within safety boundaries.
 
         Args:
-            x_m, y_m, z_m: Position in meters (base_link frame)
+            x_m, y_m, z_m: Position in meters (active robot base frame)
 
         Returns:
             tuple: (is_safe: bool, message: str)
@@ -181,7 +190,7 @@ class SafetyWallManager:
         for wall_name in config.SAFETY_WALL_NAMES:
             co = CollisionObject()
             co.id = wall_name
-            co.header.frame_id = config.BASE_LINK
+            co.header.frame_id = self.base_link
             co.operation = CollisionObject.REMOVE
             ps.world.collision_objects.append(co)
 
@@ -191,7 +200,7 @@ class SafetyWallManager:
         clear_markers = MarkerArray()
         for i, _ in enumerate(config.SAFETY_WALL_NAMES):
             marker = Marker()
-            marker.header.frame_id = config.BASE_LINK
+            marker.header.frame_id = self.base_link
             marker.ns = 'safety_walls'
             marker.id = i
             marker.action = Marker.DELETE
@@ -207,6 +216,7 @@ class SafetyWallManager:
         )
         return (
             bool(self.safety_enabled),
+            self.base_link,
             workspace_items,
             round(float(self.safety_margin), 6),
             tuple(sorted(self.acm_bypass_links)),
@@ -263,6 +273,7 @@ class SafetyWallManager:
             'enabled': bool(self.safety_enabled),
             'workspace': self.get_workspace_bounds(),
             'margin_m': float(self.safety_margin),
+            'base_link': self.base_link,
             'acm_bypass_links': sorted(self.acm_bypass_links),
         }
 
@@ -334,7 +345,7 @@ class SafetyWallManager:
         for name, cx, cy, cz, sx, sy, sz in walls:
             co = CollisionObject()
             co.id = name
-            co.header.frame_id = config.BASE_LINK
+            co.header.frame_id = self.base_link
 
             box = SolidPrimitive()
             box.type = SolidPrimitive.BOX
@@ -378,7 +389,7 @@ class SafetyWallManager:
 
         for i, (wall_name, cx, cy, cz, sx, sy, sz) in enumerate(walls):
             marker = Marker()
-            marker.header.frame_id = config.BASE_LINK
+            marker.header.frame_id = self.base_link
             marker.ns = 'safety_walls'
             marker.id = i
             marker.type = Marker.CUBE
