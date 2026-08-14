@@ -10,6 +10,7 @@ from zeroerr_launch.runtime_config import (
     joint_limits_path_from_runtime,
     kinematics_path_from_runtime,
     moveit_controllers_path_from_runtime,
+    ros2_control_xacro_path_from_runtime,
     srdf_path_from_runtime,
     urdf_path_from_runtime,
 )
@@ -44,10 +45,12 @@ def build_moveit_config(
     kinematics_path = kinematics_path_from_runtime(package_path)
     joint_limits_path = joint_limits_path_from_runtime(package_path)
     initial_positions_path = initial_positions_path_from_runtime(package_path)
+    ros2_control_xacro_path = ros2_control_xacro_path_from_runtime(package_path)
 
     mappings = {
         "robot_urdf": urdf_path,
         "initial_positions_file": initial_positions_path,
+        "ros2_control_xacro": ros2_control_xacro_path,
     }
 
     if use_fake_hardware is not None:

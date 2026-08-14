@@ -14,12 +14,29 @@
 
     <!--
         Initial joint positions used by ros2_control / GenericSystem.
-        This file exists under:
-        zeroerr/config/initial_positions.yaml
+
+        Default:
+            zeroerr/config/initial_positions.yaml
+
+        A profile can override this through MoveItConfigsBuilder mappings.
     -->
     <xacro:arg
         name="initial_positions_file"
         default="$(find zeroerr)/config/initial_positions.yaml"
+    />
+
+    <!--
+        ros2_control implementation selected by the active runtime profile.
+
+        Default:
+            zeroerr/config/urdfs/eRobo3.ros2_control.xacro
+
+        A profile such as twin_robots can later override this with:
+            zeroerr/config/twin_robots/eRobo3.ros2_control.xacro
+    -->
+    <xacro:arg
+        name="ros2_control_xacro"
+        default="$(find zeroerr)/config/urdfs/eRobo3.ros2_control.xacro"
     />
 
     <!--
@@ -31,13 +48,22 @@
         default="false"
     />
 
-    <!-- Import the actual ZeroErr robot URDF selected by runtime.yaml -->
+    <!-- Import the actual robot URDF selected by runtime.yaml -->
     <xacro:include filename="$(arg robot_urdf)" />
 
-    <!-- Import ros2_control hardware definition -->
-    <xacro:include filename="eRobo3.ros2_control.xacro" />
+    <!-- Import the ros2_control implementation selected by the active profile -->
+    <xacro:include filename="$(arg ros2_control_xacro)" />
 
-    <!-- Instantiate ros2_control -->
+    <!--
+        Instantiate ros2_control.
+
+        Important:
+        Every selectable ros2_control Xacro must expose the same public macro:
+            eRobo3_ros2_control
+
+        The normal profile will implement six joints.
+        The future twin_robots profile will implement twelve joints.
+    -->
     <xacro:eRobo3_ros2_control
         name="ZeroErrSystem"
         initial_positions_file="$(arg initial_positions_file)"

@@ -273,3 +273,25 @@ def initial_positions_path_from_runtime(package_path: str) -> str:
         "config",
         "initial_positions.yaml",
     )
+
+
+def ros2_control_xacro_path_from_runtime(package_path: str) -> str:
+    rt = load_runtime_config(package_path)
+    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+
+    if profile:
+        candidate = os.path.join(
+            package_path,
+            "config",
+            profile,
+            "eRobo3.ros2_control.xacro",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+
+    return os.path.join(
+        package_path,
+        "config",
+        "urdfs",
+        "eRobo3.ros2_control.xacro",
+    )
