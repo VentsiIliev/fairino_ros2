@@ -2,8 +2,11 @@
 from setproctitle import setproctitle
 
 setproctitle("rest_server")
+import faulthandler
 import sys
 from pathlib import Path
+
+faulthandler.enable(all_threads=True)
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPT_DIR) not in sys.path:

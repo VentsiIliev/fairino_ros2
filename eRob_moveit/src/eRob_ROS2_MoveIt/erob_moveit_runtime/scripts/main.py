@@ -6,6 +6,7 @@ import atexit
 import signal
 import sys
 import os
+import time
 
 from threading import Event, Thread
 
@@ -72,7 +73,10 @@ def _restart_rest_process_enabled():
 
 def _start_rest_server_process():
     rest_main = os.path.join(os.path.dirname(__file__), "rest", "main.py")
-    return subprocess.Popen([sys.executable, rest_main])
+    env = dict(os.environ)
+    env.setdefault("PYTHONFAULTHANDLER", "1")
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    return subprocess.Popen([sys.executable, rest_main], env=env)
 
 
 def _stop_rest_server_process(process):
@@ -88,7 +92,11 @@ def _stop_rest_server_process(process):
 
 def _supervise_rest_server_process(stop_event, process_holder):
     restart_delay_s = 2.0
+    max_restart_delay_s = 30.0
+    crash_window_s = 60.0
+    crash_timestamps = []
     while not stop_event.is_set():
+        started_at = time.monotonic()
         process = _start_rest_server_process()
         process_holder["process"] = process
 
@@ -104,11 +112,33 @@ def _supervise_rest_server_process(stop_event, process_holder):
         if return_code == 0 or not _restart_rest_process_enabled():
             break
 
+        now = time.monotonic()
+        crash_timestamps = [
+            timestamp for timestamp in crash_timestamps
+            if now - timestamp <= crash_window_s
+        ]
+        crash_timestamps.append(now)
+        uptime_s = max(now - started_at, 0.0)
+        if return_code is not None and return_code < 0:
+            try:
+                signal_name = signal.Signals(-return_code).name
+            except ValueError:
+                signal_name = f"signal {-return_code}"
+            exit_reason = f"{return_code} ({signal_name})"
+        else:
+            exit_reason = str(return_code)
+
         print(
-            f"REST server exited with code {return_code}; restarting in {restart_delay_s:.1f}s",
+            "REST server exited with "
+            f"code {exit_reason} after {uptime_s:.1f}s; "
+            f"restart #{len(crash_timestamps)} in {restart_delay_s:.1f}s",
             file=sys.stderr,
         )
         stop_event.wait(timeout=restart_delay_s)
+        if uptime_s < 30.0:
+            restart_delay_s = min(restart_delay_s * 2.0, max_restart_delay_s)
+        else:
+            restart_delay_s = 2.0
 
 
 def main():
