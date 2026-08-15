@@ -91,22 +91,37 @@ class RobotController(Node):
     def __init__(
             self,
             robot_context: RobotRuntimeContext | None = None,
+            node_name: str | None = None,
+            state_topic_prefix: str | None = None,
+            active_tcp_frame: str | None = None,
     ):
         import time
         start_time = time.time()
 
-        super().__init__('velocity_monitor')
-        self.robot_context = (
+        resolved_context = (
             robot_context
             if robot_context is not None
             else RobotRuntimeContext.from_config()
+        )
+        super().__init__(str(node_name or 'velocity_monitor'))
+        self.robot_context = resolved_context
+        prefix = str(state_topic_prefix or '').strip().strip('/')
+        self.state_topic_prefix = f'/{prefix}' if prefix else ''
+        self.active_tcp_frame = str(
+            active_tcp_frame
+            or (
+                f'{self.robot_context.name}_active_tcp'
+                if self.state_topic_prefix
+                else 'active_tcp'
+            )
         )
 
         self.get_logger().info(
             f'[Init] Runtime robot: {self.robot_context.name} '
             f'group={self.robot_context.planning_group} '
             f'base={self.robot_context.base_link} '
-            f'action={self.robot_context.action_follow_trajectory}'
+            f'action={self.robot_context.action_follow_trajectory} '
+            f'state_prefix={self.state_topic_prefix or "/"}'
         )
 
         self.get_logger().info('[Init] RobotController starting...')
@@ -147,13 +162,11 @@ class RobotController(Node):
             reason = "RViz disabled" if not rviz_enabled else "configured rate <= 0"
             self.get_logger().info(f'[ActiveTCP] Visualization marker publishing disabled ({reason})')
 
-        # Motion queue for sequential execution
         self.motion_queue = MotionQueue(max_size=MOTION_QUEUE_MAX_SIZE)
         self._motion = MotionCoordinator(node=self, motion_queue=self.motion_queue)
         self.lock = self._motion.lock
         self.execution_lock = self._motion.execution_lock
 
-        # Status publisher - broadcasts execution state and queue size
         self.status_publisher = RobotStatusPublisher(
             node=self,
             motion_queue=self.motion_queue,
@@ -170,11 +183,14 @@ class RobotController(Node):
         self.active_tool_name = "TOOL_0"
         self._active_tool_collision_timer = None
         self.runtime_adapter = create_runtime_adapter()
-        # Reduced frequency - TCP transform typically available quickly
         self.tcp_load_timer = self.create_timer(1.0, self.load_tcp_transform)
 
         t1 = time.time()
-        workspace = _extract_workspace_from_urdf(self, max_retries=WS_EXTRACT_MAX_RETRIES, retry_delay=WS_EXTRACT_RETRY_DELAY)
+        workspace = _extract_workspace_from_urdf(
+            self,
+            max_retries=WS_EXTRACT_MAX_RETRIES,
+            retry_delay=WS_EXTRACT_RETRY_DELAY,
+        )
 
         self.get_logger().info(f'[Init] Workspace extraction took {time.time() - t1:.2f}s')
 
@@ -190,21 +206,19 @@ class RobotController(Node):
             f'[Init] Workspace after XY offset ({WALL_XY_OFFSET*1000:.0f}mm): '
             f'X[{workspace["x_min"]:.3f},{workspace["x_max"]:.3f}] '
             f'Y[{workspace["y_min"]:.3f},{workspace["y_max"]:.3f}] '
-            f'Z[{workspace["z_min"]:.3f},{workspace["z_max"]:.3f}]')
+            f'Z[{workspace["z_min"]:.3f},{workspace["z_max"]:.3f}]'
+        )
 
         self.safety_manager = SafetyWallManager(
             node=self,
             workspace=workspace,
             margin=SAFETY_MARGIN,
             enabled=SAFETY_WALLS_ENABLED,
-            marker_publish_interval=MARKER_PUBLISH_INTERVAL_S
+            marker_publish_interval=MARKER_PUBLISH_INTERVAL_S,
         )
 
-        # Defer initial safety wall publishing to speed up initialization
-        # Will be published on first use or after 1 second
         self._safety_init_timer = self.create_timer(1.0, self._delayed_safety_init)
 
-        # ROS clients
         self.controller_client = ActionClient(
             self,
             FollowJointTrajectory,
@@ -340,7 +354,6 @@ class RobotController(Node):
         self._motion.last_submitted_task_id = value
 
     def _delayed_safety_init(self):
-        """Publish safety walls after a short delay to speed up initialization."""
         self.safety_manager.force_update()
         self.get_logger().info('[Init] Safety walls published')
         self._publish_mounting_surface_collision()
@@ -506,7 +519,7 @@ class RobotController(Node):
         transform = TransformStamped()
         transform.header.stamp = stamp
         transform.header.frame_id = self.robot_context.base_link
-        transform.child_frame_id = "active_tcp"
+        transform.child_frame_id = self.active_tcp_frame
         transform.transform.translation.x = float(T_tcp[0, 3])
         transform.transform.translation.y = float(T_tcp[1, 3])
         transform.transform.translation.z = float(T_tcp[2, 3])
@@ -786,6 +799,7 @@ class RobotController(Node):
                     ros_node=self,
                     tcp_transform=self._get_monitor_tcp_transform(),
                     stable_update_rate_hz=MONITOR_UPDATE_RATE_HZ,
+                    topic_prefix=self.state_topic_prefix,
                 )
                 self.monitor.set_stable_update_callback(self._handle_monitor_update)
                 self.tcp_loaded = True
@@ -877,6 +891,9 @@ class RobotController(Node):
                 return
 
             self.current_joint_state = msg
+            scoped_state = self.current_joint_state
+            if scoped_state is None:
+                return
 
             if self.monitor is None:
                 return
@@ -887,8 +904,9 @@ class RobotController(Node):
                 self.prev_cartesian = data['cartesian']
                 self.latest_data = data
 
-                if len(msg.effort) >= 6:
-                    data['efforts'] = np.array(msg.effort[:6])
+                scoped_efforts = list(getattr(scoped_state, 'effort', []) or [])
+                if len(scoped_efforts) >= 6:
+                    data['efforts'] = np.array(scoped_efforts[:6])
                     self.latest_data = data
 
         self.runtime_adapter.log_drive_state_snapshot(self, 'startup')
