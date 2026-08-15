@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
@@ -18,6 +19,18 @@
 
 // Reuse the same service definition as IPP (ApplyIPP)
 using ApplyRuckig = erob_moveit_runtime::srv::ApplyIPP;
+
+namespace
+{
+
+std::vector<std::string> sortedNames(const std::vector<std::string>& names)
+{
+    auto sorted = names;
+    std::sort(sorted.begin(), sorted.end());
+    return sorted;
+}
+
+}  // namespace
 
 moveit_msgs::msg::RobotTrajectory sanitizeTrajectoryRequest(
     const trajectory_msgs::msg::JointTrajectory& input,
@@ -617,16 +630,17 @@ public:
         robot_state_ = std::make_shared<moveit::core::RobotState>(kinematic_model_);
         robot_state_->setToDefaultValues();
 
-        auto group_names = kinematic_model_->getJointModelGroupNames();
+        const auto group_names = kinematic_model_->getJointModelGroupNames();
         if (group_names.empty())
         {
             throw std::runtime_error("Robot model has no planning groups!");
         }
 
-        planning_group_ = group_names[0];
-        RCLCPP_INFO(this->get_logger(), "Using planning group: '%s'", planning_group_.c_str());
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Robot model cached with %zu planning groups; group is resolved per request",
+            group_names.size());
 
-        RCLCPP_INFO(this->get_logger(), "Robot model and state cached successfully");
         advertiseService();
         RCLCPP_INFO(this->get_logger(), "Ruckig service '/apply_ruckig' is now ready");
         RCLCPP_INFO(this->get_logger(), "   Using jerk-limited trajectory smoothing (3rd order)");
@@ -637,7 +651,42 @@ private:
     std::shared_ptr<robot_model_loader::RobotModelLoader> loader_;
     moveit::core::RobotModelPtr kinematic_model_;
     moveit::core::RobotStatePtr robot_state_;
-    std::string planning_group_;
+
+    std::string resolvePlanningGroup(
+        const trajectory_msgs::msg::JointTrajectory& trajectory) const
+    {
+        const auto requested_names = sortedNames(trajectory.joint_names);
+        if (requested_names.empty())
+        {
+            throw std::invalid_argument("trajectory has no joint names");
+        }
+
+        for (const auto& group_name : kinematic_model_->getJointModelGroupNames())
+        {
+            const auto* group = kinematic_model_->getJointModelGroup(group_name);
+            if (!group)
+            {
+                continue;
+            }
+
+            if (sortedNames(group->getVariableNames()) == requested_names)
+            {
+                return group_name;
+            }
+        }
+
+        std::string joined;
+        for (const auto& name : trajectory.joint_names)
+        {
+            if (!joined.empty())
+            {
+                joined += ", ";
+            }
+            joined += name;
+        }
+        throw std::invalid_argument(
+            "no MoveIt planning group exactly matches trajectory joints [" + joined + "]");
+    }
 
     void advertiseService()
     {
@@ -682,7 +731,25 @@ private:
             return;
         }
 
-        robot_trajectory::RobotTrajectory rt(kinematic_model_, planning_group_);
+        std::string planning_group;
+        try
+        {
+            planning_group = resolvePlanningGroup(sanitized_request.joint_trajectory);
+        }
+        catch (const std::exception& exc)
+        {
+            RCLCPP_ERROR(this->get_logger(), "❌ Ruckig request rejected: %s", exc.what());
+            response->trajectory = moveit_msgs::msg::RobotTrajectory();
+            return;
+        }
+
+        RCLCPP_DEBUG(
+            this->get_logger(),
+            "Using planning group '%s' for %zu trajectory joints",
+            planning_group.c_str(),
+            sanitized_request.joint_trajectory.joint_names.size());
+
+        robot_trajectory::RobotTrajectory rt(kinematic_model_, planning_group);
         rt.setRobotTrajectoryMsg(*robot_state_, sanitized_request);
 
         const double max_vel_scaling = std::max(0.0, std::min(1.0, request->max_velocity_scaling));
