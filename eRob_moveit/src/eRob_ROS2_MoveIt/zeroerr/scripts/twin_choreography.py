@@ -6,7 +6,6 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from ament_index_python.packages import get_package_prefix
@@ -23,120 +22,25 @@ def _add_runtime_to_path() -> None:
 
 _add_runtime_to_path()
 
-from enums import Direction, RobotAxis  # noqa: E402
 from runtime_gateway.twin_local import TwinLocalRuntime  # noqa: E402
 
 
-@dataclass(frozen=True)
-class JogMove:
-    axis: RobotAxis
-    direction: Direction
-    step: float
-
-
-@dataclass(frozen=True)
-class ChoreoStep:
-    name: str
-    robot1: JogMove
-    robot2: JogMove
-
-
-def _opposite(direction: Direction) -> Direction:
-    return Direction.MINUS if direction == Direction.PLUS else Direction.PLUS
-
-
-def _build_choreography(x_mm: float, y_mm: float, z_mm: float) -> list[ChoreoStep]:
-    """Build a symmetric Cartesian choreography that returns both robots to start."""
-    xp = Direction.PLUS
-    xm = Direction.MINUS
-    yp = Direction.PLUS
-    ym = Direction.MINUS
-    zp = Direction.PLUS
-    zm = Direction.MINUS
-
-    return [
-        ChoreoStep(
-            "open X",
-            JogMove(RobotAxis.X, xp, x_mm),
-            JogMove(RobotAxis.X, xm, x_mm),
-        ),
-        ChoreoStep(
-            "rise together",
-            JogMove(RobotAxis.Z, zp, z_mm),
-            JogMove(RobotAxis.Z, zp, z_mm),
-        ),
-        ChoreoStep(
-            "sway apart Y",
-            JogMove(RobotAxis.Y, yp, y_mm),
-            JogMove(RobotAxis.Y, ym, y_mm),
-        ),
-        ChoreoStep(
-            "cross X",
-            JogMove(RobotAxis.X, xm, x_mm * 2.0),
-            JogMove(RobotAxis.X, xp, x_mm * 2.0),
-        ),
-        ChoreoStep(
-            "sway through Y",
-            JogMove(RobotAxis.Y, ym, y_mm * 2.0),
-            JogMove(RobotAxis.Y, yp, y_mm * 2.0),
-        ),
-        ChoreoStep(
-            "lower together",
-            JogMove(RobotAxis.Z, zm, z_mm * 2.0),
-            JogMove(RobotAxis.Z, zm, z_mm * 2.0),
-        ),
-        ChoreoStep(
-            "cross back X",
-            JogMove(RobotAxis.X, xp, x_mm * 2.0),
-            JogMove(RobotAxis.X, xm, x_mm * 2.0),
-        ),
-        ChoreoStep(
-            "sway back Y",
-            JogMove(RobotAxis.Y, yp, y_mm * 2.0),
-            JogMove(RobotAxis.Y, ym, y_mm * 2.0),
-        ),
-        ChoreoStep(
-            "rise through center",
-            JogMove(RobotAxis.Z, zp, z_mm * 2.0),
-            JogMove(RobotAxis.Z, zp, z_mm * 2.0),
-        ),
-        ChoreoStep(
-            "close X",
-            JogMove(RobotAxis.X, xm, x_mm),
-            JogMove(RobotAxis.X, xp, x_mm),
-        ),
-        ChoreoStep(
-            "center Y",
-            JogMove(RobotAxis.Y, ym, y_mm),
-            JogMove(RobotAxis.Y, yp, y_mm),
-        ),
-        ChoreoStep(
-            "settle Z",
-            JogMove(RobotAxis.Z, zm, z_mm),
-            JogMove(RobotAxis.Z, zm, z_mm),
-        ),
-    ]
-
-
-def _run_pair(robots, step: ChoreoStep, vel: float, acc: float) -> tuple[int, int, float]:
+def _run_pair(call1, call2) -> tuple[int, int, float]:
     start_gate = threading.Barrier(3)
     results: dict[str, int] = {}
     started: dict[str, float] = {}
     errors: dict[str, BaseException] = {}
 
-    def worker(robot_name: str, move: JogMove) -> None:
+    def worker(name: str, call) -> None:
         try:
-            gateway = robots.robot(robot_name)
             start_gate.wait()
-            started[robot_name] = time.perf_counter()
-            results[robot_name] = int(
-                gateway.jog(move.axis, move.direction, move.step, vel, acc)
-            )
-        except BaseException as exc:  # surface worker failures in the main thread
-            errors[robot_name] = exc
+            started[name] = time.perf_counter()
+            results[name] = int(call())
+        except BaseException as exc:
+            errors[name] = exc
 
-    t1 = threading.Thread(target=worker, args=("robot1", step.robot1), daemon=False)
-    t2 = threading.Thread(target=worker, args=("robot2", step.robot2), daemon=False)
+    t1 = threading.Thread(target=worker, args=("robot1", call1), daemon=False)
+    t2 = threading.Thread(target=worker, args=("robot2", call2), daemon=False)
     t1.start()
     t2.start()
     start_gate.wait()
@@ -154,22 +58,66 @@ def _run_pair(robots, step: ChoreoStep, vel: float, acc: float) -> tuple[int, in
 def _stop_both(robots) -> None:
     for name in ("robot1", "robot2"):
         try:
-            robots.robot(name).stop()
+            robots.robot(name).stop_motion()
         except Exception:
             pass
 
 
+def _master_loop(
+    x0: float,
+    y0: float,
+    z0: float,
+    x_span: float,
+    y_span: float,
+    z_span: float,
+) -> list[list[float]]:
+    """Closed Robot-1 Cartesian path around the inward-facing start pose."""
+    return [
+        [x0, y0, z0],
+        [x0 + x_span, y0, z0],
+        [x0 + x_span, y0 + y_span, z0 + z_span],
+        [x0, y0 + y_span, z0 + 2.0 * z_span],
+        [x0 - x_span, y0 + y_span, z0 + z_span],
+        [x0 - x_span, y0, z0],
+        [x0 - x_span, y0 - y_span, z0 - z_span],
+        [x0, y0 - y_span, z0 - 2.0 * z_span],
+        [x0 + x_span, y0 - y_span, z0 - z_span],
+        [x0 + x_span, y0, z0],
+        [x0, y0, z0],
+    ]
+
+
+def _mirror_path_for_robot2(path: list[list[float]], mirror_y: float) -> list[list[float]]:
+    """Mirror Robot-1 local path into Robot-2 local coordinates.
+
+    The twin URDF places Robot 2 at the opposite side with a 180-degree yaw.
+    A world-space mirror across the center plane therefore maps local coordinates as:
+        x2 = x1
+        y2 = 2*mirror_y - y1
+        z2 = z1
+    """
+    return [[x, 2.0 * mirror_y - y, z] for x, y, z in path]
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Concurrent two-robot Cartesian choreography using TwinLocalRuntime"
+        description="Mirrored looping Cartesian choreography for TwinLocalRuntime"
     )
-    parser.add_argument("--cycles", type=int, default=2, help="number of complete closed-loop cycles")
-    parser.add_argument("--x", type=float, default=15.0, help="base X displacement in mm")
-    parser.add_argument("--y", type=float, default=12.0, help="base Y displacement in mm")
-    parser.add_argument("--z", type=float, default=10.0, help="base Z displacement in mm")
-    parser.add_argument("--vel", type=float, default=15.0, help="velocity percentage")
-    parser.add_argument("--acc", type=float, default=15.0, help="acceleration percentage")
-    parser.add_argument("--pause", type=float, default=0.15, help="pause between paired moves in seconds")
+    parser.add_argument("--cycles", type=int, default=4, help="number of complete mirrored path loops")
+    parser.add_argument("--start-x", type=float, default=300.0, help="inward-facing local X start in mm")
+    parser.add_argument("--start-y", type=float, default=0.0, help="local Y center in mm")
+    parser.add_argument("--start-z", type=float, default=300.0, help="start height in mm")
+    parser.add_argument("--rx", type=float, default=180.0, help="constant tool RX in degrees")
+    parser.add_argument("--ry", type=float, default=0.0, help="constant tool RY in degrees")
+    parser.add_argument("--rz", type=float, default=0.0, help="constant tool RZ in degrees")
+    parser.add_argument("--x-span", type=float, default=35.0, help="master path X excursion in mm")
+    parser.add_argument("--y-span", type=float, default=45.0, help="master path Y excursion in mm")
+    parser.add_argument("--z-span", type=float, default=20.0, help="master path Z excursion in mm")
+    parser.add_argument("--vel", type=float, default=20.0, help="path velocity percentage")
+    parser.add_argument("--acc", type=float, default=20.0, help="path acceleration percentage")
+    parser.add_argument("--start-vel", type=float, default=15.0, help="PTP start velocity percentage")
+    parser.add_argument("--start-acc", type=float, default=15.0, help="PTP start acceleration percentage")
+    parser.add_argument("--pause", type=float, default=0.10, help="pause between full loops in seconds")
     parser.add_argument("--ready-timeout", type=float, default=20.0)
     parser.add_argument(
         "--allow-real-hardware",
@@ -182,13 +130,13 @@ def _parse_args() -> argparse.Namespace:
 def _validate_args(args: argparse.Namespace) -> None:
     if args.cycles < 1:
         raise ValueError("--cycles must be >= 1")
-    for name in ("x", "y", "z"):
+    for name in ("x_span", "y_span", "z_span"):
         if getattr(args, name) <= 0.0:
-            raise ValueError(f"--{name} must be > 0")
-    if not 0.0 < args.vel <= 100.0:
-        raise ValueError("--vel must be in (0, 100]")
-    if not 0.0 < args.acc <= 100.0:
-        raise ValueError("--acc must be in (0, 100]")
+            raise ValueError(f"--{name.replace('_', '-')} must be > 0")
+    for name in ("vel", "acc", "start_vel", "start_acc"):
+        value = getattr(args, name)
+        if not 0.0 < value <= 100.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be in (0, 100]")
     if args.pause < 0.0:
         raise ValueError("--pause must be >= 0")
 
@@ -210,19 +158,44 @@ def main() -> int:
         print(f"ERROR: {exc}")
         return 2
 
-    choreography = _build_choreography(args.x, args.y, args.z)
-    total_steps = len(choreography) * args.cycles
+    start_pose = [
+        args.start_x,
+        args.start_y,
+        args.start_z,
+        args.rx,
+        args.ry,
+        args.rz,
+    ]
+    # Because Robot 2's base is rotated 180 degrees in the twin URDF, the same
+    # local start pose places the two TCPs symmetrically and facing inward.
+    robot1_start = list(start_pose)
+    robot2_start = list(start_pose)
+
+    robot1_path = _master_loop(
+        args.start_x,
+        args.start_y,
+        args.start_z,
+        args.x_span,
+        args.y_span,
+        args.z_span,
+    )
+    robot2_path = _mirror_path_for_robot2(robot1_path, args.start_y)
 
     print(
-        "Twin choreography: "
-        f"cycles={args.cycles} paired_steps={total_steps} "
-        f"X={args.x:.1f}mm Y={args.y:.1f}mm Z={args.z:.1f}mm "
-        f"vel={args.vel:.1f}% acc={args.acc:.1f}%"
+        "Twin mirrored choreography: "
+        f"cycles={args.cycles} waypoints={len(robot1_path)} "
+        f"start={start_pose} vel={args.vel:.1f}% acc={args.acc:.1f}%"
     )
     print(
         f"Environment: ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '<unset>')} "
         f"fake={os.environ.get('ZEROERR_USE_FAKE_HARDWARE', '<unset>')}"
     )
+    print("Robot 1 master path:")
+    for index, point in enumerate(robot1_path):
+        print(f"  {index:02d}: {point}")
+    print("Robot 2 mirrored path:")
+    for index, point in enumerate(robot2_path):
+        print(f"  {index:02d}: {point}")
 
     with TwinLocalRuntime() as robots:
         if not robots.wait_until_ready(args.ready_timeout):
@@ -230,35 +203,74 @@ def main() -> int:
             print(robots.readiness())
             return 3
 
+        robot1 = robots.robot1
+        robot2 = robots.robot2
         print("READY:", robots.readiness())
-        print("Starting choreography. Ctrl+C requests stop on both robots.\n")
 
         try:
-            step_number = 0
-            for cycle in range(1, args.cycles + 1):
-                print(f"===== CYCLE {cycle}/{args.cycles} =====")
-                for choreo in choreography:
-                    step_number += 1
-                    print(
-                        f"[{step_number:02d}/{total_steps:02d}] {choreo.name}: "
-                        f"R1 {choreo.robot1.axis.name}{'+' if choreo.robot1.direction == Direction.PLUS else '-'} "
-                        f"{choreo.robot1.step:.1f}, "
-                        f"R2 {choreo.robot2.axis.name}{'+' if choreo.robot2.direction == Direction.PLUS else '-'} "
-                        f"{choreo.robot2.step:.1f}"
-                    )
-                    r1, r2, separation = _run_pair(robots, choreo, args.vel, args.acc)
-                    print(
-                        f"    results: robot1={r1} robot2={r2} "
-                        f"dispatch_separation={separation * 1000.0:.2f}ms"
-                    )
-                    if r1 != 0 or r2 != 0:
-                        print("FAIL: choreography stopped because a robot returned a motion error")
-                        _stop_both(robots)
-                        return 4
-                    if args.pause:
-                        time.sleep(args.pause)
+            print("\nMoving both robots to symmetric inward-facing start pose...")
+            r1, r2, separation = _run_pair(
+                lambda: robot1.move_ptp(
+                    robot1_start,
+                    vel=args.start_vel,
+                    acc=args.start_acc,
+                    blocking=True,
+                ),
+                lambda: robot2.move_ptp(
+                    robot2_start,
+                    vel=args.start_vel,
+                    acc=args.start_acc,
+                    blocking=True,
+                ),
+            )
+            print(
+                f"start results: robot1={r1} robot2={r2} "
+                f"dispatch_separation={separation * 1000.0:.2f}ms"
+            )
+            if r1 != 0 or r2 != 0:
+                print("FAIL: could not reach symmetric choreography start pose")
+                _stop_both(robots)
+                return 4
 
-            print("\nPASS: twin choreography completed")
+            print("\nStarting mirrored path loop. Ctrl+C stops both robots.")
+            for cycle in range(1, args.cycles + 1):
+                print(f"\n===== MIRRORED LOOP {cycle}/{args.cycles} =====")
+                r1, r2, separation = _run_pair(
+                    lambda: robot1.execute_path(
+                        robot1_path,
+                        rx=args.rx,
+                        ry=args.ry,
+                        rz=args.rz,
+                        vel=args.vel,
+                        acc=args.acc,
+                        blocking=True,
+                        trajectory_optimizer="RUCKIG",
+                        orientation_mode="constant",
+                    ),
+                    lambda: robot2.execute_path(
+                        robot2_path,
+                        rx=args.rx,
+                        ry=args.ry,
+                        rz=args.rz,
+                        vel=args.vel,
+                        acc=args.acc,
+                        blocking=True,
+                        trajectory_optimizer="RUCKIG",
+                        orientation_mode="constant",
+                    ),
+                )
+                print(
+                    f"loop results: robot1={r1} robot2={r2} "
+                    f"dispatch_separation={separation * 1000.0:.2f}ms"
+                )
+                if r1 != 0 or r2 != 0:
+                    print("FAIL: mirrored choreography stopped because a path returned an error")
+                    _stop_both(robots)
+                    return 5
+                if args.pause:
+                    time.sleep(args.pause)
+
+            print("\nPASS: mirrored twin choreography completed")
             return 0
         except KeyboardInterrupt:
             print("\nInterrupted: stopping both robots")
@@ -267,7 +279,7 @@ def main() -> int:
         except Exception as exc:
             print(f"\nFAIL: {exc}")
             _stop_both(robots)
-            return 5
+            return 6
 
 
 if __name__ == "__main__":
