@@ -38,22 +38,24 @@ install(PROGRAMS
 # GitHub's contents API creates new files without the executable bit. Under
 # colcon --symlink-install an install(PROGRAMS) entry would then point directly
 # at that non-executable source file, so ros2 run would not discover it.
-# Stage an executable build-tree copy for the installed twin test entrypoint.
-configure_file(
-  scripts/twin_test.py
-  ${CMAKE_CURRENT_BINARY_DIR}/twin_test.py
-  COPYONLY
-)
-file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/twin_test.py
-  PERMISSIONS
-    OWNER_READ OWNER_WRITE OWNER_EXECUTE
-    GROUP_READ GROUP_EXECUTE
-    WORLD_READ WORLD_EXECUTE
-)
-install(PROGRAMS
-  ${CMAKE_CURRENT_BINARY_DIR}/twin_test.py
-  DESTINATION lib/${PROJECT_NAME}
-)
+# Stage executable build-tree copies for the installed twin entrypoints.
+foreach(twin_script IN ITEMS twin_test.py twin_choreography.py)
+  configure_file(
+    scripts/${twin_script}
+    ${CMAKE_CURRENT_BINARY_DIR}/${twin_script}
+    COPYONLY
+  )
+  file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/${twin_script}
+    PERMISSIONS
+      OWNER_READ OWNER_WRITE OWNER_EXECUTE
+      GROUP_READ GROUP_EXECUTE
+      WORLD_READ WORLD_EXECUTE
+  )
+  install(PROGRAMS
+    ${CMAKE_CURRENT_BINARY_DIR}/${twin_script}
+    DESTINATION lib/${PROJECT_NAME}
+  )
+endforeach()
 
 install(PROGRAMS
   scripts/EtherCatStart.sh
