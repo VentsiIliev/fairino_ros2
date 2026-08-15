@@ -67,9 +67,9 @@ def _bounds_from_boxes(collision_elements, link_offset):
 
         box_z_min = oz - sz / 2
         box_z_max = oz + sz / 2
-        if box_z_min < lowest_z_min:       # this is the base plate
+        if box_z_min < lowest_z_min:
             lowest_z_min = box_z_min
-            plate_top_z = box_z_max        # exact top surface of the plate
+            plate_top_z = box_z_max
 
         for dx in (-sx / 2, sx / 2):
             for dy in (-sy / 2, sy / 2):
@@ -88,10 +88,13 @@ def _bounds_from_boxes(collision_elements, link_offset):
     }
 
 
-
 def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.1):
     """Extract workspace boundaries from mounting_surface collision geometry in URDF.
-    Supports both mesh and box primitive collision geometry.
+
+    Prefer the runtime's configured URDF file. This keeps construction independent
+    of ROS executor state and is especially important when multiple RobotController
+    instances are being assembled before their shared executor starts spinning.
+    The legacy /robot_description topic path remains as a compatibility fallback.
     """
     import xml.etree.ElementTree as ET
     import os
@@ -101,28 +104,45 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
 
     surface_thickness = 0.05
 
+    configured_robot_description = None
+    try:
+        import config
+
+        configured_urdf_path = str(getattr(config, 'URDF_PATH', '') or '').strip()
+        if configured_urdf_path and os.path.isfile(configured_urdf_path):
+            with open(configured_urdf_path, 'r', encoding='utf-8') as urdf_file:
+                configured_robot_description = urdf_file.read()
+            robot_controller.get_logger().info(
+                f"Workspace extraction using configured URDF: {configured_urdf_path}"
+            )
+    except Exception as exc:
+        robot_controller.get_logger().debug(
+            f"Could not read configured URDF for workspace extraction: {exc}"
+        )
+
     for attempt in range(max_retries):
         try:
-            robot_description = None
+            robot_description = configured_robot_description
 
-            try:
-                from rclpy.qos import QoSProfile, DurabilityPolicy
-                qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-                future_msg = None
+            if not robot_description:
+                try:
+                    from rclpy.qos import QoSProfile, DurabilityPolicy
+                    qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+                    future_msg = None
 
-                def desc_callback(msg):
-                    nonlocal future_msg
-                    future_msg = msg.data
+                    def desc_callback(msg):
+                        nonlocal future_msg
+                        future_msg = msg.data
 
-                sub = robot_controller.create_subscription(String, '/robot_description', desc_callback, qos)
-                wait_start = time.time()
-                while future_msg is None and (time.time() - wait_start) < retry_delay:
-                    import rclpy
-                    rclpy.spin_once(robot_controller, timeout_sec=0.05)
-                robot_controller.destroy_subscription(sub)
-                robot_description = future_msg
-            except Exception as e:
-                robot_controller.get_logger().debug(f"Could not subscribe to /robot_description: {e}")
+                    sub = robot_controller.create_subscription(String, '/robot_description', desc_callback, qos)
+                    wait_start = time.time()
+                    while future_msg is None and (time.time() - wait_start) < retry_delay:
+                        import rclpy
+                        rclpy.spin_once(robot_controller, timeout_sec=0.05)
+                    robot_controller.destroy_subscription(sub)
+                    robot_description = future_msg
+                except Exception as e:
+                    robot_controller.get_logger().debug(f"Could not subscribe to /robot_description: {e}")
 
             if not robot_description:
                 robot_controller.get_logger().info(
@@ -130,9 +150,8 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
-                else:
-                    robot_controller.get_logger().info("Using fallback workspace (robot_description not available)")
-                    return SAFETY_WORKSPACE_FALLBACK.copy()
+                robot_controller.get_logger().info("Using fallback workspace (robot_description not available)")
+                return SAFETY_WORKSPACE_FALLBACK.copy()
 
             root = ET.fromstring(robot_description)
             link_to_base_offset = _build_transform_to_base_link(root, 'mounting_surface')
@@ -140,7 +159,6 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
             for link in root.findall('.//link[@name="mounting_surface"]'):
                 all_collisions = link.findall('collision')
 
-                # ── Strategy 1: mesh geometry (original URDF) ─────────────────
                 for coll in all_collisions:
                     mesh_elem = coll.find('.//mesh')
                     if mesh_elem is None:
@@ -178,20 +196,15 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
                     except Exception as e:
                         robot_controller.get_logger().debug(f"Mesh load failed: {e}")
 
-                # ── Strategy 2: box primitives ────────────────────────────────
                 box_bounds = _bounds_from_boxes(all_collisions, link_to_base_offset)
                 if box_bounds is not None:
-                    # Use the actual plate top surface + 5mm margin for the floor wall.
-                    # surface_thickness was a hack for mesh-based extraction where only
-                    # z_min (bottom of feet) was known. With boxes we know the exact
-                    # plate top surface directly.
                     plate_top = box_bounds['plate_top_z']
                     workspace = {
                         'x_min': box_bounds['x_min'],
                         'x_max': box_bounds['x_max'],
                         'y_min': box_bounds['y_min'],
                         'y_max': box_bounds['y_max'],
-                        'z_min': plate_top + 0.005,  # 5mm above plate surface
+                        'z_min': plate_top + 0.005,
                         'z_max': SAFETY_WORKSPACE_FALLBACK['z_max'],
                     }
                     robot_controller.get_logger().info(
@@ -208,7 +221,8 @@ def _extract_workspace_from_urdf(robot_controller, max_retries=3, retry_delay=0.
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
                 continue
-            else:
-                robot_controller.get_logger().info(f"Using fallback workspace (URDF parsing failed: {e})")
+            robot_controller.get_logger().info(
+                f"Using fallback workspace (URDF parsing failed: {e})"
+            )
 
     return SAFETY_WORKSPACE_FALLBACK.copy()
