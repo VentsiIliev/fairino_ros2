@@ -68,7 +68,7 @@ def _master_offsets(
     y_span: float,
     z_span: float,
 ) -> list[tuple[float, float, float]]:
-    """Closed offset loop relative to Robot 1's live HOME TCP."""
+    """Closed offset loop relative to each robot's live HOME TCP."""
     return [
         (0.0, 0.0, 0.0),
         (+x_span, 0.0, 0.0),
@@ -87,16 +87,16 @@ def _master_offsets(
 def _path_from_offsets(
     home_xyz: list[float],
     offsets: list[tuple[float, float, float]],
-    *,
-    mirror_y: bool,
 ) -> list[list[float]]:
+    """Apply the same local-frame master offsets around one robot's HOME TCP.
+
+    The twin URDF already mounts Robot 2 opposite Robot 1. The physical/world
+    mirroring therefore comes from the robot base transforms; reflecting local
+    Y here would mirror the path twice and can create a different reachability
+    problem for Robot 2.
+    """
     x0, y0, z0 = home_xyz
-    path: list[list[float]] = []
-    for dx, dy, dz in offsets:
-        if mirror_y:
-            dy = -dy
-        path.append([x0 + dx, y0 + dy, z0 + dz])
-    return path
+    return [[x0 + dx, y0 + dy, z0 + dz] for dx, dy, dz in offsets]
 
 
 def _joint_positions(gateway) -> list[float]:
@@ -108,9 +108,9 @@ def _joint_positions(gateway) -> list[float]:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Mirrored looping Cartesian choreography for TwinLocalRuntime"
+        description="Twin looping Cartesian choreography using identical local paths"
     )
-    parser.add_argument("--cycles", type=int, default=4, help="number of complete mirrored path loops")
+    parser.add_argument("--cycles", type=int, default=4, help="number of complete path loops")
     parser.add_argument("--x-span", type=float, default=35.0, help="master path X excursion in mm")
     parser.add_argument("--y-span", type=float, default=45.0, help="master path Y excursion in mm")
     parser.add_argument("--z-span", type=float, default=20.0, help="master path Z excursion in mm")
@@ -160,7 +160,7 @@ def main() -> int:
     offsets = _master_offsets(args.x_span, args.y_span, args.z_span)
 
     print(
-        "Twin mirrored choreography from live HOME: "
+        "Twin choreography from live HOME with identical local paths: "
         f"cycles={args.cycles} waypoints={len(offsets)} "
         f"Xspan={args.x_span:.1f}mm Yspan={args.y_span:.1f}mm "
         f"Zspan={args.z_span:.1f}mm vel={args.vel:.1f}% acc={args.acc:.1f}%"
@@ -182,8 +182,8 @@ def main() -> int:
 
         try:
             # The twin fake hardware starts both arms with the same six-joint
-            # state. Robot 2's base is rotated 180 degrees in the URDF, so that
-            # shared joint state is already a symmetric HOME configuration.
+            # state. Robot 2's base is already rotated 180 degrees in the URDF,
+            # so identical local Cartesian paths appear mirrored in world space.
             home_q1 = _joint_positions(robot1)
             home_q2 = _joint_positions(robot2)
             home_pose1 = robot1.get_current_position()
@@ -208,24 +208,22 @@ def main() -> int:
             robot1_path = _path_from_offsets(
                 [float(v) for v in home_pose1[:3]],
                 offsets,
-                mirror_y=False,
             )
             robot2_path = _path_from_offsets(
                 [float(v) for v in home_pose2[:3]],
                 offsets,
-                mirror_y=True,
             )
 
             rx1, ry1, rz1 = [float(v) for v in home_pose1[3:6]]
             rx2, ry2, rz2 = [float(v) for v in home_pose2[3:6]]
 
-            print("\nRobot 1 master path / Robot 2 mirrored path:")
+            print("\nRobot 1 / Robot 2 identical local master paths:")
             for index, (p1, p2) in enumerate(zip(robot1_path, robot2_path)):
                 print(f"  {index:02d}: R1={p1}  R2={p2}")
 
-            print("\nStarting mirrored path loop. Ctrl+C stops both robots.")
+            print("\nStarting twin path loop. Ctrl+C stops both robots.")
             for cycle in range(1, args.cycles + 1):
-                print(f"\n===== MIRRORED LOOP {cycle}/{args.cycles} =====")
+                print(f"\n===== TWIN LOOP {cycle}/{args.cycles} =====")
                 r1, r2, separation = _run_pair(
                     lambda: robot1.execute_path(
                         robot1_path,
@@ -255,7 +253,7 @@ def main() -> int:
                     f"dispatch_separation={separation * 1000.0:.2f}ms"
                 )
                 if r1 != 0 or r2 != 0:
-                    print("FAIL: mirrored choreography stopped because a path returned an error")
+                    print("FAIL: twin choreography stopped because a path returned an error")
                     _stop_both(robots)
                     return 5
                 if args.pause:
@@ -265,7 +263,7 @@ def main() -> int:
             final_q2 = _joint_positions(robot2)
             print("\nFinal robot1 joints:", final_q1)
             print("Final robot2 joints:", final_q2)
-            print("PASS: mirrored twin choreography completed")
+            print("PASS: twin choreography completed")
             return 0
         except KeyboardInterrupt:
             print("\nInterrupted: stopping both robots")
