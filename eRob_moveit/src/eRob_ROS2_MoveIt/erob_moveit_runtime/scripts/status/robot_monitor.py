@@ -49,7 +49,11 @@ class RobotMonitor:
             'accelerations': np.zeros(6),
             'vel_magnitude': 0.0,
             'acc_magnitude': 0.0,
-            'cartesian': np.zeros(6),
+            # None means no Cartesian PoseStamped has been received yet.
+            # A six-zero array is a legitimate pose and must not be used as an
+            # availability sentinel because RobotController readiness checks
+            # distinguish unavailable state through prev_cartesian is None.
+            'cartesian': None,
             'cart_velocity': np.zeros(3),
             'cart_acceleration': np.zeros(3),
             'cart_vel_magnitude': 0.0,
