@@ -30,7 +30,9 @@ class RobotMonitor:
     ):
         """Initialize robot monitor."""
         self.node = ros_node
-        self.topic_prefix = self._normalize_topic_prefix(topic_prefix)
+        self.topic_prefix = self._normalize_topic_prefix(
+            topic_prefix or getattr(ros_node, "state_topic_prefix", "")
+        )
         self.stable_update_rate_hz = stable_update_rate_hz
         self.stable_update_callback = None
         self.last_stable_update_time = 0.0
