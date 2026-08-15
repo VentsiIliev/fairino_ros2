@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ament_index_python.packages import get_package_prefix
@@ -94,7 +95,7 @@ def _run_jog_isolation_test(robots, args) -> int:
     direction = _parse_direction(args.direction)
 
     print(
-        f"\nCommanding {args.robot}.jog(" 
+        f"\nCommanding {args.robot}.jog("
         f"axis={axis.name}, direction={direction.name}, step={args.step}, "
         f"vel={args.vel}, acc={args.acc})"
     )
@@ -150,14 +151,137 @@ def _run_jog_isolation_test(robots, args) -> int:
     return 0
 
 
+def _run_concurrent_jog_test(robots, args) -> int:
+    robot1 = robots.robot("robot1")
+    robot2 = robots.robot("robot2")
+
+    names1_before, pos1_before = _scoped_joint_positions(robot1)
+    names2_before, pos2_before = _scoped_joint_positions(robot2)
+
+    axis1 = RobotAxis.get_by_string(args.axis)
+    axis2 = RobotAxis.get_by_string(args.axis2)
+    dir1 = _parse_direction(args.direction)
+    dir2 = _parse_direction(args.direction2)
+
+    print("\nBEFORE CONCURRENT JOG")
+    print("robot1", names1_before, pos1_before)
+    print("robot2", names2_before, pos2_before)
+    print(
+        "\nStarting concurrent jogs:\n"
+        f"  robot1 axis={axis1.name} direction={dir1.name} step={args.step} "
+        f"vel={args.vel} acc={args.acc}\n"
+        f"  robot2 axis={axis2.name} direction={dir2.name} step={args.step2} "
+        f"vel={args.vel2} acc={args.acc2}"
+    )
+
+    start_gate = __import__("threading").Barrier(3)
+
+    def run_one(gateway, axis, direction, step, vel, acc):
+        start_gate.wait()
+        started_at = time.monotonic()
+        result = gateway.jog(axis, direction, step, vel, acc)
+        returned_at = time.monotonic()
+        return result, started_at, returned_at
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future1 = pool.submit(
+            run_one,
+            robot1,
+            axis1,
+            dir1,
+            float(args.step),
+            float(args.vel),
+            float(args.acc),
+        )
+        future2 = pool.submit(
+            run_one,
+            robot2,
+            axis2,
+            dir2,
+            float(args.step2),
+            float(args.vel2),
+            float(args.acc2),
+        )
+        start_gate.wait()
+        result1, start1, return1 = future1.result(timeout=args.timeout)
+        result2, start2, return2 = future2.result(timeout=args.timeout)
+
+    print("robot1 jog result:", result1)
+    print("robot2 jog result:", result2)
+    print(f"dispatch start separation: {abs(start1 - start2):.6f}s")
+    print(f"gateway return separation: {abs(return1 - return2):.6f}s")
+
+    if int(result1) != 0 or int(result2) != 0:
+        print("FAIL: one or both concurrent jog commands returned non-zero")
+        return 10
+
+    idle_deadline = time.monotonic() + max(0.0, float(args.timeout))
+    while time.monotonic() < idle_deadline:
+        exec1 = bool(getattr(robot1.node, "is_executing", False))
+        exec2 = bool(getattr(robot2.node, "is_executing", False))
+        if not exec1 and not exec2:
+            break
+        time.sleep(0.05)
+    else:
+        print("FAIL: one or both robots remained executing past timeout")
+        return 11
+
+    time.sleep(0.25)
+
+    names1_after, pos1_after = _scoped_joint_positions(robot1)
+    names2_after, pos2_after = _scoped_joint_positions(robot2)
+    delta1 = _max_delta(pos1_before, pos1_after)
+    delta2 = _max_delta(pos2_before, pos2_after)
+
+    print("\nAFTER CONCURRENT JOG")
+    print("robot1", names1_after, pos1_after)
+    print("robot2", names2_after, pos2_after)
+    print(f"robot1 max joint delta: {delta1:.9f} rad")
+    print(f"robot2 max joint delta: {delta2:.9f} rad")
+
+    if names1_before != names1_after:
+        print("FAIL: robot1 joint-name set changed")
+        return 12
+    if names2_before != names2_after:
+        print("FAIL: robot2 joint-name set changed")
+        return 13
+    if delta1 <= args.changed_epsilon:
+        print("FAIL: robot1 joint state did not change")
+        return 14
+    if delta2 <= args.changed_epsilon:
+        print("FAIL: robot2 joint state did not change")
+        return 15
+
+    expected1 = list(robot1.node.robot_context.joint_names)
+    expected2 = list(robot2.node.robot_context.joint_names)
+    if names1_after != expected1:
+        print("FAIL: robot1 state contains joints outside robot1 runtime context")
+        return 16
+    if names2_after != expected2:
+        print("FAIL: robot2 state contains joints outside robot2 runtime context")
+        return 17
+    if set(names1_after) & set(names2_after):
+        print("FAIL: robot runtime joint-name sets overlap")
+        return 18
+
+    print("PASS: both robots moved concurrently with independent scoped joint state")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="TwinLocalRuntime readiness and robot-isolation test"
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--jog",
         action="store_true",
         help="perform one explicit planned jog after readiness checks",
+    )
+    mode.add_argument(
+        "--concurrent-jog",
+        action="store_true",
+        help="jog robot1 and robot2 concurrently and verify both scoped states",
     )
     parser.add_argument("--robot", choices=("robot1", "robot2"), default="robot1")
     parser.add_argument("--axis", choices=("x", "y", "z", "rx", "ry", "rz"), default="x")
@@ -166,10 +290,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step",
         type=float,
         default=5.0,
-        help="planned jog step (mm for XYZ, deg for RX/RY/RZ)",
+        help="robot1/single planned jog step (mm for XYZ, deg for RX/RY/RZ)",
     )
     parser.add_argument("--vel", type=float, default=10.0)
     parser.add_argument("--acc", type=float, default=10.0)
+    parser.add_argument("--axis2", choices=("x", "y", "z", "rx", "ry", "rz"), default="x")
+    parser.add_argument("--direction2", default="+")
+    parser.add_argument("--step2", type=float, default=5.0)
+    parser.add_argument("--vel2", type=float, default=10.0)
+    parser.add_argument("--acc2", type=float, default=10.0)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--changed-epsilon", type=float, default=1e-6)
     parser.add_argument("--unchanged-tolerance", type=float, default=1e-7)
@@ -193,11 +322,13 @@ def main() -> int:
 
         _print_runtime_summary(robots)
 
-        if not args.jog:
-            print("\nPASS: twin runtime ready (read-only test)")
-            return 0
+        if args.concurrent_jog:
+            return _run_concurrent_jog_test(robots, args)
+        if args.jog:
+            return _run_jog_isolation_test(robots, args)
 
-        return _run_jog_isolation_test(robots, args)
+        print("\nPASS: twin runtime ready (read-only test)")
+        return 0
 
 
 if __name__ == "__main__":
