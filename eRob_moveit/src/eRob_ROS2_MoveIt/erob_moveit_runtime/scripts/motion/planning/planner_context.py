@@ -20,6 +20,9 @@ class PlannerContext:
         self._node = node
         self.robot_context = getattr(node, "robot_context", None)
         self._state_store = state_store
+        bind_robot_context = getattr(self._state_store, "bind_robot_context", None)
+        if callable(bind_robot_context):
+            bind_robot_context(self.robot_context)
         self._motion = motion_coordinator
         self.motion_queue = motion_queue
         self.safety_manager = safety_manager
