@@ -3,6 +3,7 @@
 
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 
 import numpy as np
 
@@ -100,7 +101,7 @@ def _log_joint_path_geometry_from_snapshot(logger, positions, joint_names, label
         for i, name in enumerate(joint_names)
     )
     logger.info(
-        f"[{label}_PATH_DIAG] points={len(points)} joints={len(joint_names)} "
+        f"[{label}_PATH_DIAG] points={len(positions)} joints={len(joint_names)} "
         f"near_duplicate_segments={len(duplicate_indexes)} {per_joint}"
     )
 
@@ -112,9 +113,6 @@ def _log_joint_path_geometry_from_snapshot(logger, positions, joint_names, label
             f"epsilon={duplicate_eps:.1e}rad"
         )
 
-    # TOTG's '180 degree turn' is a geometric reversal of two adjacent path
-    # segments in N-dimensional joint space.  Calculate the cosine between
-    # d(q[i-1],q[i]) and d(q[i],q[i+1]); -1 means an exact 180 degree turn.
     candidates = []
     for middle in range(1, len(positions) - 1):
         d_prev = steps[middle - 1]
@@ -151,6 +149,99 @@ def _log_joint_path_geometry_from_snapshot(logger, positions, joint_names, label
         )
 
 
+def _project_optimizer_result_to_requested_joints(robot_controller, result, requested_joint_names, label):
+    """Keep optimizer output scoped to the exact joints supplied by the caller.
+
+    MoveIt timing helpers may operate on a larger model group (for example a
+    twin-arm ``dual_arms`` group) and return extra joints.  Execution must never
+    inherit those extra joints: Robot 1 and Robot 2 controllers each own only
+    their respective six joints.
+    """
+    if result is None:
+        return None
+
+    requested_joint_names = list(requested_joint_names or [])
+    if not requested_joint_names:
+        return result
+
+    joint_trajectory = getattr(result, "joint_trajectory", None)
+    returned_joint_names = list(getattr(joint_trajectory, "joint_names", []) or [])
+    if not returned_joint_names:
+        return result
+
+    if returned_joint_names == requested_joint_names:
+        return result
+
+    index_by_name = {
+        name: index
+        for index, name in enumerate(returned_joint_names)
+    }
+    missing = [
+        name
+        for name in requested_joint_names
+        if name not in index_by_name
+    ]
+    if missing:
+        logger = getattr(robot_controller, "get_logger", lambda: None)()
+        if logger is not None:
+            logger.error(
+                f"[{label}] Optimizer response missing requested joints: {missing}; "
+                f"returned={returned_joint_names}"
+            )
+        return None
+
+    indexes = [index_by_name[name] for name in requested_joint_names]
+    projected = deepcopy(result)
+    projected_trajectory = projected.joint_trajectory
+    projected_trajectory.joint_names = list(requested_joint_names)
+
+    for point in projected_trajectory.points:
+        for field_name in ("positions", "velocities", "accelerations", "effort"):
+            values = list(getattr(point, field_name, []) or [])
+            if not values:
+                continue
+            if len(values) != len(returned_joint_names):
+                logger = getattr(robot_controller, "get_logger", lambda: None)()
+                if logger is not None:
+                    logger.error(
+                        f"[{label}] Optimizer response has malformed {field_name}: "
+                        f"got={len(values)} joints={len(returned_joint_names)}"
+                    )
+                return None
+            setattr(
+                point,
+                field_name,
+                [values[index] for index in indexes],
+            )
+
+    logger = getattr(robot_controller, "get_logger", lambda: None)()
+    if logger is not None:
+        logger.warning(
+            f"[{label}] Scoped optimizer response from {len(returned_joint_names)} joints "
+            f"to active joints {requested_joint_names}"
+        )
+
+    return projected
+
+
+def _scoped_optimizer_callback(robot_controller, trajectory, callback, label):
+    requested_joint_names = list(
+        getattr(getattr(trajectory, "joint_trajectory", None), "joint_names", [])
+        or []
+    )
+
+    def _on_done(result):
+        scoped_result = _project_optimizer_result_to_requested_joints(
+            robot_controller,
+            result,
+            requested_joint_names,
+            label,
+        )
+        callback(scoped_result)
+
+    return _on_done
+
+
 class ITrajectoryOptimizer(ABC):
     @abstractmethod
     def optimize(self, robot_controller, trajectory, vel_scaling, acc_scaling, callback):
@@ -167,7 +258,13 @@ class TotgTrajectoryOptimizer(ITrajectoryOptimizer):
         if apply_fn is None:
             from .trajectory_optimization import apply_ipp_totg
             apply_fn = apply_ipp_totg
-        apply_fn(robot_controller, trajectory, vel_scaling, acc_scaling, callback)
+        apply_fn(
+            robot_controller,
+            trajectory,
+            vel_scaling,
+            acc_scaling,
+            _scoped_optimizer_callback(robot_controller, trajectory, callback, "TOTG"),
+        )
 
 
 class RuckigTrajectoryOptimizer(ITrajectoryOptimizer):
@@ -179,7 +276,13 @@ class RuckigTrajectoryOptimizer(ITrajectoryOptimizer):
         if apply_fn is None:
             from .trajectory_optimization import apply_ruckig_service
             apply_fn = apply_ruckig_service
-        apply_fn(robot_controller, trajectory, vel_scaling, acc_scaling, callback)
+        apply_fn(
+            robot_controller,
+            trajectory,
+            vel_scaling,
+            acc_scaling,
+            _scoped_optimizer_callback(robot_controller, trajectory, callback, "Ruckig"),
+        )
 
 
 def build_trajectory_optimizer(name, node, fallback_name=None):
