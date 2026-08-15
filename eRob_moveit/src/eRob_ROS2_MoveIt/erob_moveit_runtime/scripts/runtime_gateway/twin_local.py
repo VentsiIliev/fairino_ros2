@@ -53,12 +53,18 @@ class TwinLocalRuntime:
         self._controllers = []
         self._gateways = {}
 
-        wo_params = list(getattr(config, "DEFAULT_WORKOBJECT", [0, 0, 0, 0, 0, 0]))
-        work_object = WorkObject(*wo_params) if any(value != 0 for value in wo_params) else None
+        wo_params = list(
+            getattr(config, "DEFAULT_WORKOBJECT", [0, 0, 0, 0, 0, 0])
+        )
 
         for robot_name in names:
             context = RobotRuntimeContext.from_config(robot_name)
             topic_prefix = f"/{context.name}"
+            work_object = (
+                WorkObject(*wo_params)
+                if any(value != 0 for value in wo_params)
+                else None
+            )
 
             state_publisher = RobotScopedStatePublisher(
                 context,
@@ -128,10 +134,16 @@ class TwinLocalRuntime:
         self.start()
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         while time.monotonic() < deadline:
-            if all(gateway.is_motion_stack_ready() for gateway in self._gateways.values()):
+            if all(
+                gateway.is_motion_stack_ready()
+                for gateway in self._gateways.values()
+            ):
                 return True
             time.sleep(0.05)
-        return all(gateway.is_motion_stack_ready() for gateway in self._gateways.values())
+        return all(
+            gateway.is_motion_stack_ready()
+            for gateway in self._gateways.values()
+        )
 
     def readiness(self) -> dict:
         return {
