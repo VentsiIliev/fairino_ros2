@@ -32,6 +32,7 @@ install(PROGRAMS
   scripts/zeroerr_error_monitor.py
   scripts/zeroerr_drive_diagnostics.py
   scripts/zeroerr_runtime.py
+  scripts/twin_test.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
