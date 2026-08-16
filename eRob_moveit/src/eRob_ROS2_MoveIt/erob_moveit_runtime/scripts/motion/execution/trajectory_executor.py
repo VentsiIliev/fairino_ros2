@@ -2,11 +2,34 @@ from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
 from builtin_interfaces.msg import Duration
 from copy import deepcopy
+from dataclasses import dataclass
 import math
 import time
 import config
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+
+@dataclass
+class PreparedControllerGoal:
+    """Fully built controller goal awaiting submission.
+
+    Produced by ``TrajectoryExecutor.prepare_controller_goal()`` and consumed by
+    ``TrajectoryExecutor.send_prepared_controller_goal()``. Decouples trajectory
+    preparation (validation, mutation, goal construction) from controller
+    submission so prepared goals can be held and released together for
+    synchronized execution.
+    """
+
+    goal: "FollowJointTrajectory.Goal"
+    trajectory: JointTrajectory
+    unwind_check: dict | None = None
+    suppress_drive_disable_cancel: bool = False
+    preserve_explicit_wrap: bool = False
+    start_positions: tuple[float, ...] = ()
+    end_positions: tuple[float, ...] = ()
+    duration_s: float = 0.0
+    goal_time_tolerance_s: float = 0.0
 
 
 class TrajectoryExecutor:
@@ -25,6 +48,7 @@ class TrajectoryExecutor:
         self._queue = motion_queue
         self._controller_client = controller_client
         self._last_sent_trajectory = None
+        self._dispatch_capture_hook = None
         self._active_goal_started_monotonic = None
         self._goal_sequence = 0
         self._active_goal_sequence = None
@@ -73,6 +97,55 @@ class TrajectoryExecutor:
 
         first_point.velocities = [0.0] * len(ordered_positions)
         first_point.accelerations = [0.0] * len(ordered_positions)
+
+    def _verify_prepared_start_exact(self, joint_trajectory):
+        """Verify the live joint state matches the first trajectory point.
+
+        Fails (returning False and recording the mismatch) when the live joint
+        state deviates from the cached first point by more than
+        ``EXECUTOR_PREPARED_START_TOL_RAD``. The cached trajectory is left
+        untouched so choreography playback is deterministic.
+        """
+        if not joint_trajectory.points:
+            self._node.get_logger().error('[Controller] ✗ require_exact: empty trajectory')
+            self._motion.last_move_result = config.MOTION_ERROR_PREPARED_START_MISMATCH
+            return False
+
+        actual = self._get_latest_joint_state_in_trajectory_order(
+            joint_trajectory.joint_names
+        )
+        if actual is None:
+            self._node.get_logger().error(
+                '[Controller] ✗ require_exact: live joint state unavailable'
+            )
+            self._motion.last_move_result = config.MOTION_ERROR_PREPARED_START_MISMATCH
+            return False
+
+        expected = list(joint_trajectory.points[0].positions)
+        tolerance = float(
+            getattr(config, 'EXECUTOR_PREPARED_START_TOL_RAD', 0.01)
+        )
+        if len(actual) != len(expected):
+            self._node.get_logger().error(
+                '[Controller] ✗ require_exact: joint count mismatch '
+                f'(live={len(actual)} expected={len(expected)})'
+            )
+            self._motion.last_move_result = config.MOTION_ERROR_PREPARED_START_MISMATCH
+            return False
+
+        max_error = max(abs(a - e) for a, e in zip(actual, expected))
+        if max_error > tolerance:
+            self._node.get_logger().error(
+                '[Controller] ✗ require_exact: start mismatch '
+                f'{max_error:.6f} rad > {tolerance} rad'
+            )
+            self._motion.last_move_result = config.MOTION_ERROR_PREPARED_START_MISMATCH
+            return False
+
+        self._node.get_logger().info(
+            f'[Controller] require_exact: start verified (max error {max_error:.6f} rad)'
+        )
+        return True
 
     @staticmethod
     def _duration_to_sec(duration_msg):
@@ -1374,62 +1447,44 @@ class TrajectoryExecutor:
             self._queue.mark_current_complete(result)
         return result
 
-    def send_trajectory_to_controller(
+    def prepare_controller_goal(
         self,
         joint_trajectory,
+        *,
         preserve_explicit_wrap=False,
         unwind_check=None,
         suppress_drive_disable_cancel=False,
+        start_policy="live_anchor",
     ):
-        """Send trajectory directly to the low-level controller for smooth execution."""
+        """Validate, mutate and build a controller goal without submitting it.
+
+        Returns a :class:`PreparedControllerGoal` (or None on failure) that can
+        be submitted later via :meth:`send_prepared_controller_goal`. No drive
+        check, execution lock, or controller server contact happens here, so
+        preparation is safe to run while another robot is still planning.
+
+        ``start_policy``:
+          - ``live_anchor`` (default): overwrite the first point with the latest
+            live joint state and apply the normal continuity mutations.
+          - ``require_exact``: leave the cached trajectory untouched and require
+            the live joint state to match the first point within
+            ``EXECUTOR_PREPARED_START_TOL_RAD``. Used for deterministic
+            choreography playback of a previously prepared trajectory.
+        """
+        if start_policy not in ("live_anchor", "require_exact"):
+            raise ValueError(f'[Controller] Unsupported start_policy: {start_policy!r}')
+
         controller_prepare_started_at = time.perf_counter()
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "controller_prepare_start", points=len(getattr(joint_trajectory, "points", []) or []))
         except Exception:
             pass
-        drive_check_started_at = time.perf_counter()
-        if not self._ensure_drive_enabled_before_trajectory(
-            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
-        ):
-            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
-            with self._motion.lock:
-                self._motion.is_executing = False
-            return
-        try:
-            from motion.move_linear_timing import mark as mark_move_linear_timing
-            mark_move_linear_timing(self._node, "drive_check_done", duration_s=time.perf_counter() - drive_check_started_at)
-        except Exception:
-            pass
-
-        if not self._motion.execution_lock.acquire(blocking=False):
-            self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
-            self._motion.last_move_result = -1
-            return
-
-        controller_server_wait_started_at = time.perf_counter()
-        if not self._controller_client.wait_for_server(timeout_sec=1.0):
-            self._node.get_logger().error(
-                f'[Controller] {self._controller_name} not available'
-            )
-            self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
-            return
-        try:
-            from motion.move_linear_timing import mark as mark_move_linear_timing
-            mark_move_linear_timing(self._node, "controller_server_ready", duration_s=time.perf_counter() - controller_server_wait_started_at)
-        except Exception:
-            pass
 
         if len(joint_trajectory.points) == 0:
             self._node.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
             self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
-            return
+            return None
 
         has_valid_timestamps = any(
             pt.time_from_start.sec > 0 or pt.time_from_start.nanosec > 0
@@ -1438,16 +1493,21 @@ class TrajectoryExecutor:
         if not has_valid_timestamps:
             self._node.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
             self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
-            return
+            return None
 
         trajectory_mutation_started_at = time.perf_counter()
-        self._overwrite_first_point_with_live_state(joint_trajectory)
-        if not preserve_explicit_wrap:
-            self._unwrap_joint6_continuity(joint_trajectory)
-        self._soften_trajectory_start(joint_trajectory)
+        if start_policy == "require_exact":
+            if not self._verify_prepared_start_exact(joint_trajectory):
+                self._node.get_logger().error(
+                    '[PREPARED_EXEC] rejected before dispatch: '
+                    'require_exact start mismatch — no controller goal created'
+                )
+                return None
+        else:
+            self._overwrite_first_point_with_live_state(joint_trajectory)
+            if not preserve_explicit_wrap:
+                self._unwrap_joint6_continuity(joint_trajectory)
+            self._soften_trajectory_start(joint_trajectory)
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "trajectory_mutation_done", duration_s=time.perf_counter() - trajectory_mutation_started_at)
@@ -1456,9 +1516,6 @@ class TrajectoryExecutor:
         log_drive_state = getattr(self._node, 'log_drive_state_before_first_motion', None)
         if callable(log_drive_state):
             log_drive_state()
-
-        with self._motion.lock:
-            self._motion.is_executing = True
 
         goal_build_started_at = time.perf_counter()
         goal_tolerance = []
@@ -1482,20 +1539,6 @@ class TrajectoryExecutor:
         controller_goal.trajectory = joint_trajectory
         controller_goal.path_tolerance = path_tolerance
         controller_goal.goal_tolerance = goal_tolerance
-        self._last_sent_trajectory = deepcopy(joint_trajectory)
-        self._active_unwind_check = None
-        self._active_trajectory_cancel_reason = None
-        self._active_drive_cancel_suppressed = bool(suppress_drive_disable_cancel)
-        self._active_drive_disabled_since = None
-        self._active_drive_disabled_samples = 0
-        self._active_drive_disabled_reason = None
-        self._unwind_cancel_reason = None
-        if unwind_check is not None:
-            copied_check = dict(unwind_check)
-            copied_check['joint_names'] = list(joint_trajectory.joint_names)
-            copied_check.pop('trajectory', None)
-            self._active_unwind_check = copied_check
-            self._log_unwind_diagnostics('submit', joint_trajectory, copied_check)
 
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
@@ -1503,42 +1546,131 @@ class TrajectoryExecutor:
         except Exception:
             pass
 
-        if len(joint_trajectory.points) > 0:
-            last_point = joint_trajectory.points[-1]
-            traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
-            time_tolerance_sec = max(config.EXECUTOR_TIME_MIN_S, traj_duration_sec * config.EXECUTOR_TIME_MULTIPLIER)
+        last_point = joint_trajectory.points[-1]
+        traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
+        time_tolerance_sec = max(config.EXECUTOR_TIME_MIN_S, traj_duration_sec * config.EXECUTOR_TIME_MULTIPLIER)
 
-            self._node.get_logger().info(
-                f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
-            self._node.get_logger().info(
-                f'[Controller] First point positions: {[round(p, 6) for p in joint_trajectory.points[0].positions]}')
-            self._node.get_logger().info(
-                f'[Controller] Last point positions: {[round(p, 6) for p in last_point.positions]}')
-            self._node.get_logger().info(
-                f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
-            self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
-            # self._log_planned_trajectory_metrics(joint_trajectory)
-            # self._log_final_trajectory_segment(joint_trajectory)
-        else:
-            time_tolerance_sec = config.EXECUTOR_TIME_MIN_S
+        self._node.get_logger().info(
+            f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
+        self._node.get_logger().info(
+            f'[Controller] First point positions: {[round(p, 6) for p in joint_trajectory.points[0].positions]}')
+        self._node.get_logger().info(
+            f'[Controller] Last point positions: {[round(p, 6) for p in last_point.positions]}')
+        self._node.get_logger().info(
+            f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
+        self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+        # self._log_planned_trajectory_metrics(joint_trajectory)
+        # self._log_final_trajectory_segment(joint_trajectory)
 
         controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
         controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
 
-        self._node.get_logger().info(
-            f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
-            f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
-            f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "controller_prepare_done", duration_s=time.perf_counter() - controller_prepare_started_at)
         except Exception:
             pass
 
-        goal_sequence = self._next_goal_sequence()
-        self._active_goal_sequence = goal_sequence
+        first_point = joint_trajectory.points[0]
+        return PreparedControllerGoal(
+            goal=controller_goal,
+            trajectory=joint_trajectory,
+            unwind_check=unwind_check,
+            suppress_drive_disable_cancel=bool(suppress_drive_disable_cancel),
+            preserve_explicit_wrap=bool(preserve_explicit_wrap),
+            start_positions=tuple(float(v) for v in first_point.positions),
+            end_positions=tuple(float(v) for v in last_point.positions),
+            duration_s=float(traj_duration_sec),
+            goal_time_tolerance_s=float(time_tolerance_sec),
+        )
+
+    def ready_for_dispatch(self, prepared):
+        """Phase A: perform every pre-send execution gate and state setup.
+
+        Runs the drive-readiness check, acquires the execution lock, waits for
+        the controller action server, and installs the active-trajectory state
+        — everything that does NOT depend on the shared start stamp. After a
+        successful call the executor is "gates-ready": the caller must follow
+        up with exactly one :meth:`send_prepared_goal` (standalone or
+        synchronized) or release the gates via :meth:`clear_execution_gates`.
+        Returns True on success; on failure it records ``last_move_result`` and
+        returns False.
+        """
+        drive_check_started_at = time.perf_counter()
+        if not self._ensure_drive_enabled_before_trajectory(
+            suppress_drive_disable_cancel=prepared.suppress_drive_disable_cancel,
+        ):
+            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
+            with self._motion.lock:
+                self._motion.is_executing = False
+            return False
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "drive_check_done", duration_s=time.perf_counter() - drive_check_started_at)
+        except Exception:
+            pass
+
+        if not self._motion.execution_lock.acquire(blocking=False):
+            self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
+            self._motion.last_move_result = -1
+            return False
+
+        controller_server_wait_started_at = time.perf_counter()
+        if not self._controller_client.wait_for_server(timeout_sec=1.0):
+            self._node.get_logger().error(
+                f'[Controller] {self._controller_name} not available'
+            )
+            self._motion.last_move_result = -1
+            with self._motion.lock:
+                self._motion.is_executing = False
+            self._motion.execution_lock.release()
+            return False
+        try:
+            from motion.move_linear_timing import mark as mark_move_linear_timing
+            mark_move_linear_timing(self._node, "controller_server_ready", duration_s=time.perf_counter() - controller_server_wait_started_at)
+        except Exception:
+            pass
+
+        joint_trajectory = prepared.trajectory
+
+        with self._motion.lock:
+            self._motion.is_executing = True
+
+        self._last_sent_trajectory = deepcopy(joint_trajectory)
+        self._active_unwind_check = None
+        self._active_trajectory_cancel_reason = None
+        self._active_drive_cancel_suppressed = bool(prepared.suppress_drive_disable_cancel)
+        self._active_drive_disabled_since = None
+        self._active_drive_disabled_samples = 0
+        self._active_drive_disabled_reason = None
+        self._unwind_cancel_reason = None
+        if prepared.unwind_check is not None:
+            copied_check = dict(prepared.unwind_check)
+            copied_check['joint_names'] = list(joint_trajectory.joint_names)
+            copied_check.pop('trajectory', None)
+            self._active_unwind_check = copied_check
+            self._log_unwind_diagnostics('submit', joint_trajectory, copied_check)
+
+        self._node.get_logger().info(
+            f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
+            f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
+            f'goal_time_tolerance={prepared.goal_time_tolerance_s:.1f}s)')
+
+        self._active_goal_sequence = self._next_goal_sequence()
         self._active_goal_is_stop = False
         self._active_goal_started_monotonic = None
+        return True
+
+    def send_prepared_goal(self, prepared, *, start_time=None):
+        """Phase B: timing-critical submission of a gates-ready controller goal.
+
+        Assumes :meth:`ready_for_dispatch` already succeeded for this prepared
+        goal. Only the header-stamp assignment and the action-goal submission
+        happen here, so synchronized callers can run this for every entity as
+        tightly together as practical against one shared ``start_time``.
+        """
+        joint_trajectory = prepared.trajectory
+        goal_sequence = self._active_goal_sequence
 
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
@@ -1546,12 +1678,17 @@ class TrajectoryExecutor:
                 self._node,
                 "goal_send",
                 points=len(joint_trajectory.points),
-                goal_time_tolerance_s=float(time_tolerance_sec),
+                goal_time_tolerance_s=float(prepared.goal_time_tolerance_s),
             )
         except Exception:
             pass
-        controller_goal.trajectory.header.stamp = self._node.get_clock().now().to_msg()
-        future = self._controller_client.send_goal_async(controller_goal)
+
+        if start_time is None:
+            start_time = self._node.get_clock().now().to_msg()
+        prepared.goal.trajectory.header.stamp = start_time
+        self._goal_acceptance_seen = False
+        self._goal_rejection_seen = False
+        future = self._controller_client.send_goal_async(prepared.goal)
         self._motion.active_execute_send_future = future
         future.add_done_callback(
             lambda done_future, sequence=goal_sequence: self._on_controller_goal_response(
@@ -1559,6 +1696,82 @@ class TrajectoryExecutor:
                 sequence,
             )
         )
+
+    def clear_execution_gates(self):
+        """Release a gates-ready execution state without submitting a goal.
+
+        Called when an entity passed :meth:`ready_for_dispatch` but its goal is
+        never submitted (for example because a sibling failed to become ready).
+        """
+        with self._motion.lock:
+            self._motion.is_executing = False
+        if self._motion.execution_lock.locked():
+            self._motion.execution_lock.release()
+
+    def send_prepared_controller_goal(self, prepared, *, start_time=None):
+        """Submit an already-prepared controller goal to the controller action server.
+
+        Convenience wrapper used by standalone ``execute_prepared``: performs
+        the execution-time gates (:meth:`ready_for_dispatch`) and then submits
+        the goal (:meth:`send_prepared_goal`). Synchronized multi-entity
+        callers instead split the two phases so all gates complete before a
+        shared start stamp is chosen.
+
+        If ``start_time`` is None the trajectory header stamp is set to the
+        current clock time, preserving existing behavior. Callers may pass a
+        shared future time to synchronize multiple robots against one timeline.
+        """
+        if not self.ready_for_dispatch(prepared):
+            return
+        try:
+            self.send_prepared_goal(prepared, start_time=start_time)
+        except Exception:
+            self.clear_execution_gates()
+            raise
+
+    def set_dispatch_capture_hook(self, callback):
+        """Install a one-shot dispatch capture hook.
+
+        When a hook is installed, the next ``send_trajectory_to_controller``
+        call invokes ``callback(joint_trajectory, kwargs)`` with the final
+        planned ``JointTrajectory`` instead of dispatching to the controller,
+        then automatically clears the hook. Used for offline planning
+        (``prepare_path``) so the full validated/optimized trajectory can be
+        captured without contacting the trajectory controller.
+        """
+        self._dispatch_capture_hook = callback
+
+    def clear_dispatch_capture_hook(self):
+        self._dispatch_capture_hook = None
+
+    def send_trajectory_to_controller(
+        self,
+        joint_trajectory,
+        preserve_explicit_wrap=False,
+        unwind_check=None,
+        suppress_drive_disable_cancel=False,
+    ):
+        """Send trajectory directly to the low-level controller for smooth execution."""
+        hook = self._dispatch_capture_hook
+        if hook is not None:
+            self._dispatch_capture_hook = None
+            kwargs = {
+                'preserve_explicit_wrap': preserve_explicit_wrap,
+                'unwind_check': unwind_check,
+                'suppress_drive_disable_cancel': suppress_drive_disable_cancel,
+            }
+            hook(joint_trajectory, kwargs)
+            return
+        prepared = self.prepare_controller_goal(
+            joint_trajectory,
+            preserve_explicit_wrap=preserve_explicit_wrap,
+            unwind_check=unwind_check,
+            suppress_drive_disable_cancel=suppress_drive_disable_cancel,
+            start_policy="live_anchor",
+        )
+        if prepared is None:
+            return
+        return self.send_prepared_controller_goal(prepared)
 
     def process_next_queued_task(self):
         task = self._queue.get_next_task()
@@ -1595,6 +1808,8 @@ class TrajectoryExecutor:
                 self._node.get_logger().error(
                     f'[Controller] Trajectory execution rejected by {self._controller_name}'
                 )
+                self._goal_rejection_seen = True
+                self._motion.last_move_result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
                 self._motion.active_controller_goal = None
                 self._active_goal_sequence = None
                 self._active_goal_started_monotonic = None
@@ -1615,6 +1830,7 @@ class TrajectoryExecutor:
                 f'[Controller] Trajectory accepted by {self._controller_name}'
             )
             self._motion.active_controller_goal = goal_handle
+            self._goal_acceptance_seen = True
             self._active_goal_started_monotonic = time.monotonic()
             if self._active_drive_cancel_suppressed:
                 self._node.get_logger().info(

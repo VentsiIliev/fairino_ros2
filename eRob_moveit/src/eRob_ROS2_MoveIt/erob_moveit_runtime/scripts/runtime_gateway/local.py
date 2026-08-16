@@ -290,6 +290,38 @@ class LocalRuntimeGateway(RuntimeGateway):
             blocking=blocking,
         )
 
+    def prepare_path(
+        self,
+        path,
+        rx=None,
+        ry=None,
+        rz=None,
+        vel=0.6,
+        acc=0.4,
+        trajectory_optimizer=None,
+        orientation_mode="constant",
+        timeout_s=None,
+    ):
+        return self.robot.prepare_path(
+            path,
+            rx=rx,
+            ry=ry,
+            rz=rz,
+            vel=vel,
+            acc=acc,
+            trajectory_optimizer=trajectory_optimizer,
+            orientation_mode=orientation_mode,
+            timeout_s=timeout_s,
+        )
+
+    def execute_prepared(self, prepared, blocking=True, start_time=None, start_policy="live_anchor") -> int:
+        return self.robot.execute_prepared(
+            prepared,
+            blocking=blocking,
+            start_time=start_time,
+            start_policy=start_policy,
+        )
+
     def execute_ordered_motion_chain(
         self,
         segments,

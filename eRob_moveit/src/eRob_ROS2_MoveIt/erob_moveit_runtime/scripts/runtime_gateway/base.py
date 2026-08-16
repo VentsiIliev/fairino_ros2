@@ -126,6 +126,33 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def prepare_path(
+        self,
+        path: list[Any],
+        rx: float | None = None,
+        ry: float | None = None,
+        rz: float | None = None,
+        vel: float = 0.6,
+        acc: float = 0.4,
+        trajectory_optimizer: str | None = None,
+        orientation_mode: str = "constant",
+        timeout_s: float | None = None,
+    ) -> Any:
+        """Offline planning; returns a PreparedTrajectory or negative error code."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_prepared(
+        self,
+        prepared: Any,
+        blocking: bool = True,
+        start_time: Any | None = None,
+        start_policy: str = "live_anchor",
+    ) -> int:
+        """Execute a previously prepared trajectory (optionally at start_time)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def execute_ordered_motion_chain(
         self,
         segments: list[Any],

@@ -34,6 +34,23 @@ class IRobotBackend(ABC):
     def execute_sequence(self, segments, tool=0, user=0, blocking=True): ...
 
     @abstractmethod
+    def prepare_path(
+        self,
+        path,
+        rx=None,
+        ry=None,
+        rz=None,
+        vel=0.6,
+        acc=0.4,
+        trajectory_optimizer=None,
+        orientation_mode="constant",
+        timeout_s=None,
+    ): ...
+
+    @abstractmethod
+    def execute_prepared(self, prepared, blocking=True, start_time=None, start_policy="live_anchor"): ...
+
+    @abstractmethod
     def execute_ordered_motion_chain(self, segments, tool=0, user=0, blocking=True, trajectory_optimizer=None): ...
 
     @abstractmethod

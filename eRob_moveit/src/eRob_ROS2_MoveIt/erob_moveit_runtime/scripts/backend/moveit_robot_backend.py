@@ -230,6 +230,155 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"move_ptp error: {e}")
             return -1
 
+    def _build_path_strategy(
+            self,
+            path,
+            rx,
+            ry,
+            rz,
+            vel,
+            acc,
+            trajectory_optimizer,
+            orientation_mode,
+            tag="EXECUTE_PATH",
+    ):
+        """Preprocess path waypoints and select the planning strategy.
+
+        Pure preprocessing shared by ``execute_path`` and ``prepare_path``:
+        converts velocity/acceleration percentages to scaling factors,
+        normalizes waypoints, applies the workobject transform, and selects
+        ``SingleTargetStrategy`` (single waypoint) or ``PathStrategy``
+        (multi-waypoint). No execution and no controller contact.
+
+        Returns:
+            (strategy, None) on success or (None, error_code) on invalid input.
+        """
+        orientation_mode = str(orientation_mode or "constant").strip().lower()
+        # Convert velocity/acceleration from percentage (0-100) to scaling factor (0.0-1.0)
+        vel_scale = max(0.0, min(1.0, vel / 100.0))
+        acc_scale = max(0.0, min(1.0, acc / 100.0))
+        self.node.get_logger().info(
+            f"[{tag}] Velocity conversion: {vel}% → {vel_scale:.3f} scaling, {acc}% → {acc_scale:.3f} scaling"
+        )
+        waypoints_pose = []
+
+        for wp in path:
+            if len(wp) == 3:
+                waypoints_pose.append([wp[0], wp[1], wp[2]])
+                # Get current TCP orientation if not provided
+                if rx is None or ry is None or rz is None:
+                    current_pose = self.get_current_position()
+                    if current_pose is not None:
+                        rx, ry, rz = current_pose[3], current_pose[4], current_pose[5]
+                    else:
+                        # Fallback if current position unavailable
+                        rx, ry, rz = config.DEFAULT_ORIENTATION
+            elif len(wp) == 6:
+                wx, wy, wz, wrx, wry, wrz = wp
+                if orientation_mode == "per_waypoint":
+                    waypoints_pose.append([wx, wy, wz, wrx, wry, wrz])
+                else:
+                    waypoints_pose.append([wx, wy, wz])
+                if rx is None:
+                    rx = wrx
+                if ry is None:
+                    ry = wry
+                if rz is None:
+                    rz = wrz
+            else:
+                continue
+
+        if not waypoints_pose:
+            return None, -1
+
+        # Transform waypoints from workobject frame to base frame if the workobject is set
+        if self.workobject is not None:
+            self.node.get_logger().info(f"[{tag}] Transforming waypoints from work object to base frame")
+            waypoints_base = []
+            for wp in waypoints_pose:
+                if len(wp) >= 6 and orientation_mode == "per_waypoint":
+                    wp_full = list(wp[:6])
+                else:
+                    wp_full = [wp[0], wp[1], wp[2], rx, ry, rz]
+                # Transform from workobject to base frame using WorkObject.apply()
+                wp_base = self.workobject.apply(wp_full)
+                if orientation_mode == "per_waypoint":
+                    waypoints_base.append(list(wp_base[:6]))
+                else:
+                    waypoints_base.append([wp_base[0], wp_base[1], wp_base[2]])
+            waypoints_pose = waypoints_base
+            if orientation_mode != "per_waypoint":
+                # Also transform orientation to base frame
+                orientation_full = [0, 0, 0, rx, ry, rz]  # dummy position, only orientation matters
+                orientation_base = self.workobject.apply(orientation_full)
+                rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
+
+        # Calculate average distance between consecutive waypoints
+        if len(waypoints_pose) > 1:
+            total_dist = 0.0
+            for i in range(len(waypoints_pose) - 1):
+                dx = waypoints_pose[i + 1][0] - waypoints_pose[i][0]
+                dy = waypoints_pose[i + 1][1] - waypoints_pose[i][1]
+                dz = waypoints_pose[i + 1][2] - waypoints_pose[i][2]
+                total_dist += (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
+            avg_spacing = total_dist / (len(waypoints_pose) - 1)
+        else:
+            avg_spacing = 0.0
+
+        self.node.get_logger().info(f"[{tag}] {len(waypoints_pose)} waypoints, avg spacing: {avg_spacing:.2f}mm")
+        self.node.get_logger().info(f"[{tag}] First waypoint: {waypoints_pose[0][:3]}")
+        if orientation_mode == "per_waypoint" and len(waypoints_pose[0]) >= 6:
+            self.node.get_logger().info(
+                f"[{tag}] Per-waypoint orientation enabled; first waypoint orientation: "
+                f"RX={waypoints_pose[0][3]}° RY={waypoints_pose[0][4]}° RZ={waypoints_pose[0][5]}°"
+            )
+        else:
+            self.node.get_logger().info(f"[{tag}] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
+
+        # A single waypoint is not a real path. Route it through the single-target
+        # pipeline so adaptive interpolation / micro-move Jacobian fallback are applied
+        # before MoveIt + TOTG are involved.
+        if len(waypoints_pose) == 1:
+            self.node.get_logger().info(
+                f"[{tag}] Single waypoint detected — delegating to single-target planner"
+            )
+            from motion.strategies import SingleTargetStrategy
+
+            target = waypoints_pose[0]
+            return (
+                SingleTargetStrategy(
+                    target[0], target[1], target[2], rx, ry, rz, vel_scale, acc_scale
+                ),
+                None,
+            )
+
+        selected_optimizer = trajectory_optimizer
+        if not selected_optimizer:
+            selected_optimizer = str(
+                getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
+            ).strip().upper() or None
+
+        # ✅ ALWAYS use compute_cartesian_path for consistency
+        # Controller's spline interpolation + TOTG provides smooth continuous motion
+        self.node.get_logger().info(
+            f"[{tag}] Using MoveIt compute_cartesian_path (continuous trajectory)"
+            + (f" with {selected_optimizer}" if selected_optimizer else "")
+        )
+        from motion.strategies import PathStrategy
+        return (
+            PathStrategy(
+                waypoints_pose,
+                rx,
+                ry,
+                rz,
+                vel_scale,
+                acc_scale,
+                selected_optimizer,
+                orientation_mode=orientation_mode,
+            ),
+            None,
+        )
+
     def execute_path(
             self,
             path,
@@ -265,130 +414,24 @@ class MoveItRobotBackend(IRobotBackend):
 
         self.node.get_logger().info(f"[EXECUTE_PATH] Received path with {len(path)} waypoints")
 
-        orientation_mode = str(orientation_mode or "constant").strip().lower()
-        # Convert velocity/acceleration from percentage (0-100) to scaling factor (0.0-1.0)
-        vel_scale = max(0.0, min(1.0, vel / 100.0))
-        acc_scale = max(0.0, min(1.0, acc / 100.0))
-        self.node.get_logger().info(
-            f"[EXECUTE_PATH] Velocity conversion: {vel}% → {vel_scale:.3f} scaling, {acc}% → {acc_scale:.3f} scaling"
+        strategy, strategy_error = self._build_path_strategy(
+            path,
+            rx,
+            ry,
+            rz,
+            vel,
+            acc,
+            trajectory_optimizer,
+            orientation_mode,
+            tag="EXECUTE_PATH",
         )
-        waypoints_pose = []
+        if strategy is None:
+            return strategy_error
 
-        for wp in path:
-            if len(wp) == 3:
-                waypoints_pose.append([wp[0], wp[1], wp[2]])
-                # Get current TCP orientation if not provided
-                if rx is None or ry is None or rz is None:
-                    current_pose = self.get_current_position()
-                    if current_pose is not None:
-                        rx, ry, rz = current_pose[3], current_pose[4], current_pose[5]
-                    else:
-                        # Fallback if current position unavailable
-                        rx, ry, rz = config.DEFAULT_ORIENTATION
-            elif len(wp) == 6:
-                wx, wy, wz, wrx, wry, wrz = wp
-                if orientation_mode == "per_waypoint":
-                    waypoints_pose.append([wx, wy, wz, wrx, wry, wrz])
-                else:
-                    waypoints_pose.append([wx, wy, wz])
-                if rx is None:
-                    rx = wrx
-                if ry is None:
-                    ry = wry
-                if rz is None:
-                    rz = wrz
-            else:
-                continue
-
-        if not waypoints_pose:
-            return -1
-
-        # Transform waypoints from workobject frame to base frame if the workobject is set
-        if self.workobject is not None:
-            self.node.get_logger().info(f"[EXECUTE_PATH] Transforming waypoints from work object to base frame")
-            waypoints_base = []
-            for wp in waypoints_pose:
-                if len(wp) >= 6 and orientation_mode == "per_waypoint":
-                    wp_full = list(wp[:6])
-                else:
-                    wp_full = [wp[0], wp[1], wp[2], rx, ry, rz]
-                # Transform from workobject to base frame using WorkObject.apply()
-                wp_base = self.workobject.apply(wp_full)
-                if orientation_mode == "per_waypoint":
-                    waypoints_base.append(list(wp_base[:6]))
-                else:
-                    waypoints_base.append([wp_base[0], wp_base[1], wp_base[2]])
-            waypoints_pose = waypoints_base
-            if orientation_mode != "per_waypoint":
-                # Also transform orientation to base frame
-                orientation_full = [0, 0, 0, rx, ry, rz]  # dummy position, only orientation matters
-                orientation_base = self.workobject.apply(orientation_full)
-                rx, ry, rz = orientation_base[3], orientation_base[4], orientation_base[5]
-
-        # Calculate average distance between consecutive waypoints
-        if len(waypoints_pose) > 1:
-            total_dist = 0.0
-            for i in range(len(waypoints_pose) - 1):
-                dx = waypoints_pose[i + 1][0] - waypoints_pose[i][0]
-                dy = waypoints_pose[i + 1][1] - waypoints_pose[i][1]
-                dz = waypoints_pose[i + 1][2] - waypoints_pose[i][2]
-                total_dist += (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
-            avg_spacing = total_dist / (len(waypoints_pose) - 1)
-        else:
-            avg_spacing = 0.0
-
-        self.node.get_logger().info(f"[EXECUTE_PATH] {len(waypoints_pose)} waypoints, avg spacing: {avg_spacing:.2f}mm")
-        self.node.get_logger().info(f"[EXECUTE_PATH] First waypoint: {waypoints_pose[0][:3]}")
-        if orientation_mode == "per_waypoint" and len(waypoints_pose[0]) >= 6:
-            self.node.get_logger().info(
-                "[EXECUTE_PATH] Per-waypoint orientation enabled; first waypoint orientation: "
-                f"RX={waypoints_pose[0][3]}° RY={waypoints_pose[0][4]}° RZ={waypoints_pose[0][5]}°"
-            )
-        else:
-            self.node.get_logger().info(f"[EXECUTE_PATH] Orientation (base frame): RX={rx}° RY={ry}° RZ={rz}°")
-
-        # A single waypoint is not a real path. Route it through the single-target
-        # pipeline so adaptive interpolation / micro-move Jacobian fallback are applied
-        # before MoveIt + TOTG are involved.
-        if len(waypoints_pose) == 1:
-            self.node.get_logger().info(
-                "[EXECUTE_PATH] Single waypoint detected — delegating to single-target planner"
-            )
-            from motion.strategies import SingleTargetStrategy
-
-            target = waypoints_pose[0]
-            result = self.node.execute(
-                SingleTargetStrategy(target[0], target[1], target[2], rx, ry, rz, vel_scale, acc_scale)
-            )
-        else:
-            selected_optimizer = trajectory_optimizer
-            if not selected_optimizer:
-                selected_optimizer = str(
-                    getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
-                ).strip().upper() or None
-
-            # ✅ ALWAYS use compute_cartesian_path for consistency
-            # Controller's spline interpolation + TOTG provides smooth continuous motion
-            self.node.get_logger().info(
-                "[EXECUTE_PATH] Using MoveIt compute_cartesian_path (continuous trajectory)"
-                + (f" with {selected_optimizer}" if selected_optimizer else "")
-            )
-            from motion.strategies import PathStrategy
-            result = self.node.execute(
-                PathStrategy(
-                    waypoints_pose,
-                    rx,
-                    ry,
-                    rz,
-                    vel_scale,
-                    acc_scale,
-                    selected_optimizer,
-                    orientation_mode=orientation_mode,
-                )
-            )
+        result = self.node.execute(strategy)
         self.node.get_logger().info(
             f"[TIMING] backend_execute_path submitted blocking={bool(blocking)} "
-            f"result={result} waypoints={len(waypoints_pose)} elapsed_s={perf_counter() - started_at:.3f}"
+            f"result={result} waypoints={len(path)} elapsed_s={perf_counter() - started_at:.3f}"
         )
 
         # Return error code if planning/submission failed
@@ -423,6 +466,287 @@ class MoveItRobotBackend(IRobotBackend):
                 return -1
             self.node.get_logger().info(
                 f"[TIMING] backend_execute_path blocking_wait elapsed_s={perf_counter() - wait_started_at:.3f} "
+                f"total_elapsed_s={perf_counter() - started_at:.3f}"
+            )
+            return self.node.last_move_result
+
+        return 0
+
+    def prepare_path(
+            self,
+            path,
+            rx=None,
+            ry=None,
+            rz=None,
+            vel=0.6,
+            acc=0.4,
+            trajectory_optimizer=None,
+            orientation_mode="constant",
+            timeout_s=None,
+    ):
+        """Offline planning: run the full planning pipeline but capture the trajectory.
+
+        Validates, plans (MoveIt), and time-parameterizes the requested path
+        exactly like ``execute_path`` but intercepts the final trajectory before
+        it reaches the trajectory controller. Never contacts the controller.
+
+        Returns:
+            ``PreparedTrajectory`` on success (including no-op success) or a
+            negative error code on failure. Requires the robot to be idle and
+            motion-stack ready (planning is not queued).
+        """
+        from threading import Event
+        from motion.execution.prepared_trajectory import PreparedTrajectory
+
+        started_at = perf_counter()
+        if not path or self.node is None:
+            return -1
+        if not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[PREPARE_PATH] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+
+        self.node.get_logger().info(
+            f"[PREPARE_PATH] planning started: {len(path)} waypoints "
+            f"optimizer={trajectory_optimizer or 'default'}"
+        )
+
+        strategy, strategy_error = self._build_path_strategy(
+            path,
+            rx,
+            ry,
+            rz,
+            vel,
+            acc,
+            trajectory_optimizer,
+            orientation_mode,
+            tag="PREPARE_PATH",
+        )
+        if strategy is None:
+            return strategy_error
+
+        executor = self.node.trajectory_executor
+        captured = {"value": None}
+        captured_event = Event()
+
+        def _capture(joint_trajectory, kwargs):
+            captured["value"] = self._capture_prepared(
+                joint_trajectory, kwargs, source="prepare_path"
+            )
+            captured_event.set()
+
+        executor.set_dispatch_capture_hook(_capture)
+        try:
+            result = self.node.execute(strategy, queue_if_busy=False)
+        except Exception as exc:
+            executor.clear_dispatch_capture_hook()
+            self.node.get_logger().error(f"[PREPARE_PATH] Strategy execution error: {exc}")
+            return -1
+        if result < 0:
+            executor.clear_dispatch_capture_hook()
+            return result
+
+        timeout_s = float(
+            timeout_s
+            if timeout_s is not None
+            else getattr(config, "PREPARE_PATH_TIMEOUT_S", 30.0)
+        )
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if captured_event.is_set():
+                prepared = captured["value"]
+                self.node.get_logger().info(
+                    f"[TIMING] backend_prepare_path captured source={prepared.source} "
+                    f"noop={prepared.noop} points={prepared.point_count} "
+                    f"duration_s={prepared.duration_s:.3f} elapsed_s={perf_counter() - started_at:.3f}"
+                )
+                return prepared
+            if not self.node.is_executing:
+                break
+            time.sleep(0.02)
+
+        executor.clear_dispatch_capture_hook()
+        if not self.node.is_executing and self.node.last_move_result == 0:
+            # Planning short-circuited successfully without dispatching a
+            # trajectory: treat as a no-op success so the robot is still
+            # considered ready for a synchronization barrier.
+            self.node.get_logger().info(
+                "[PREPARE_PATH] Planning completed without a trajectory (no-op success)"
+            )
+            return PreparedTrajectory(
+                trajectory=None,
+                joint_names=(),
+                start_positions=(),
+                end_positions=(),
+                duration_s=0.0,
+                source="prepare_path",
+                metadata={},
+                noop=True,
+                result=0,
+            )
+        if self.node.last_move_result < 0:
+            return self.node.last_move_result
+        self.node.get_logger().error(
+            f"[PREPARE_PATH] Timed out waiting for plan after {timeout_s}s"
+        )
+        return -1
+
+    def _capture_prepared(self, joint_trajectory, kwargs, source="prepare_path"):
+        """Build a PreparedTrajectory from a captured plan and close the queue task."""
+        from motion.execution.prepared_trajectory import PreparedTrajectory
+
+        self.node.get_logger().info(
+            f"[PREPARE_PATH] Captured planned trajectory: "
+            f"{len(joint_trajectory.points)} points"
+        )
+        joint_names = tuple(joint_trajectory.joint_names)
+        start_positions = (
+            tuple(joint_trajectory.points[0].positions)
+            if joint_trajectory.points
+            else ()
+        )
+        end_positions = (
+            tuple(joint_trajectory.points[-1].positions)
+            if joint_trajectory.points
+            else ()
+        )
+        duration_s = 0.0
+        if joint_trajectory.points:
+            last_point = joint_trajectory.points[-1]
+            duration_s = (
+                last_point.time_from_start.sec
+                + last_point.time_from_start.nanosec / 1e9
+            )
+
+        closure_error_rad = 0.0
+        if start_positions and end_positions and len(start_positions) == len(end_positions):
+            closure_error_rad = max(
+                abs(a - b)
+                for a, b in zip(start_positions, end_positions)
+            )
+        cyclic = bool(
+            start_positions
+            and closure_error_rad
+            <= float(
+                getattr(
+                    config,
+                    "PREPARED_TRAJECTORY_CLOSURE_TOL_RAD",
+                    0.002,
+                )
+            )
+        )
+        metadata = dict(kwargs or {})
+        metadata["cyclic"] = cyclic
+        metadata["closure_error_rad"] = closure_error_rad
+
+        prepared = PreparedTrajectory(
+            trajectory=joint_trajectory,
+            joint_names=joint_names,
+            start_positions=start_positions,
+            end_positions=end_positions,
+            duration_s=duration_s,
+            source=source,
+            metadata=metadata,
+            result=0,
+        )
+        self.node.get_logger().info(
+            f"[PREPARE_PATH] Prepared points={len(joint_trajectory.points)} "
+            f"duration={duration_s:.3f}s cyclic={cyclic} "
+            f"closure_error_rad={closure_error_rad:.6f}"
+        )
+        with self.node.lock:
+            self.node.is_executing = False
+            self.node.last_move_result = 0
+        if getattr(self.node, "motion_queue", None) is not None:
+            self.node.motion_queue.mark_current_complete(0)
+        return prepared
+
+    def execute_prepared(
+            self,
+            prepared,
+            blocking=True,
+            start_time=None,
+            start_policy="live_anchor",
+    ):
+        """Execute a previously prepared trajectory (see ``prepare_path``).
+
+        Re-submits the captured trajectory through the executor split
+        (``prepare_controller_goal`` + ``send_prepared_controller_goal``) so it
+        is re-anchored to the live joint state at execution time. A shared
+        ``start_time`` (builtin_interfaces/Time) can be passed to coordinate
+        synchronized starts across robots.
+
+        ``start_policy`` selects the ``prepare_controller_goal`` start handling:
+        ``live_anchor`` (default) re-anchors the first point to the live joint
+        state; ``require_exact`` verifies the live state matches the cached
+        first point within ``EXECUTOR_PREPARED_START_TOL_RAD`` and fails with
+        ``MOTION_ERROR_PREPARED_START_MISMATCH`` otherwise.
+
+        Returns:
+            int: 0 on success, positive queue position, or negative error code.
+        """
+        from motion.execution.prepared_trajectory import PreparedTrajectory
+        from motion.strategies import PreparedTrajectoryStrategy
+
+        if not isinstance(prepared, PreparedTrajectory):
+            self.node.get_logger().error(
+                f"[EXECUTE_PREPARED] Expected PreparedTrajectory, got "
+                f"{type(prepared).__name__}"
+            )
+            return -1
+        if prepared.noop:
+            self.node.get_logger().info(
+                "[EXECUTE_PREPARED] No-op prepared trajectory — nothing to execute"
+            )
+            return 0
+
+        started_at = perf_counter()
+        result = self.node.execute(
+            PreparedTrajectoryStrategy(
+                prepared,
+                start_time=start_time,
+                start_policy=start_policy,
+            )
+        )
+        self.node.get_logger().info(
+            f"[TIMING] backend_execute_prepared submitted blocking={bool(blocking)} "
+            f"result={result} elapsed_s={perf_counter() - started_at:.3f}"
+        )
+
+        if result < 0:
+            return result
+
+        if result > 0:
+            if blocking:
+                task_id = getattr(self.node, 'last_submitted_task_id', None)
+                if task_id is not None:
+                    waited = self.node.motion_queue.wait_for_task(
+                        task_id, config.BLOCKING_MOVE_TIMEOUT_S
+                    )
+                    if waited is None:
+                        self.node.get_logger().error(
+                            f"[EXECUTE_PREPARED] Timed out waiting for queued task #{task_id} to complete")
+                        return -1
+                    return waited
+            self.node.get_logger().info(
+                f"[EXECUTE_PREPARED] Command queued at position {result}")
+            return result
+
+        if blocking:
+            wait_started_at = perf_counter()
+            deadline = time.time() + config.BLOCKING_MOVE_TIMEOUT_S
+            while self.node.is_executing and time.time() < deadline:
+                time.sleep(0.05)
+            if self.node.is_executing:
+                self.node.get_logger().error(
+                    f"[EXECUTE_PREPARED] Timed out waiting for move to complete after "
+                    f"{config.BLOCKING_MOVE_TIMEOUT_S}s")
+                return -1
+            self.node.get_logger().info(
+                f"[TIMING] backend_execute_prepared blocking_wait "
+                f"elapsed_s={perf_counter() - wait_started_at:.3f} "
                 f"total_elapsed_s={perf_counter() - started_at:.3f}"
             )
             return self.node.last_move_result

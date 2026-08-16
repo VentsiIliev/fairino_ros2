@@ -163,3 +163,63 @@ class SequenceStrategy(MotionStrategy):
             self.segments,
             tool_transform=self.tool_transform,
         )
+
+
+class PreparedTrajectoryStrategy(MotionStrategy):
+    """Execute a previously prepared trajectory through the executor split.
+
+    Single-robot generic: takes an offline ``PreparedTrajectory`` and submits it
+    by re-running ``prepare_controller_goal`` (fresh live-state anchoring) and
+    ``send_prepared_controller_goal``. No twin logic lives here; coordinated
+    starts are achieved purely by passing a shared ``start_time``.
+    """
+
+    def __init__(self, prepared, start_time=None, start_policy="live_anchor"):
+        from .execution.prepared_trajectory import PreparedTrajectory
+        if not isinstance(prepared, PreparedTrajectory):
+            raise TypeError(
+                f"PreparedTrajectoryStrategy requires a PreparedTrajectory, got "
+                f"{type(prepared).__name__}"
+            )
+        if start_policy not in ("live_anchor", "require_exact"):
+            raise ValueError(f"Unsupported start_policy: {start_policy!r}")
+        self.prepared = prepared
+        self.start_time = start_time
+        self.start_policy = start_policy
+
+    def execute(self, robot_controller) -> int:
+        from copy import deepcopy
+        executor = robot_controller.trajectory_executor
+        logger = robot_controller.get_logger()
+        metadata = self.prepared.metadata or {}
+        prepared = executor.prepare_controller_goal(
+            deepcopy(self.prepared.trajectory),
+            preserve_explicit_wrap=bool(metadata.get("preserve_explicit_wrap", False)),
+            unwind_check=metadata.get("unwind_check"),
+            suppress_drive_disable_cancel=bool(
+                metadata.get("suppress_drive_disable_cancel", False)
+            ),
+            start_policy=self.start_policy,
+        )
+        if prepared is None:
+            result_code = int(getattr(robot_controller, "last_move_result", -1))
+            logger.error(
+                f"[PREPARED_EXEC] rejected before dispatch: "
+                f"start check failed (result={result_code})"
+            )
+            return result_code
+        if self.start_time is not None:
+            stamp = self.start_time
+            logger.info(
+                f"[PREPARED_EXEC] controller goal ready "
+                f"start_stamp=sec={stamp.sec} nanosec={stamp.nanosec}"
+            )
+        else:
+            logger.info("[PREPARED_EXEC] controller goal ready start_stamp=now")
+        result = executor.send_prepared_controller_goal(
+            prepared,
+            start_time=self.start_time,
+        )
+        if result is None:
+            return int(getattr(robot_controller, "last_move_result", -1))
+        return result
