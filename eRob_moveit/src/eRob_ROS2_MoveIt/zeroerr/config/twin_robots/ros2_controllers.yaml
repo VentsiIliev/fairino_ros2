@@ -11,6 +11,23 @@ controller_manager:
     robot2_joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
+    drive_enable_set_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    drive_disable_set_controller:
+      type: forward_command_controller/ForwardCommandController
+
+
+joint_state_broadcaster:
+  ros__parameters:
+    interfaces:
+      - position
+      - velocity
+      - effort
+      - statusword
+      - error_code
+      - mode_display
+    publish_dynamic_joint_states: true
 
 robot1_joint_trajectory_controller:
   ros__parameters:
@@ -46,3 +63,39 @@ robot2_joint_trajectory_controller:
     state_interfaces:
       - position
       - velocity
+
+
+drive_enable_set_controller:
+  ros__parameters:
+    joints:
+      - robot1_Joint_1
+      - robot1_Joint_2
+      - robot1_Joint_3
+      - robot1_Joint_4
+      - robot1_Joint_5
+      - robot1_Joint_6
+      - robot2_Joint_1
+      - robot2_Joint_2
+      - robot2_Joint_3
+      - robot2_Joint_4
+      - robot2_Joint_5
+      - robot2_Joint_6
+    interface_name: enable_set
+
+
+drive_disable_set_controller:
+  ros__parameters:
+    joints:
+      - robot1_Joint_1
+      - robot1_Joint_2
+      - robot1_Joint_3
+      - robot1_Joint_4
+      - robot1_Joint_5
+      - robot1_Joint_6
+      - robot2_Joint_1
+      - robot2_Joint_2
+      - robot2_Joint_3
+      - robot2_Joint_4
+      - robot2_Joint_5
+      - robot2_Joint_6
+    interface_name: disable_set

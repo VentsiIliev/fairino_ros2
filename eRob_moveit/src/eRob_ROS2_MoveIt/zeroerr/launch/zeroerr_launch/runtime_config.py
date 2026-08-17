@@ -62,7 +62,11 @@ def load_runtime_config(package_path: str) -> dict:
         with open(config_yaml) as f:
             rt = _merge_config(rt, yaml.safe_load(f) or {})
 
-    profile = str(rt.get("ACTIVE_PROFILE", "")).strip()
+    profile = str(
+        os.environ.get("ZEROERR_ACTIVE_PROFILE", rt.get("ACTIVE_PROFILE", ""))
+    ).strip()
+    if profile:
+        rt["ACTIVE_PROFILE"] = profile
     if profile:
         profile_yaml = _profile_runtime_yaml_path(package_path, profile)
         if not os.path.isfile(profile_yaml):

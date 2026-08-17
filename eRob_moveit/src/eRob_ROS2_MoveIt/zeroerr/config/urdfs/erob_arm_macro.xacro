@@ -15,7 +15,7 @@
       Shared environment objects such as table and mounting_surface
       must be defined by the wrapper URDF/Xacro.
   -->
-  <xacro:macro name="erob_arm" params="prefix">
+  <xacro:macro name="erob_arm" params="prefix use_short_links:=false">
 
     <!-- ============================================================ -->
     <!-- Materials                                                    -->
@@ -83,9 +83,16 @@
     </joint>
 
     <joint name="${prefix}Joint_3" type="revolute">
-      <origin
-        rpy="0.00000 0.00000 0.00000"
-        xyz="0.00000 0.00050 0.36350"/>
+      <xacro:if value="${use_short_links}">
+        <origin
+          rpy="0.00000 0.00000 0.00000"
+          xyz="0.00000 0.00050 0.24350"/>
+      </xacro:if>
+      <xacro:unless value="${use_short_links}">
+        <origin
+          rpy="0.00000 0.00000 0.00000"
+          xyz="0.00000 0.00050 0.36350"/>
+      </xacro:unless>
       <parent link="${prefix}Link_2"/>
       <child link="${prefix}Link_3"/>
       <axis xyz="0.00000 -1.00000 0.00000"/>
@@ -103,9 +110,16 @@
     </joint>
 
     <joint name="${prefix}Joint_4" type="revolute">
-      <origin
-        rpy="0.00000 0.00000 0.00000"
-        xyz="0.00000 -0.01400 0.31100"/>
+      <xacro:if value="${use_short_links}">
+        <origin
+          rpy="0.00000 0.00000 0.00000"
+          xyz="0.00000 -0.01400 0.21100"/>
+      </xacro:if>
+      <xacro:unless value="${use_short_links}">
+        <origin
+          rpy="0.00000 0.00000 0.00000"
+          xyz="0.00000 -0.01400 0.31100"/>
+      </xacro:unless>
       <parent link="${prefix}Link_3"/>
       <child link="${prefix}Link_4"/>
       <axis xyz="0.00000 -1.00000 0.00000"/>
@@ -217,9 +231,16 @@
           rpy="0.00000 0.00000 0.00000"
           xyz="0.00000 0.00000 0.00000"/>
         <geometry>
-          <mesh
-            filename="package://zeroerr/meshes/paint/Link_2_extended.stl"
-            scale="1.00000 1.00000 1.00000"/>
+          <xacro:if value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_2_short.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:if>
+          <xacro:unless value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_2_extended.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:unless>
         </geometry>
       </collision>
 
@@ -243,9 +264,16 @@
           xyz="0.00000 0.00000 0.00000"/>
         <material name="${prefix}arm_material"/>
         <geometry>
-          <mesh
-            filename="package://zeroerr/meshes/paint/Link_2_extended.stl"
-            scale="1.00000 1.00000 1.00000"/>
+          <xacro:if value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_2_short.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:if>
+          <xacro:unless value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_2_extended.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:unless>
         </geometry>
       </visual>
     </link>
@@ -261,9 +289,16 @@
           rpy="0.00000 0.00000 0.00000"
           xyz="0.00000 0.00000 0.00000"/>
         <geometry>
-          <mesh
-            filename="package://zeroerr/meshes/paint/Link_3_extended.stl"
-            scale="1.00000 1.00000 1.00000"/>
+          <xacro:if value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_3_short.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:if>
+          <xacro:unless value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_3_extended.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:unless>
         </geometry>
       </collision>
 
@@ -287,9 +322,16 @@
           xyz="0.00000 0.00000 0.00000"/>
         <material name="${prefix}arm_material"/>
         <geometry>
-          <mesh
-            filename="package://zeroerr/meshes/paint/Link_3_extended.stl"
-            scale="1.00000 1.00000 1.00000"/>
+          <xacro:if value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_3_short.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:if>
+          <xacro:unless value="${use_short_links}">
+            <mesh
+              filename="package://zeroerr/meshes/paint/Link_3_extended.stl"
+              scale="1.00000 1.00000 1.00000"/>
+          </xacro:unless>
         </geometry>
       </visual>
     </link>

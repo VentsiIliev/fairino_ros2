@@ -9,6 +9,7 @@ for arg in "$@"; do
   case "${arg}" in
     --twin-robots)
       export ZEROERR_TWIN_ROBOTS=1
+      export ZEROERR_ACTIVE_PROFILE="${ZEROERR_ACTIVE_PROFILE:-twin_robots}"
       ;;
     *)
       args+=("${arg}")
@@ -17,7 +18,7 @@ for arg in "$@"; do
 done
 
 if [[ "${ZEROERR_TWIN_ROBOTS:-0}" == "1" ]]; then
-  echo "Twin-robot mode enabled: shared infrastructure will start without the legacy REST runtime."
+  echo "Twin-robot mode enabled: shared infrastructure will start with profile ${ZEROERR_ACTIVE_PROFILE:-twin_robots} and without the legacy REST runtime."
 fi
 
 exec "${SCRIPT_DIR}/launch_robot.sh" "${args[@]}"

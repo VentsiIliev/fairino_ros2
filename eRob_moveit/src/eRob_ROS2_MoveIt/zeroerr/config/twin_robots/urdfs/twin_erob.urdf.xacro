@@ -16,7 +16,7 @@
   <!-- Robot 1                                                     -->
   <!-- ============================================================ -->
 
-  <xacro:erob_arm prefix="robot1_"/>
+  <xacro:erob_arm prefix="robot1_" use_short_links="true"/>
 
   <joint name="world_to_robot1_base" type="fixed">
     <parent link="world"/>
@@ -36,7 +36,7 @@
   <!-- Robot 2                                                     -->
   <!-- ============================================================ -->
 
-  <xacro:erob_arm prefix="robot2_"/>
+  <xacro:erob_arm prefix="robot2_" use_short_links="true"/>
 
   <joint name="world_to_robot2_base" type="fixed">
     <parent link="world"/>

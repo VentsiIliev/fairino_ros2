@@ -7,6 +7,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from zeroerr_launch.moveit_config import build_moveit_config
 from zeroerr_launch.runtime_config import urdf_path_from_runtime
+from zeroerr_launch.runtime_config import (
+    ros2_controllers_path_from_runtime,
+    runtime_value,
+)
 
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess, SetEnvironmentVariable
@@ -19,8 +23,13 @@ def generate_launch_description():
 
     moveit_config = build_moveit_config("zeroerr", package_path)
 
-    ros2_controllers_path = os.path.join(package_path, "config", "ros2_controllers.yaml")
+    ros2_controllers_path = ros2_controllers_path_from_runtime(package_path)
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
+    expected_slaves = str(runtime_value(
+        package_path,
+        "ETHERCAT_EXPECTED_SLAVES",
+        6,
+    ))
 
     static_tf = Node(
         package="tf2_ros",
@@ -54,24 +63,44 @@ def generate_launch_description():
         output="screen",
     )
 
-    load_manipulator_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "manipulator_controller"],
-        output="screen",
-    )
-    load_drive_enable_set_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
-        output="screen",
-    )
-    load_drive_disable_set_controller = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
-        output="screen",
-    )
+    controller_spawners = [
+        ExecuteProcess(
+            cmd=["ros2", "run", "controller_manager", "spawner", controller_name],
+            output="screen",
+        )
+        for controller_name in runtime_value(
+            package_path,
+            "CONTROLLERS_TO_SPAWN",
+            ["manipulator_controller"],
+        )
+    ]
+    drive_command_spawners = [
+        ExecuteProcess(
+            cmd=[
+                "ros2",
+                "run",
+                "controller_manager",
+                "spawner",
+                controller_name,
+                "--inactive",
+            ],
+            output="screen",
+        )
+        for controller_name in runtime_value(
+            package_path,
+            "DRIVE_COMMAND_CONTROLLERS_TO_SPAWN",
+            [
+                "drive_enable_set_controller",
+                "drive_disable_set_controller",
+            ],
+        )
+    ]
 
     wait_for_op_process = ExecuteProcess(
         cmd=[wait_for_slaves_op],
         output="screen",
         additional_env={
-            "EXPECTED_SLAVES": "6",
+            "EXPECTED_SLAVES": expected_slaves,
             "REQUIRED_STABLE_POLLS": "3",
             "POLL_INTERVAL": "1",
         },
@@ -141,9 +170,8 @@ def generate_launch_description():
         robot_state_publisher,
         ros2_control_node,
         load_joint_state_broadcaster,
-        load_manipulator_controller,
-        load_drive_enable_set_controller,
-        load_drive_disable_set_controller,
+        *controller_spawners,
+        *drive_command_spawners,
         ethercat_sdo_server,
         ipp_helper_node,
         ruckig_helper_node,

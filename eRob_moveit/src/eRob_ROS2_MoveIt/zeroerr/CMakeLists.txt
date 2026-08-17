@@ -39,7 +39,7 @@ install(PROGRAMS
 # colcon --symlink-install an install(PROGRAMS) entry would then point directly
 # at that non-executable source file, so ros2 run would not discover it.
 # Stage executable build-tree copies for the installed twin entrypoints.
-foreach(twin_script IN ITEMS twin_test.py twin_choreography.py)
+foreach(twin_script IN ITEMS twin_test.py twin_choreography.py twin_move_x_10mm.py twin_drive_enable.py)
   configure_file(
     scripts/${twin_script}
     ${CMAKE_CURRENT_BINARY_DIR}/${twin_script}

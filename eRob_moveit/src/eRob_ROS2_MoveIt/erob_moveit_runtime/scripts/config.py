@@ -527,7 +527,11 @@ def _load_runtime_config() -> dict[str, Any]:
         if config_path and config_path.exists():
             config = _merge(config, _load_yaml_file(config_path))
 
-    profile = str(config.get('ACTIVE_PROFILE', '')).strip()
+    profile = str(
+        os.environ.get('ZEROERR_ACTIVE_PROFILE', config.get('ACTIVE_PROFILE', ''))
+    ).strip()
+    if profile:
+        config['ACTIVE_PROFILE'] = profile
     if profile:
         profile_path = _profile_runtime_yaml_path(profile)
         if not profile_path or not profile_path.exists():

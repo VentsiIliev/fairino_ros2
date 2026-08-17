@@ -275,6 +275,11 @@ def generate_launch_description():
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
     state_publisher_params = load_state_publisher_params(package_path)
+    expected_slaves = str(runtime_value(
+        package_path,
+        "ETHERCAT_EXPECTED_SLAVES",
+        6,
+    ))
 
     demo_ld.add_action(
         LogInfo(
@@ -307,7 +312,7 @@ def generate_launch_description():
         condition=UnlessCondition(use_fake_hardware),
         output="screen",
         additional_env={
-            "EXPECTED_SLAVES": "6",
+            "EXPECTED_SLAVES": expected_slaves,
             "REQUIRED_STABLE_POLLS": "2",
             "POLL_INTERVAL": "0.25",
         },
@@ -333,7 +338,7 @@ def generate_launch_description():
         prefix=low_priority_non_rt_prefix,
         parameters=[{
             "master_id": 0,
-            "slave_count": 6,
+            "slave_count": int(expected_slaves),
             "poll_period_sec": 10.0,
             "log_zero_state_once": True,
         }],
@@ -349,7 +354,7 @@ def generate_launch_description():
         prefix=low_priority_non_rt_prefix,
         parameters=[{
             "master_id": 0,
-            "slave_count": 6,
+            "slave_count": int(expected_slaves),
             "poll_period_sec": float(runtime_value(
                 package_path,
                 "ZEROERR_DRIVE_DIAGNOSTICS_POLL_PERIOD_S",
@@ -359,18 +364,46 @@ def generate_launch_description():
         }],
     )
 
-    drive_enable_set_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
-        condition=UnlessCondition(use_fake_hardware),
-        output="screen",
+    drive_command_controllers = runtime_value(
+        package_path,
+        "DRIVE_COMMAND_CONTROLLERS_TO_SPAWN",
+        [
+            "drive_enable_set_controller",
+            "drive_disable_set_controller",
+        ],
     )
-    drive_disable_set_spawner = ExecuteProcess(
-        cmd=["ros2", "run", "controller_manager", "spawner", "drive_disable_set_controller", "--inactive"],
-        condition=UnlessCondition(use_fake_hardware),
-        output="screen",
-    )
-    demo_ld.add_action(TimerAction(period=3.0, actions=[drive_enable_set_spawner]))
-    demo_ld.add_action(TimerAction(period=4.0, actions=[drive_disable_set_spawner]))
+    for offset, controller_name in enumerate(drive_command_controllers):
+        demo_ld.add_action(TimerAction(
+            period=3.0 + float(offset),
+            actions=[
+                ExecuteProcess(
+                    cmd=[
+                        "ros2",
+                        "run",
+                        "controller_manager",
+                        "spawner",
+                        controller_name,
+                        "--inactive",
+                    ],
+                    condition=UnlessCondition(use_fake_hardware),
+                    output="screen",
+                )
+            ],
+        ))
+
+    # Twin mode has no legacy RobotController process. Enable the shared
+    # twelve-drive CiA402 set after the command controllers are spawned.
+    if os.environ.get("ZEROERR_ACTIVE_PROFILE", "").strip() == "twin_robots":
+        twin_drive_enable_node = Node(
+            package="zeroerr",
+            executable="twin_drive_enable.py",
+            output="screen",
+            emulate_tty=True,
+        )
+        demo_ld.add_action(TimerAction(
+            period=12.0,
+            actions=[twin_drive_enable_node],
+        ))
 
     ipp_helper_node = Node(
         package="erob_moveit_runtime",

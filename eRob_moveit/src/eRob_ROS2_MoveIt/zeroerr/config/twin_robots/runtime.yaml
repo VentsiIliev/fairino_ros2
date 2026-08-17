@@ -31,6 +31,10 @@ CONTROLLERS_TO_SPAWN:
   - robot1_joint_trajectory_controller
   - robot2_joint_trajectory_controller
 
+DRIVE_COMMAND_CONTROLLERS_TO_SPAWN:
+  - drive_enable_set_controller
+  - drive_disable_set_controller
+
 # Servo is intentionally disabled for the twin profile until Servo is made
 # explicitly robot-aware. This avoids accidentally commanding the wrong arm.
 SERVO_ENABLED: false
