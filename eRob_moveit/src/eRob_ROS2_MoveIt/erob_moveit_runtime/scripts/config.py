@@ -386,7 +386,12 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = dict(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
+        if key == 'ROBOTS':
+            # Robot topology is profile-owned: a profile that defines ROBOTS
+            # replaces the default/inherited mapping wholesale instead of
+            # merging the global default single-robot entry into it.
+            result[key] = value
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
             merged = dict(result[key])
             merged.update(value)
             result[key] = merged

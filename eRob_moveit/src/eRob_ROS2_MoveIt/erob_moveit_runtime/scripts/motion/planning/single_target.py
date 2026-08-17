@@ -322,8 +322,6 @@ def _resolve_start_state(robot_controller, start_pose):
 
         if live_names and live_positions:
             robot_controller.get_logger().warning(
-                '[Single Point] Live joint state fallback: ')
-            robot_controller.get_logger().warning(
                 '[Single Point] Live joint state fallback: '
                 f'{[(name, round(pos, 6)) for name, pos in zip(live_names, live_positions)]}'
             )

@@ -2,8 +2,8 @@
 ROBOT_BACKEND: zeroerr
 
 # Active robot profile. Profile-specific overrides live under config/<profile>/.
-#ACTIVE_PROFILE: paint
-ACTIVE_PROFILE: twin_robots
+ACTIVE_PROFILE: paint
+#ACTIVE_PROFILE: twin_robots
 #ACTIVE_PROFILE: welding
 
 # Enables the EtherCAT OP-state watchdog before allowing motion.
@@ -58,6 +58,40 @@ URDF_PATH: urdfs/erob_arm_small.urdf
 
 # FollowJointTrajectory action used by the low-level controller.
 ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
+
+# ---------------------------------------------------------------------------
+# Robot runtime identity
+# ---------------------------------------------------------------------------
+#
+# Default single-robot runtime definition.
+#
+# Single-robot profiles such as paint and welding inherit this logical robot
+# definition unless they explicitly override it.
+#
+# Multi-robot profiles such as twin_robots must override BOTH PRIMARY_ROBOT
+# and ROBOTS with their own robot-specific definitions.
+#
+# The logical name "robot" does NOT alter ROS link names, planning-group names,
+# controller names, or action names. Those remain defined by the values below.
+PRIMARY_ROBOT: robot
+
+ROBOTS:
+  robot:
+    joint_names:
+    - Joint_1
+    - Joint_2
+    - Joint_3
+    - Joint_4
+    - Joint_5
+    - Joint_6
+
+    planning_group: manipulator
+    base_link: base_link
+    ee_link: ee_link
+    wrist_link: Link_6
+    cartesian_source_link: ee_link
+    collision_tip_link: tool0
+    action_follow_trajectory: /manipulator_controller/follow_joint_trajectory
 
 # Real ZeroErr drives can briefly transition around adjacent controller goals.
 # Require a short stable enabled window before sending the next trajectory.
@@ -145,6 +179,7 @@ REST_WS_STATE_ENABLED: true
 REST_WS_STATE_HOST: 0.0.0.0
 REST_WS_STATE_PORT: 5001
 REST_WS_STATE_RATE_HZ: 10.0
+
 REST_WS_EXECUTION_ENABLED: true
 REST_WS_EXECUTION_HOST: 0.0.0.0
 REST_WS_EXECUTION_PORT: 5002
@@ -169,7 +204,9 @@ RUNTIME_HEADLESS: 1
 # Jacobian Cartesian fallback settings live in jacobian_config.yaml.
 # Profiles can override them in config/<ACTIVE_PROFILE>/jacobian_config.yaml.
 
-# REDUCE CPU LOAD
+# ---------------------------------------------------------------------------
+# CPU / monitoring load
+# ---------------------------------------------------------------------------
 
 # Debug-only SDO fault-code polling. Enable only while diagnosing drive errors.
 ZEROERR_ERROR_MONITOR_ENABLED: false
