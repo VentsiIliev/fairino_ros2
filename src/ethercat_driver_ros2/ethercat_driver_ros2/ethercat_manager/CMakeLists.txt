@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
 project(ethercat_manager)
 
+set(EC_IOCTL_VERSION_MAGIC "37" CACHE STRING
+  "EtherCAT master ioctl ABI magic reported by /dev/EtherCAT0")
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ethercat_msgs REQUIRED)
@@ -26,6 +29,8 @@ target_include_directories(
   ${ETHERLAB_DIR}/include
 )
 target_link_libraries(ethercat_sdo_srv_server ${ETHERCAT_LIB})
+target_compile_definitions(ethercat_sdo_srv_server PRIVATE
+  EC_IOCTL_VERSION_MAGIC=${EC_IOCTL_VERSION_MAGIC})
 ament_target_dependencies(ethercat_sdo_srv_server rclcpp ethercat_msgs)
 
 if(BUILD_TESTING)
