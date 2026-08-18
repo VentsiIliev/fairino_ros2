@@ -396,6 +396,9 @@ class RobotController(Node):
     def _publish_active_tool_collision(self):
         if not self._active_tool_collision_enabled():
             return
+        if not self._active_tool_collision_applies():
+            self._remove_active_tool_collision()
+            return
 
         try:
             attached = AttachedCollisionObject()
@@ -452,6 +455,33 @@ class RobotController(Node):
         except Exception as exc:
             self.get_logger().warning(f"[ActiveToolCollision] Failed to publish attached cylinder: {exc}")
 
+    def _active_tool_collision_applies(self):
+        tool_name = str(getattr(self, "active_tool_name", "TOOL_0") or "TOOL_0")
+        if tool_name == "TOOL_0":
+            return False
+        try:
+            return not np.allclose(self.T_tool, np.eye(4), atol=1e-9)
+        except Exception:
+            return True
+
+    def _remove_active_tool_collision(self):
+        try:
+            attached = AttachedCollisionObject()
+            attached.link_name = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+            attached.object.id = str(getattr(config, "ACTIVE_TOOL_COLLISION_ID", "active_tool_collision"))
+            attached.object.operation = CollisionObject.REMOVE
+
+            scene = PlanningScene()
+            scene.is_diff = True
+            scene.robot_state.is_diff = True
+            scene.robot_state.attached_collision_objects.append(attached)
+            self.active_tool_collision_pub.publish(scene)
+            self.get_logger().info(
+                f"[ActiveToolCollision] Removed active tool collision for {self.active_tool_name}"
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"[ActiveToolCollision] Failed to remove attached cylinder: {exc}")
+
     def _publish_active_tool_visualization(self):
         if self.monitor is None:
             return
@@ -495,7 +525,8 @@ class RobotController(Node):
         source_origin = T_source[:3, 3] if T_source is not None else None
         if source_origin is not None:
             marker_array.markers.append(self._make_source_sphere_marker(stamp, source_origin))
-            marker_array.markers.append(self._make_source_to_tcp_marker(stamp, source_origin, origin))
+            if np.linalg.norm(source_origin - origin) > 1e-6:
+                marker_array.markers.append(self._make_source_to_tcp_marker(stamp, source_origin, origin))
         marker_array.markers.append(self._make_tcp_sphere_marker(stamp, origin, quaternion))
         marker_array.markers.extend(self._make_tcp_axis_markers(stamp, origin, rotation))
         collision_marker = self._make_active_tool_collision_marker(stamp)
@@ -602,6 +633,14 @@ class RobotController(Node):
     def _make_active_tool_collision_marker(self, stamp):
         if not self._active_tool_collision_enabled():
             return None
+        if not self._active_tool_collision_applies():
+            marker = Marker()
+            marker.header.frame_id = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
+            marker.header.stamp = stamp
+            marker.ns = "active_tool_collision"
+            marker.id = 200
+            marker.action = Marker.DELETE
+            return marker
         origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
         if len(origin_values) != 6:
             origin_values = [0, 0, 0, 0, 0, 0]
@@ -821,7 +860,18 @@ class RobotController(Node):
             if self.monitor is None:
                 return
 
-            data = self.monitor.get_latest_data()
+            state_names = list(getattr(msg, 'name', []) or [])
+            state_positions = list(getattr(msg, 'position', []) or [])
+            position_by_name = {
+                name: position
+                for name, position in zip(state_names, state_positions)
+            }
+            configured_joint_names = list(config.JOINT_NAMES)
+            if configured_joint_names and all(name in position_by_name for name in configured_joint_names[:6]):
+                ordered_positions = [position_by_name[name] for name in configured_joint_names[:6]]
+                data = self.monitor.update_joint_state(ordered_positions)
+            else:
+                data = self.monitor.get_latest_data()
 
             if data is not None:
                 self.prev_cartesian = data['cartesian']

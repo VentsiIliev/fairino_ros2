@@ -110,6 +110,55 @@ def parse_jog_request(data: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def parse_joint_jog_request(data: dict[str, Any] | None) -> dict[str, Any]:
+    payload = data or {}
+
+    joint_value = payload.get("joint")
+    if joint_value is None:
+        raise ValueError("Missing 'joint'")
+    joint = str(joint_value).strip()
+    if not joint:
+        raise ValueError("Invalid 'joint'")
+    aliases = {f"J{index}": f"Joint_{index}" for index in range(1, 7)}
+    joint = aliases.get(joint.upper(), joint)
+    valid_joints = list(getattr(config, "JOINT_NAMES", []) or [])
+    if joint not in valid_joints:
+        raise ValueError(f"Invalid 'joint': {joint_value}. Valid joints: {valid_joints}")
+
+    direction_val = payload.get("direction")
+    if direction_val is None:
+        raise ValueError("Missing 'direction'")
+    try:
+        if isinstance(direction_val, str):
+            direction_name = direction_val.strip().upper()
+            direction_aliases = {
+                "POSITIVE": "PLUS",
+                "NEGATIVE": "MINUS",
+            }
+            direction = Direction.get_by_string(direction_aliases.get(direction_name, direction_name))
+        else:
+            direction = Direction(direction_val)
+    except ValueError as exc:
+        valid_directions = [direction.name for direction in Direction]
+        raise ValueError(f"Invalid 'direction': {direction_val}. Valid directions: {valid_directions}") from exc
+
+    try:
+        step = float(payload.get("step"))
+        vel = float(payload.get("vel", config.DEFAULT_VEL_PERCENT))
+        acc = float(payload.get("acc", config.DEFAULT_ACC_PERCENT))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid step/vel/acc") from exc
+
+    return {
+        "joint": joint,
+        "direction": direction,
+        "step": step,
+        "vel": vel,
+        "acc": acc,
+        "blocking": bool(payload.get("blocking", True)),
+    }
+
+
 def parse_servo_jog_start_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
 
@@ -433,4 +482,3 @@ def _coerce_pose6(value, label: str) -> list[float]:
         return [float(v) for v in value]
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid {label}; all values must be numeric") from exc
-

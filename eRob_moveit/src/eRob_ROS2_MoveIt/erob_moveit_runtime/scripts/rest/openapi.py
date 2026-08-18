@@ -28,6 +28,7 @@ OPENAPI_SPEC = {
         "/execute/ordered_motion_chain": {"post": {"tags": ["motion"], "summary": "Execute ordered motion chain"}},
         "/execute/ordered_motion_chain/status": {"get": {"tags": ["motion"], "summary": "Ordered motion chain status"}},
         "/unwind/joint6": {"post": {"tags": ["motion"], "summary": "Unwind joint 6"}},
+        "/jog/joint": {"post": {"tags": ["motion"], "summary": "Jog one robot joint"}},
         "/servo/cartesian/start": {
             "post": {
                 "tags": ["servo"],
@@ -213,6 +214,30 @@ def _apply_openapi_details():
                     },
                 },
                 "example": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
+            },
+        },
+    }
+
+    OPENAPI_SPEC["paths"]["/jog/joint"]["post"]["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["joint", "direction", "step"],
+                    "properties": {
+                        "joint": {
+                            "type": "string",
+                            "enum": ["J1", "J2", "J3", "J4", "J5", "J6", "Joint_1", "Joint_2", "Joint_3", "Joint_4", "Joint_5", "Joint_6"],
+                        },
+                        "direction": {"type": "string", "enum": ["PLUS", "MINUS", "POSITIVE", "NEGATIVE"]},
+                        "step": {"type": "number", "description": "Joint increment in degrees"},
+                        "vel": {"type": "number"},
+                        "acc": {"type": "number"},
+                        "blocking": {"type": "boolean"},
+                    },
+                },
+                "example": {"joint": "J6", "direction": "PLUS", "step": 5, "vel": 10, "acc": 10, "blocking": True},
             },
         },
     }

@@ -319,14 +319,27 @@ class RobotMonitor:
         Returns:
             np.ndarray: [x, y, z, rx, ry, rz] (position in meters, orientation in degrees)
         """
-        # Wrist3 FK
         T = np.eye(4)
-        T = T @ TransformationUtils.rot_z(q[0])
-        T = T @ TransformationUtils.trans(0, 0, config.DH_D1) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
-        T = T @ TransformationUtils.trans(config.DH_A2, 0, 0) @ TransformationUtils.rot_z(q[2])
-        T = T @ TransformationUtils.trans(config.DH_A3, 0, 0) @ TransformationUtils.rot_z(q[3])
-        T = T @ TransformationUtils.trans(0, 0, config.DH_D4) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
-        T = T @ TransformationUtils.trans(0, 0, config.DH_D5) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
+
+        if getattr(config, 'ROBOT_BACKEND', 'fairino') == 'zeroerr':
+            # Keep fallback FK consistent with the ZeroErr URDF chain
+            # base_link -> ee_link. Normal runtime pose reporting still comes
+            # from /cartesian_position, which is generated from TF/URDF.
+            T = T @ TransformationUtils.trans(0, 0, 0) @ TransformationUtils.rot_z(q[0])
+            T = T @ TransformationUtils.trans(0, 0.053, 0.1405) @ TransformationUtils.rot_y(-q[1])
+            T = T @ TransformationUtils.trans(0, 0.0005, 0.3635) @ TransformationUtils.rot_y(-q[2])
+            T = T @ TransformationUtils.trans(0, -0.014, 0.311) @ TransformationUtils.rot_y(-q[3])
+            T = T @ TransformationUtils.trans(0, 0.047, 0.039) @ TransformationUtils.rot_z(q[4])
+            T = T @ TransformationUtils.trans(0, 0.0608, 0.047) @ TransformationUtils.rot_y(q[5])
+            T = T @ TransformationUtils.rot_x(-np.pi / 2)
+        else:
+            # Fairino5 v6 DH FK.
+            T = T @ TransformationUtils.rot_z(q[0])
+            T = T @ TransformationUtils.trans(0, 0, config.DH_D1) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[1])
+            T = T @ TransformationUtils.trans(config.DH_A2, 0, 0) @ TransformationUtils.rot_z(q[2])
+            T = T @ TransformationUtils.trans(config.DH_A3, 0, 0) @ TransformationUtils.rot_z(q[3])
+            T = T @ TransformationUtils.trans(0, 0, config.DH_D4) @ TransformationUtils.rot_x(np.pi / 2) @ TransformationUtils.rot_z(q[4])
+            T = T @ TransformationUtils.trans(0, 0, config.DH_D5) @ TransformationUtils.rot_x(-np.pi / 2) @ TransformationUtils.rot_z(q[5])
 
         # Apply TCP offset if provided
         if tcp_transform is not None:

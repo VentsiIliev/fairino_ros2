@@ -9,6 +9,8 @@ from backend.i_robot_backend import IRobotBackend
 from motion.jog.planned_jog import PlannedJogCapability
 from motion.jog.servo_jog import ServoJogCapability
 from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo, CartesianServoFrame
+from builtin_interfaces.msg import Duration
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class MoveItRobotBackend(IRobotBackend):
@@ -901,6 +903,85 @@ class MoveItRobotBackend(IRobotBackend):
 
         return 0
 
+    def joint_jog(self, joint, direction, step, vel, acc, blocking=True):
+        if self.node is None:
+            return -1
+        drive_error = self._reject_if_drive_not_enabled("JOINT_JOG")
+        if drive_error is not None:
+            return drive_error
+        if not self.node.is_hardware_ready_for_motion():
+            self.node.get_logger().error(
+                "[JOINT_JOG] Rejected: %s",
+                self.node.get_hardware_fault_reason(),
+            )
+            return config.MOTION_ERROR_HARDWARE_NOT_READY
+
+        joint_names = list(getattr(config, "JOINT_NAMES", []) or [])
+        joint_name = str(joint or "").strip()
+        aliases = {f"J{index}": f"Joint_{index}" for index in range(1, len(joint_names) + 1)}
+        joint_name = aliases.get(joint_name.upper(), joint_name)
+        if joint_name not in joint_names:
+            self.node.get_logger().error(
+                f"[JOINT_JOG] Joint {joint!r} is not configured; valid={joint_names}"
+            )
+            return -1
+
+        current_positions = self.node.trajectory_executor._get_latest_joint_state_in_trajectory_order(joint_names)
+        if current_positions is None:
+            self.node.get_logger().error("[JOINT_JOG] Latest joint state unavailable")
+            return -1
+
+        try:
+            direction_value = direction.value if hasattr(direction, "value") else int(direction)
+        except (TypeError, ValueError):
+            direction_name = str(direction).strip().upper()
+            direction_value = 1 if direction_name in {"PLUS", "POSITIVE", "+", "1"} else -1
+
+        delta_rad = math.radians(abs(float(step))) * (1.0 if direction_value >= 0 else -1.0)
+        joint_index = joint_names.index(joint_name)
+        start_positions = [float(value) for value in current_positions]
+        target_positions = list(start_positions)
+        target_positions[joint_index] += delta_rad
+
+        vel_percent = self.node.trajectory_executor._clamp_percentage(vel)
+        rate_limits = dict(getattr(config, "SINGLE_TARGET_JOINT_RATE_LIMITS_RAD_S", {}) or {})
+        max_rate = float(rate_limits.get(joint_name, rate_limits.get(joint_name.lower(), 1.2)) or 1.2)
+        max_rate = max(0.05, max_rate * max(0.01, vel_percent / 100.0))
+        duration_s = max(0.2, abs(delta_rad) / max_rate)
+        sec = int(duration_s)
+        nanosec = int((duration_s - sec) * 1_000_000_000)
+
+        traj = JointTrajectory()
+        traj.joint_names = joint_names
+        traj.header.stamp = self.node.get_clock().now().to_msg()
+
+        start_pt = JointTrajectoryPoint()
+        start_pt.positions = start_positions
+        start_pt.velocities = [0.0] * len(joint_names)
+        start_pt.accelerations = [0.0] * len(joint_names)
+        start_pt.time_from_start = Duration(sec=0, nanosec=0)
+
+        end_pt = JointTrajectoryPoint()
+        end_pt.positions = target_positions
+        end_pt.velocities = [0.0] * len(joint_names)
+        end_pt.accelerations = [0.0] * len(joint_names)
+        end_pt.time_from_start = Duration(sec=sec, nanosec=nanosec)
+        traj.points = [start_pt, end_pt]
+
+        self.node.get_logger().info(
+            f"[JOINT_JOG] {joint_name} {start_positions[joint_index]:.6f} -> "
+            f"{target_positions[joint_index]:.6f} rad step={float(step):.3f}deg "
+            f"direction={int(direction_value):+d} vel={vel_percent:.1f}% duration={duration_s:.3f}s"
+        )
+        self.node.trajectory_executor.send_trajectory_to_controller(traj)
+
+        if blocking:
+            return self._wait_for_motion_idle_result(
+                float(getattr(config, "BLOCKING_MOVE_TIMEOUT_S", 60.0)),
+                "[JOINT_JOG]",
+            )
+        return 0
+
     def _unwind_joint6_with_rotational_path(self, vel=None, acc=None, queue_if_busy=True):
         joint_names = list(getattr(config, 'JOINT_NAMES', []) or [])
         joint_name = str(getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_NAME', 'Joint_6')).strip()
@@ -1280,6 +1361,51 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"get_current_flange_position error: {e}")
             return None
 
+    def get_current_joints(self):
+        """
+        Retrieves current joint positions.
+
+        Returns:
+            dict: Joint positions in radians and degrees, or None on error.
+        """
+        if self.node is None:
+            return None
+
+        joint_state = getattr(self.node, "current_joint_state", None)
+        if joint_state is None:
+            return None
+
+        try:
+            state_names = list(getattr(joint_state, "name", []) or [])
+            state_positions = list(getattr(joint_state, "position", []) or [])
+            if not state_names or len(state_names) != len(state_positions):
+                return None
+            position_by_name = {
+                str(name): float(position)
+                for name, position in zip(state_names, state_positions)
+            }
+            names = [str(name) for name in getattr(config, "JOINT_NAMES", [])]
+            if not names:
+                names = state_names[:6]
+            missing = [name for name in names[:6] if name not in position_by_name]
+            if missing:
+                self.node.get_logger().warning(
+                    f"[STATE] Current joint state missing configured joints {missing}; "
+                    f"available={state_names}"
+                )
+                return None
+            names = names[:6]
+            radians = [position_by_name[name] for name in names]
+            degrees = [math.degrees(value) for value in radians]
+            return {
+                "names": names,
+                "radians": radians,
+                "degrees": degrees,
+            }
+        except Exception as e:
+            print(f"get_current_joints error: {e}")
+            return None
+
     def get_current_velocity(self):
         """
         Retrieves the current Cartesian velocity.
@@ -1509,17 +1635,30 @@ class MoveItRobotBackend(IRobotBackend):
     def _send_rotational_jog_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         max_step = self._rotational_jog_max_step_deg()
-        step_count = max(2, int(math.ceil(abs(angular_delta) / max_step)))
         waypoints_base = self._rotational_path_waypoints_base(
             current_pos_wobj,
             target_pos_wobj,
             rotation_index,
         )
         target_base = waypoints_base[-1]
+        selected_optimizer = str(
+            getattr(config, "PATH_TRAJECTORY_OPTIMIZER", "") or ""
+        ).strip().upper() or None
         self.node.get_logger().info(
             f'[JOG] Rotational jog path: axis_index={rotation_index} '
             f'delta={angular_delta:.3f}deg waypoints={len(waypoints_base)} '
-            f'max_step={max_step:.3f}deg'
+            f'max_step={max_step:.3f}deg optimizer={selected_optimizer or "default"}'
+        )
+        self.node.get_logger().info(
+            '[JOG] Rotational jog user frame: '
+            f'start_xyz={[round(v, 3) for v in current_pos_wobj[:3]]} '
+            f'start_rpy={[round(v, 3) for v in current_pos_wobj[3:6]]} '
+            f'target_rpy={[round(v, 3) for v in target_pos_wobj[3:6]]}'
+        )
+        self.node.get_logger().info(
+            '[JOG] Rotational jog base target: '
+            f'xyz={[round(v, 3) for v in target_base[:3]]} '
+            f'rpy={[round(v, 3) for v in target_base[3:6]]}'
         )
         from motion.strategies import PathStrategy
         return self.node.execute(
@@ -1530,6 +1669,7 @@ class MoveItRobotBackend(IRobotBackend):
                 target_base[5],
                 vel_scale,
                 acc_scale,
+                trajectory_optimizer=selected_optimizer,
                 orientation_mode='per_waypoint',
             ),
             queue_if_busy=False,

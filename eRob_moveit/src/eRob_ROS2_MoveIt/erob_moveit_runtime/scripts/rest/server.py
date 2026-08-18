@@ -496,6 +496,10 @@ def start_rest_server(
     def jog():
         return api_response(runtime_api.jog(request.get_json(silent=True)))
 
+    @app.route("/jog/joint", methods=["POST"])
+    def joint_jog():
+        return api_response(runtime_api.joint_jog(request.get_json(silent=True)))
+
     @app.route("/servojog/start", methods=["POST"])
     def servo_jog_start():
         return api_response(runtime_api.servo_jog_start(request.get_json(silent=True)))

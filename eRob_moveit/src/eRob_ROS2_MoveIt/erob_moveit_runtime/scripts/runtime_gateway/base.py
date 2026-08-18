@@ -161,6 +161,18 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def joint_jog(
+        self,
+        joint: Any,
+        direction: Any,
+        step: float,
+        vel: float,
+        acc: float,
+        blocking: bool = True,
+    ) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def servo_jog_start(
         self,
         axis: Any,

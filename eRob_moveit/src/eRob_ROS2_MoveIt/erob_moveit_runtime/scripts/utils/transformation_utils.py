@@ -221,6 +221,22 @@ class TransformationUtils:
                          [0, 0, 0, 1]])
 
     @staticmethod
+    def rot_y(angle):
+        """Create 4x4 rotation matrix around Y-axis.
+
+        Args:
+            angle: Rotation angle in radians
+
+        Returns:
+            4x4 homogeneous rotation matrix
+        """
+        c, s = np.cos(angle), np.sin(angle)
+        return np.array([[c, 0, s, 0],
+                         [0, 1, 0, 0],
+                         [-s, 0, c, 0],
+                         [0, 0, 0, 1]])
+
+    @staticmethod
     def trans(x, y, z):
         """Create 4x4 translation matrix.
 

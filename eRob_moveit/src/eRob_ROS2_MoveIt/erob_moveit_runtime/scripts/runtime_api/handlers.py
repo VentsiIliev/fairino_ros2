@@ -17,6 +17,7 @@ from rest.api_support import (
     parse_execute_ordered_motion_chain_request,
     parse_execute_path_request,
     parse_execute_sequence_request,
+    parse_joint_jog_request,
     parse_jog_request,
     parse_move_linear_request,
     parse_servo_jog_start_request,
@@ -510,6 +511,29 @@ class RuntimeApi:
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
         except Exception as exc:
             logger.error(f"Jog endpoint error: {exc}")
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
+
+    def joint_jog(self, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = parse_joint_jog_request(data)
+            not_ready = self._require_motion_stack_ready()
+            if not_ready is not None:
+                return not_ready
+            result = self._gateway_or_local().joint_jog(
+                payload["joint"],
+                payload["direction"],
+                payload["step"],
+                payload["vel"],
+                payload["acc"],
+                blocking=payload["blocking"],
+            )
+            if result == 0:
+                return ApiResponse({"result": result, "success": True})
+            return motion_error(result)
+        except ValueError as exc:
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            logger.error(f"Joint jog endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def servo_jog_start(self, data: dict[str, Any] | None) -> ApiResponse:

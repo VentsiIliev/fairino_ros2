@@ -52,6 +52,7 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
             "unavailable_fields": ["runtime"],
             "position": None,
             "flange_position": None,
+            "joints": None,
             "velocity": None,
             "acceleration": None,
         })
@@ -59,6 +60,7 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
 
     position = robot.get_current_position()
     flange_position = robot.get_current_flange_position()
+    joints = robot.get_current_joints()
     velocity = robot.get_current_velocity()
     acceleration = robot.get_current_acceleration()
 
@@ -67,6 +69,8 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
         unavailable.append("position")
     if flange_position is None:
         unavailable.append("flange_position")
+    if joints is None:
+        unavailable.append("joints")
     if velocity is None:
         unavailable.append("velocity")
     if acceleration is None:
@@ -83,6 +87,7 @@ def state_payload(robot: IRobotBackend | None, node: RobotController | None, seq
         "unavailable_fields": unavailable,
         "position": position,
         "flange_position": flange_position,
+        "joints": joints,
         "velocity": velocity,
         "acceleration": acceleration,
     })

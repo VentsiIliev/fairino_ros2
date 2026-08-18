@@ -139,12 +139,15 @@ class LocalRuntimeGateway(RuntimeGateway):
         node = self.node
         position = robot.get_current_position()
         flange_position = robot.get_current_flange_position()
+        joints = robot.get_current_joints()
         velocity = robot.get_current_velocity()
         unavailable = []
         if position is None:
             unavailable.append("position")
         if flange_position is None:
             unavailable.append("flange_position")
+        if joints is None:
+            unavailable.append("joints")
         if velocity is None:
             unavailable.append("velocity")
         return {
@@ -153,6 +156,7 @@ class LocalRuntimeGateway(RuntimeGateway):
             "unavailable_fields": unavailable,
             "position": position,
             "flange_position": flange_position,
+            "joints": joints,
             "velocity": velocity,
             "status": self._runtime_status_dict(),
             "active_tool": getattr(node, "active_tool_name", "TOOL_0"),
@@ -163,11 +167,14 @@ class LocalRuntimeGateway(RuntimeGateway):
     def state_kinematics(self) -> dict:
         robot = self.robot
         position = robot.get_current_position()
+        joints = robot.get_current_joints()
         velocity = robot.get_current_velocity()
         acceleration = robot.get_current_acceleration()
         if position is None:
             return {"success": False, "error": "current position unavailable"}
         unavailable = []
+        if joints is None:
+            unavailable.append("joints")
         if velocity is None:
             unavailable.append("velocity")
         if acceleration is None:
@@ -177,6 +184,7 @@ class LocalRuntimeGateway(RuntimeGateway):
             "partial": bool(unavailable),
             "unavailable_fields": unavailable,
             "position": position,
+            "joints": joints,
             "velocity": velocity,
             "acceleration": acceleration,
         }
@@ -324,6 +332,16 @@ class LocalRuntimeGateway(RuntimeGateway):
             frame=frame,
             tool=tool,
             user=user,
+        )
+
+    def joint_jog(self, joint, direction, step, vel, acc, blocking=True) -> int:
+        return self.robot.joint_jog(
+            joint,
+            direction,
+            step,
+            vel,
+            acc,
+            blocking=blocking,
         )
 
     def servo_jog_start(

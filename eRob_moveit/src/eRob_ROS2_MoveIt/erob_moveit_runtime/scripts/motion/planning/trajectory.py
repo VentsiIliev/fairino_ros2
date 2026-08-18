@@ -164,7 +164,9 @@ def _execute_path(
             total_dist_mm += (dx*dx + dy*dy + dz*dz) ** 0.5
     robot_controller.set_last_requested_delta_mm(total_dist_mm)
     robot_controller.get_logger().info(f'[EXECUTE_PATH] Received path with {original_num_waypoints} waypoints, total_dist={total_dist_mm:.1f}mm')
-    robot_controller.get_logger().info(f'[EXECUTE_PATH] Transforming waypoints from work object to base frame')
+    robot_controller.get_logger().info(
+        '[EXECUTE_PATH] Preparing Cartesian waypoints in planner/base frame'
+    )
 
     if not _require_cart_path_service(robot_controller, 'EXECUTE_PATH'):
         return -2

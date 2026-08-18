@@ -55,10 +55,16 @@ class IRobotBackend(ABC):
     def get_current_flange_position(self): ...
 
     @abstractmethod
+    def get_current_joints(self): ...
+
+    @abstractmethod
     def get_current_velocity(self): ...
 
     @abstractmethod
     def start_jog(self, axis, direction, step, vel, acc, *, frame=None, tool=0, user=0): ...
+
+    @abstractmethod
+    def joint_jog(self, joint, direction, step, vel, acc, blocking=True): ...
 
     @abstractmethod
     def start_servo_jog(
