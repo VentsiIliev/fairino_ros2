@@ -457,7 +457,7 @@ class LocalRuntimeGateway(RuntimeGateway):
         return snapshot
 
     def set_workobject(self, origin, user_id=0) -> None:
-        self.robot.set_workobject(WorkObject(origin=origin), user_id=user_id)
+        self.robot.set_workobject(WorkObject(*origin), user_id=user_id)
 
     # --- validation / IO ---------------------------------------------------
 

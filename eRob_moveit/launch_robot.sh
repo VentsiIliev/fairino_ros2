@@ -291,7 +291,7 @@ cleanup_zeroerr() {
   fi
 
   cleanup_stale_zeroerr_processes
-  rm -rf /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
+  rm -rf /dev/shm/fastdds_* /dev/shm/sem.fastdds_* /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
 }
 
 cleanup_fairino() {
@@ -305,7 +305,7 @@ cleanup_fairino() {
   fi
 
   cleanup_stale_fairino_processes
-  rm -rf /dev/shm/fastdds_* /dev/shm/sem.fastdds_* 2>/dev/null || true
+  rm -rf /dev/shm/fastdds_* /dev/shm/sem.fastdds_* /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
 }
 
 # Clear previously sourced ROS/colcon overlays so package resolution comes only from

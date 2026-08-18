@@ -1,4 +1,4 @@
-URDF_PATH: urdfs/erob_arm_small.urdf
+URDF_PATH: urdfs/erob_arm_small.with_mounting_stl.urdf
 SRDF_PATH: eRobo3.srdf
 CARTESIAN_SOURCE_LINK: ee_link
 COLLISION_TIP_LINK: tool0
@@ -8,7 +8,7 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - 0
-- 16.2
+- 72
 
 
 # Painting: keep MoveIt collision checks enabled for planned paint motion.

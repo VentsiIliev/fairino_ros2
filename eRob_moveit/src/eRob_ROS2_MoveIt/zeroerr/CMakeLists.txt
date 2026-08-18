@@ -32,6 +32,8 @@ install(PROGRAMS
   scripts/zeroerr_error_monitor.py
   scripts/zeroerr_drive_diagnostics.py
   scripts/zeroerr_runtime.py
+  scripts/disk_pose_tuner.py
+  scripts/mounting_surface_pose_tuner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
