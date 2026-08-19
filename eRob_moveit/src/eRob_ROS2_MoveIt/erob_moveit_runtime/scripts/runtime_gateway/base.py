@@ -285,6 +285,22 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def workobject_registry(self) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def active_workobject(self) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_active_workobject(self, user_id: int) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_workobject_registry(self, user_id: int, name: str | None, transform: Any, persist: bool) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
     def set_workobject(self, origin: list[float], user_id: int) -> None:
         raise NotImplementedError
 

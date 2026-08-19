@@ -55,6 +55,18 @@ OPENAPI_SPEC = {
         "/stop": {"post": {"tags": ["motion"], "summary": "Stop active motion and clear queued work"}},
         "/reachability/pose": {"post": {"tags": ["planning"], "summary": "Validate pose reachability from a start pose"}},
         "/workobject/set": {"post": {"tags": ["frames"], "summary": "Set active work object origin"}},
+        "/workobject/registry": {"get": {"tags": ["frames"], "summary": "Get workobject registry"}},
+        "/workobject/registry/{user_id}": {
+            "post": {
+                "tags": ["frames"],
+                "summary": "Update one workobject registry entry",
+                "parameters": [{"name": "user_id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+            }
+        },
+        "/workobject/active": {
+            "get": {"tags": ["frames"], "summary": "Get active workobject"},
+            "post": {"tags": ["frames"], "summary": "Set active workobject"},
+        },
         "/tool/registry": {"get": {"tags": ["tools"], "summary": "Get tool registry"}},
         "/tool/registry/{tool_id}": {
             "post": {
@@ -176,6 +188,12 @@ def _apply_openapi_details():
             "user": 0,
         },
         "/workobject/set": {"origin": [0, 0, 0, 0, 0, 0], "user_id": 0},
+        "/workobject/registry/{user_id}": {
+            "name": "WOBJ_1",
+            "transform": [0, 0, 0, 0, 0, 0],
+            "persist": False,
+        },
+        "/workobject/active": {"user_id": 1},
         "/tool/registry/{tool_id}": {
             "name": "TOOL_1",
             "transform": [0, 0, 170, 0, 0, 0],

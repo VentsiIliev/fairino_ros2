@@ -458,6 +458,22 @@ def start_rest_server(
     def set_workobject():
         return api_response(runtime_api.set_workobject(request.json))
 
+    @app.route("/workobject/registry", methods=["GET"])
+    def get_workobject_registry():
+        return api_response(runtime_api.workobject_registry())
+
+    @app.route("/workobject/registry/<int:user_id>", methods=["POST"])
+    def update_workobject_registry(user_id):
+        return api_response(runtime_api.update_workobject_registry(user_id, request.json))
+
+    @app.route("/workobject/active", methods=["GET"])
+    def get_active_workobject():
+        return api_response(runtime_api.active_workobject())
+
+    @app.route("/workobject/active", methods=["POST"])
+    def set_active_workobject():
+        return api_response(runtime_api.set_active_workobject(request.json))
+
     @app.route("/status", methods=["GET"])
     def get_status():
         return api_response(runtime_api.status())

@@ -9,6 +9,7 @@ from backend.i_robot_backend import IRobotBackend
 from motion.jog.planned_jog import PlannedJogCapability
 from motion.jog.servo_jog import ServoJogCapability
 from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo, CartesianServoFrame
+from utils.work_object import WorkObject
 from builtin_interfaces.msg import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -30,13 +31,40 @@ class MoveItRobotBackend(IRobotBackend):
         """
         self.ip = ip
         self.node = node  # embeds the RobotController node
-        self.workobject = workobject  # Default WorkObject frame (user=0)
-        self.workobject_registry = {0: workobject}  # Registry of work objects by user ID
+        self.workobject_registry = self._build_workobject_registry(workobject)
+        self.active_workobject_user_id = int(getattr(config, "DEFAULT_WORKOBJECT_ID", 0) or 0)
+        self.active_workobject_name = self._workobject_name_for_user(self.active_workobject_user_id)
+        self.workobject = self.workobject_registry.get(self.active_workobject_user_id)
         self._cartesian_servo = cartesian_servo
         self._planned_jog = PlannedJogCapability(self)
         self._servo_jog = ServoJogCapability(self)
 
     # ---------------- WorkObject Methods ----------------
+    def _build_workobject_registry(self, default_workobject=None):
+        registry = {}
+        id_map = dict(getattr(config, "WORKOBJECT_ID_MAP", {}) or {})
+        named_registry = dict(getattr(config, "WORKOBJECT_REGISTRY", {}) or {})
+        for user_id, name in id_map.items():
+            values = named_registry.get(name)
+            if values is None:
+                continue
+            try:
+                registry[int(user_id)] = WorkObject(*values)
+            except Exception:
+                if self.node is not None:
+                    self.node.get_logger().warning(f"Invalid workobject registry entry {name}: {values}")
+        if default_workobject is not None:
+            registry.setdefault(0, default_workobject)
+        registry.setdefault(0, None)
+        return registry
+
+    def _workobject_name_for_user(self, user_id):
+        try:
+            name = config.resolve_workobject_name(int(user_id))
+        except Exception:
+            name = f"WOBJ_{int(user_id)}"
+        return name
+
     def set_workobject(self, workobject, user_id=0):
         """
         Set a WorkObject for the robot (coordinate frame).
@@ -45,8 +73,11 @@ class MoveItRobotBackend(IRobotBackend):
             workobject (WorkObject): Work object to set
             user_id (int): User frame ID (default 0)
         """
+        user_id = int(user_id)
+        if workobject is not None and not isinstance(workobject, WorkObject):
+            workobject = WorkObject(*workobject)
         self.workobject_registry[user_id] = workobject
-        if user_id == 0:
+        if user_id == self.active_workobject_user_id:
             self.workobject = workobject
 
     def get_workobject(self, user_id=0):
@@ -59,7 +90,40 @@ class MoveItRobotBackend(IRobotBackend):
         Returns:
             WorkObject or None
         """
-        return self.workobject_registry.get(user_id)
+        return self.workobject_registry.get(int(user_id))
+
+    def set_active_workobject(self, user_id=0):
+        user_id = int(user_id)
+        if user_id not in self.workobject_registry:
+            name = config.resolve_workobject_name(user_id)
+            values = getattr(config, "WORKOBJECT_REGISTRY", {}).get(name)
+            if values is None:
+                raise ValueError(f"user_id {user_id} maps to unknown workobject {name!r}")
+            self.workobject_registry[user_id] = WorkObject(*values)
+        self.active_workobject_user_id = user_id
+        self.active_workobject_name = self._workobject_name_for_user(user_id)
+        self.workobject = self.workobject_registry.get(user_id)
+        return self.active_workobject_name
+
+    def get_active_workobject(self):
+        return {
+            "user_id": int(self.active_workobject_user_id),
+            "workobject_name": str(self.active_workobject_name),
+            "origin": self._workobject_to_list(self.workobject),
+        }
+
+    @staticmethod
+    def _workobject_to_list(workobject):
+        if workobject is None:
+            return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        return [
+            float(workobject.x),
+            float(workobject.y),
+            float(workobject.z),
+            float(workobject.rx),
+            float(workobject.ry),
+            float(workobject.rz),
+        ]
 
     def apply_workobject(self, pose, user_id=0):
         """
@@ -1268,6 +1332,7 @@ class MoveItRobotBackend(IRobotBackend):
             rotation_index,
             max_step_override_deg=None,
             apply_workobject_to_waypoints=True,
+            user_id=0,
     ):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         if max_step_override_deg is None:
@@ -1283,7 +1348,7 @@ class MoveItRobotBackend(IRobotBackend):
             waypoint[4] = float(current_pos_wobj[4]) + (float(target_pos_wobj[4]) - float(current_pos_wobj[4])) * alpha
             waypoint[5] = float(current_pos_wobj[5]) + (float(target_pos_wobj[5]) - float(current_pos_wobj[5])) * alpha
             if apply_workobject_to_waypoints:
-                waypoint = self.apply_workobject(waypoint)
+                waypoint = self.apply_workobject(waypoint, user_id=user_id)
             waypoints_base.append(list(waypoint[:6]))
         return waypoints_base
 
@@ -1306,7 +1371,7 @@ class MoveItRobotBackend(IRobotBackend):
         return self.node.get_safety_walls_status()
 
     # ---------------- Status Methods ----------------
-    def get_current_position(self):
+    def get_current_position(self, user_id=None):
         """
         Retrieves the current TCP (tool center point) position.
 
@@ -1329,9 +1394,12 @@ class MoveItRobotBackend(IRobotBackend):
             # Use cartesian from robot_monitor.py (already in mm from C++ node)
             pose = data['cartesian'].tolist()
 
-            # Transform from base to workobject frame if a workobject exists
-            if self.workobject is not None:
-                pose = self.workobject.apply(pose, inverse=True)
+            # Transform from base to the requested workobject frame, or to the
+            # active workobject frame for state/current-position queries.
+            resolved_user_id = self.active_workobject_user_id if user_id is None else int(user_id)
+            active_workobject = self.get_workobject(resolved_user_id)
+            if active_workobject is not None:
+                pose = active_workobject.apply(pose, inverse=True)
 
             return pose
         except Exception as e:
@@ -1548,7 +1616,7 @@ class MoveItRobotBackend(IRobotBackend):
         if axis_val not in [1, 2, 3, 4, 5, 6] or dir_val not in [1, -1]:
             return -1
 
-        current_pos_wobj = self.get_current_position()
+        current_pos_wobj = self.get_current_position(user_id=user)
         if current_pos_wobj is None or len(current_pos_wobj) < 6:
             return -1
 
@@ -1560,7 +1628,7 @@ class MoveItRobotBackend(IRobotBackend):
             rx + deltas[3], ry + deltas[4], rz + deltas[5]
         ]
 
-        new_pos_base = self.apply_workobject(target_pos_wobj)
+        new_pos_base = self.apply_workobject(target_pos_wobj, user_id=user)
 
         vel_scale = max(0.0, min(1.0, vel / 100.0))
         acc_scale = max(0.0, min(1.0, acc / 100.0))
@@ -1573,6 +1641,7 @@ class MoveItRobotBackend(IRobotBackend):
                     axis_val - 1,
                     vel_scale,
                     acc_scale,
+                    user_id=user,
                 )
             else:
                 x_b, y_b, z_b, rx_b, ry_b, rz_b = new_pos_base
@@ -1632,13 +1701,14 @@ class MoveItRobotBackend(IRobotBackend):
         estimated_motion_s = angular_delta_deg / velocity_percent * 0.4
         return max(base_timeout_s, estimated_motion_s + 3.0)
 
-    def _send_rotational_jog_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale):
+    def _send_rotational_jog_path(self, current_pos_wobj, target_pos_wobj, rotation_index, vel_scale, acc_scale, user_id=0):
         angular_delta = float(target_pos_wobj[rotation_index]) - float(current_pos_wobj[rotation_index])
         max_step = self._rotational_jog_max_step_deg()
         waypoints_base = self._rotational_path_waypoints_base(
             current_pos_wobj,
             target_pos_wobj,
             rotation_index,
+            user_id=user_id,
         )
         target_base = waypoints_base[-1]
         selected_optimizer = str(

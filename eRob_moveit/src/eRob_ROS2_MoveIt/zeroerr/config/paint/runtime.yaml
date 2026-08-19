@@ -9,6 +9,17 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - 72
+WORKOBJECT_REGISTRY:
+  WOBJ_0:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 72
+WORKOBJECT_ID_MAP:
+  0: WOBJ_0
+DEFAULT_WORKOBJECT_ID: 0
 
 
 # Painting: keep MoveIt collision checks enabled for planned paint motion.

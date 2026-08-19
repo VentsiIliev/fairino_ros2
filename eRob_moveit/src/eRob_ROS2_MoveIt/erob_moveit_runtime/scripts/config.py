@@ -63,6 +63,9 @@ DEFAULTS = {
     'SAFETY_WALL_NAMES': ['wall_x_min', 'wall_x_max', 'wall_y_min', 'wall_y_max', 'wall_z_min', 'wall_z_max'],
     'TOOL_REGISTRY': {'TOOL_0': [0, 0, 0, 0, 0, 0]},
     'TOOL_ID_MAP': {0: 'TOOL_0'},
+    'WORKOBJECT_REGISTRY': {},
+    'WORKOBJECT_ID_MAP': {},
+    'DEFAULT_WORKOBJECT_ID': 0,
     'CARTESIAN_SOURCE_LINK': 'ee_link',
     'DEFAULT_VEL_PERCENT': 30,
     'DEFAULT_ACC_PERCENT': 30,
@@ -441,6 +444,17 @@ def _load_runtime_config() -> dict[str, Any]:
     config['WALL_BYPASS_LINKS'] = frozenset(config.get('WALL_BYPASS_LINKS', []))
     config['SAFETY_WALL_NAMES'] = frozenset(config.get('SAFETY_WALL_NAMES', []))
     config['TOOL_ID_MAP'] = {int(k): v for k, v in dict(config.get('TOOL_ID_MAP', {})).items()}
+    config['WORKOBJECT_ID_MAP'] = {int(k): v for k, v in dict(config.get('WORKOBJECT_ID_MAP', {})).items()}
+    default_workobject = list(config.get('DEFAULT_WORKOBJECT', [0, 0, 0, 0, 0, 0]) or [0, 0, 0, 0, 0, 0])
+    if not config.get('WORKOBJECT_REGISTRY'):
+        default_user_id = int(config.get('DEFAULT_WORKOBJECT_ID', 0) or 0)
+        default_name = f'WOBJ_{default_user_id}'
+        config['WORKOBJECT_REGISTRY'] = {default_name: default_workobject}
+        config['WORKOBJECT_ID_MAP'] = {default_user_id: default_name}
+    if 0 not in config['WORKOBJECT_ID_MAP']:
+        config['WORKOBJECT_ID_MAP'][0] = 'WOBJ_0'
+    if 'WOBJ_0' not in config['WORKOBJECT_REGISTRY']:
+        config['WORKOBJECT_REGISTRY']['WOBJ_0'] = [0, 0, 0, 0, 0, 0]
     return config
 
 
@@ -535,6 +549,70 @@ def update_tool_registry(tool_id: int, name: str | None, transform, persist: boo
     return get_tool_registry_snapshot()
 
 
+def get_workobject_registry_snapshot() -> dict[str, Any]:
+    return {
+        'workobject_registry': {
+            str(name): [float(v) for v in values]
+            for name, values in dict(WORKOBJECT_REGISTRY).items()
+        },
+        'workobject_id_map': {
+            int(user_id): str(name)
+            for user_id, name in dict(WORKOBJECT_ID_MAP).items()
+        },
+        'default_workobject_id': int(_CONFIG.get('DEFAULT_WORKOBJECT_ID', 0) or 0),
+        'active_runtime_config_path': _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH'),
+    }
+
+
+def resolve_workobject_name(user_id: int | str) -> str:
+    try:
+        resolved_user_id = int(user_id)
+    except (TypeError, ValueError):
+        raise ValueError('user_id must be an integer') from None
+    if resolved_user_id < 0:
+        raise ValueError('user_id must be non-negative')
+    workobject_name = WORKOBJECT_ID_MAP.get(resolved_user_id, f'WOBJ_{resolved_user_id}')
+    if workobject_name not in WORKOBJECT_REGISTRY:
+        raise ValueError(f'user_id {resolved_user_id} maps to unknown workobject {workobject_name!r}')
+    return workobject_name
+
+
+def _validate_workobject_transform(transform) -> list[float]:
+    return _validate_tool_transform(transform)
+
+
+def _validate_workobject_name(name: str) -> str:
+    cleaned = str(name or '').strip()
+    if not cleaned:
+        raise ValueError('workobject name must not be empty')
+    if not all(ch.isalnum() or ch == '_' for ch in cleaned):
+        raise ValueError('workobject name may contain only letters, numbers, and underscores')
+    return cleaned
+
+
+def update_workobject_registry(user_id: int, name: str | None, transform, persist: bool = False) -> dict[str, Any]:
+    try:
+        resolved_user_id = int(user_id)
+    except (TypeError, ValueError):
+        raise ValueError('user_id must be an integer') from None
+    if resolved_user_id < 0:
+        raise ValueError('user_id must be non-negative')
+
+    current_name = WORKOBJECT_ID_MAP.get(resolved_user_id, f'WOBJ_{resolved_user_id}')
+    workobject_name = _validate_workobject_name(name or current_name)
+    values = _validate_workobject_transform(transform)
+
+    WORKOBJECT_REGISTRY[workobject_name] = values
+    WORKOBJECT_ID_MAP[resolved_user_id] = workobject_name
+    _CONFIG['WORKOBJECT_REGISTRY'] = WORKOBJECT_REGISTRY
+    _CONFIG['WORKOBJECT_ID_MAP'] = WORKOBJECT_ID_MAP
+
+    if persist:
+        _persist_workobject_registry()
+
+    return get_workobject_registry_snapshot()
+
+
 def _persist_tool_registry() -> None:
     path_value = _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH')
     if not path_value:
@@ -543,6 +621,17 @@ def _persist_tool_registry() -> None:
     text = path.read_text(encoding='utf-8') if path.exists() else ''
     text = _replace_top_level_yaml_block(text, 'TOOL_REGISTRY', _format_tool_registry_block())
     text = _replace_top_level_yaml_block(text, 'TOOL_ID_MAP', _format_tool_id_map_block())
+    path.write_text(text, encoding='utf-8')
+
+
+def _persist_workobject_registry() -> None:
+    path_value = _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH')
+    if not path_value:
+        raise RuntimeError('active runtime config path is unavailable')
+    path = Path(path_value)
+    text = path.read_text(encoding='utf-8') if path.exists() else ''
+    text = _replace_top_level_yaml_block(text, 'WORKOBJECT_REGISTRY', _format_workobject_registry_block())
+    text = _replace_top_level_yaml_block(text, 'WORKOBJECT_ID_MAP', _format_workobject_id_map_block())
     path.write_text(text, encoding='utf-8')
 
 
@@ -559,6 +648,22 @@ def _format_tool_id_map_block() -> list[str]:
     lines = ['TOOL_ID_MAP:']
     for tool_id, name in dict(TOOL_ID_MAP).items():
         lines.append(f'  {int(tool_id)}: {name}')
+    return lines
+
+
+def _format_workobject_registry_block() -> list[str]:
+    lines = ['WORKOBJECT_REGISTRY:']
+    for name, values in dict(WORKOBJECT_REGISTRY).items():
+        lines.append(f'  {name}:')
+        for value in values:
+            lines.append(f'  - {_format_yaml_number(float(value))}')
+    return lines
+
+
+def _format_workobject_id_map_block() -> list[str]:
+    lines = ['WORKOBJECT_ID_MAP:']
+    for user_id, name in dict(WORKOBJECT_ID_MAP).items():
+        lines.append(f'  {int(user_id)}: {name}')
     return lines
 
 

@@ -409,6 +409,41 @@ class RuntimeApi:
             logger.error(f"REST /tool/registry exception: {exc}\n{traceback.format_exc()}")
             return ApiResponse({"success": False, "error": str(exc)}, 500)
 
+    def workobject_registry(self) -> ApiResponse:
+        return ApiResponse({"success": True, **self._gateway_or_local().workobject_registry()})
+
+    def active_workobject(self) -> ApiResponse:
+        return ApiResponse({"success": True, **self._gateway_or_local().active_workobject()})
+
+    def set_active_workobject(self, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = data or {}
+            if "user_id" not in payload:
+                raise ValueError("user_id is required")
+            active = self._gateway_or_local().set_active_workobject(int(payload.get("user_id")))
+            return ApiResponse({"success": True, **active})
+        except ValueError as exc:
+            return ApiResponse({"success": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            logger.error(f"REST /workobject/active exception: {exc}\n{traceback.format_exc()}")
+            return ApiResponse({"success": False, "error": str(exc)}, 500)
+
+    def update_workobject_registry(self, user_id: int, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = data or {}
+            snapshot = self._gateway_or_local().update_workobject_registry(
+                user_id=user_id,
+                name=payload.get("name"),
+                transform=payload.get("transform") or payload.get("origin"),
+                persist=bool(payload.get("persist", False)),
+            )
+            return ApiResponse({"success": True, **snapshot})
+        except ValueError as exc:
+            return ApiResponse({"success": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            logger.error(f"REST /workobject/registry exception: {exc}\n{traceback.format_exc()}")
+            return ApiResponse({"success": False, "error": str(exc)}, 500)
+
     def validate_pose(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
             payload = data or {}

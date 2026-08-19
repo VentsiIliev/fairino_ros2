@@ -160,6 +160,7 @@ class LocalRuntimeGateway(RuntimeGateway):
             "velocity": velocity,
             "status": self._runtime_status_dict(),
             "active_tool": getattr(node, "active_tool_name", "TOOL_0"),
+            "active_workobject": self.active_workobject(),
             "safety_walls": _to_jsonable(robot.get_safety_walls_status()),
             **self.runtime_state_snapshot(),
         }
@@ -472,6 +473,44 @@ class LocalRuntimeGateway(RuntimeGateway):
         resolved = config.resolve_tool_name(tool_id)
         if getattr(self.node, "active_tool_name", None) == resolved:
             self.node.set_tool(resolved)
+        return snapshot
+
+    def workobject_registry(self) -> dict:
+        return config.get_workobject_registry_snapshot()
+
+    def active_workobject(self) -> dict:
+        robot = self.robot
+        getter = getattr(robot, "get_active_workobject", None)
+        if callable(getter):
+            return _to_jsonable(getter())
+        return {
+            "user_id": 0,
+            "workobject_name": "WOBJ_0",
+            "origin": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+
+    def set_active_workobject(self, user_id: int) -> dict:
+        robot = self.robot
+        setter = getattr(robot, "set_active_workobject", None)
+        if not callable(setter):
+            raise RuntimeError("robot backend does not support active workobject")
+        setter(int(user_id))
+        return self.active_workobject()
+
+    def update_workobject_registry(self, user_id, name=None, transform=None, persist=False) -> dict:
+        snapshot = config.update_workobject_registry(
+            user_id=user_id,
+            name=name,
+            transform=transform,
+            persist=bool(persist),
+        )
+        resolved = config.resolve_workobject_name(user_id)
+        values = getattr(config, "WORKOBJECT_REGISTRY", {}).get(resolved)
+        if values is not None:
+            self.robot.set_workobject(WorkObject(*values), user_id=int(user_id))
+        active = self.active_workobject()
+        if int(active.get("user_id", -1)) == int(user_id):
+            self.set_active_workobject(int(user_id))
         return snapshot
 
     def set_workobject(self, origin, user_id=0) -> None:
