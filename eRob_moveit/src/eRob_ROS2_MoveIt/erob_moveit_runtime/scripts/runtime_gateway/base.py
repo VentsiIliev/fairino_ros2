@@ -198,6 +198,10 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_current_base_tcp_position(self) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_current_flange_position(self) -> Any:
         raise NotImplementedError
 

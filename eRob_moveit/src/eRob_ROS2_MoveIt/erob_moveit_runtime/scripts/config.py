@@ -22,6 +22,7 @@ DEFAULTS = {
     'TOPIC_JOINT_VELOCITY': '/joint_velocity',
     'TOPIC_JOINT_ACCELERATION': '/joint_acceleration',
     'TOPIC_PLANNING_SCENE': '/planning_scene',
+    'TOPIC_ATTACHED_COLLISION_OBJECT': '/attached_collision_object',
     'TOPIC_SAFETY_WALLS': '/safety_walls',
     'TOPIC_ACTIVE_TOOL_MARKERS': '/active_tool_markers',
     'ROBOT_STATUS_PUBLISH_ENABLED': True,

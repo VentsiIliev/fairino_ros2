@@ -377,6 +377,10 @@ class LocalRuntimeGateway(RuntimeGateway):
     def get_current_position(self):
         return self.robot.get_current_position()
 
+    def get_current_base_tcp_position(self):
+        getter = getattr(self.robot, "get_current_base_tcp_position", None)
+        return getter() if callable(getter) else self.robot.get_current_position(user_id=0)
+
     def get_current_flange_position(self):
         return self.robot.get_current_flange_position()
 

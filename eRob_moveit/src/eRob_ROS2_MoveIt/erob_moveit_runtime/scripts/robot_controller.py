@@ -116,7 +116,7 @@ class RobotController(Node):
         )
         self.active_tool_collision_pub = self.create_publisher(
             PlanningScene,
-            config.TOPIC_PLANNING_SCENE,
+            getattr(config, "TOPIC_PLANNING_SCENE", "/planning_scene"),
             10,
         )
         self.active_tool_marker_timer = None
@@ -466,15 +466,21 @@ class RobotController(Node):
 
     def _remove_active_tool_collision(self):
         try:
+            object_id = str(getattr(config, "ACTIVE_TOOL_COLLISION_ID", "active_tool_collision"))
             attached = AttachedCollisionObject()
             attached.link_name = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
-            attached.object.id = str(getattr(config, "ACTIVE_TOOL_COLLISION_ID", "active_tool_collision"))
+            attached.object.id = object_id
             attached.object.operation = CollisionObject.REMOVE
+
+            world_object = CollisionObject()
+            world_object.id = object_id
+            world_object.operation = CollisionObject.REMOVE
 
             scene = PlanningScene()
             scene.is_diff = True
             scene.robot_state.is_diff = True
             scene.robot_state.attached_collision_objects.append(attached)
+            scene.world.collision_objects.append(world_object)
             self.active_tool_collision_pub.publish(scene)
             self.get_logger().info(
                 f"[ActiveToolCollision] Removed active tool collision for {self.active_tool_name}"

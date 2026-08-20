@@ -1406,6 +1406,27 @@ class MoveItRobotBackend(IRobotBackend):
             print(f"get_current_position error: {e}")
             return None
 
+    def get_current_base_tcp_position(self):
+        """Return the active TCP pose in robot-base coordinates.
+
+        This deliberately does not apply any WorkObject transform. It is the
+        calibration-safe pose used to define WorkObjects with any calibrated
+        active tool.
+        """
+        if self.node is None:
+            return None
+        if getattr(self.node, "monitor", None) is not None:
+            data = self.node.monitor.get_latest_data()
+        else:
+            data = self.node.get_latest_data()
+        if data is None or "cartesian" not in data:
+            return None
+        try:
+            return data["cartesian"].tolist()
+        except Exception as e:
+            print(f"get_current_base_tcp_position error: {e}")
+            return None
+
     def get_current_flange_position(self):
         """
         Retrieves the current unmodified Cartesian source pose.

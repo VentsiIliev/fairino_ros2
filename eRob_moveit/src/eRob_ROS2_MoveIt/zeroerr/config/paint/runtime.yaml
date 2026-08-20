@@ -16,9 +16,17 @@ WORKOBJECT_REGISTRY:
   - 0
   - 0
   - 0
-  - 72
+  - 0
+  WOBJ_1:
+  - -280.642435642
+  - -59.2869787188
+  - 0.0616797868058
+  - 0
+  - 0
+  - 70.1797016725
 WORKOBJECT_ID_MAP:
   0: WOBJ_0
+  1: WOBJ_1
 DEFAULT_WORKOBJECT_ID: 0
 
 
@@ -128,15 +136,14 @@ TOOL_REGISTRY:
   - 0
   - 0
   TOOL_1:
-  - -0.157283595676
-  - -0.140764944892
-  - 171.548690347
+  - 0.0059329690067
+  - 0.273760275194
+  - 168.550614477
   - 0
   - 0
   - 0
 TOOL_ID_MAP:
   0: TOOL_0
   1: TOOL_1
-
 # Use Pilz CommandPlanner LIN for single-target /move/linear requests.
 MOVE_LIN_STRATEGY: cartesian_path

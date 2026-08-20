@@ -364,6 +364,12 @@ class RuntimeApi:
             return response_error("current position unavailable", 503)
         return ApiResponse({"success": True, "position": pos})
 
+    def base_tcp_position(self) -> ApiResponse:
+        pos = self._gateway_or_local().get_current_base_tcp_position()
+        if pos is None:
+            return response_error("current base TCP position unavailable", 503)
+        return ApiResponse({"success": True, "position": pos})
+
     def flange_position(self) -> ApiResponse:
         pos = self._gateway_or_local().get_current_flange_position()
         if pos is None:

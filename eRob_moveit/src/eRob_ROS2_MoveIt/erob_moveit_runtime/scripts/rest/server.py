@@ -422,6 +422,10 @@ def start_rest_server(
     def get_position():
         return api_response(runtime_api.current_position())
 
+    @app.route("/position/base_tcp", methods=["GET"])
+    def get_base_tcp_position():
+        return api_response(runtime_api.base_tcp_position())
+
     @app.route("/position/flange", methods=["GET"])
     def get_flange_position():
         return api_response(runtime_api.flange_position())
