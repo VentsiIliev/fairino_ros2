@@ -1098,7 +1098,8 @@ class MoveItRobotBackend(IRobotBackend):
         )
 
         for segment_index in range(1, segment_count + 1):
-            current_pos_wobj = self.get_current_position()
+            active_user_id = int(self.active_workobject_user_id)
+            current_pos_wobj = self.get_current_position(user_id=active_user_id)
             if current_pos_wobj is None or len(current_pos_wobj) < 6:
                 self.node.get_logger().error('[UNWIND_J6] Current Cartesian pose unavailable')
                 return -1
@@ -1133,6 +1134,7 @@ class MoveItRobotBackend(IRobotBackend):
                 joint_name=joint_name,
                 joint_start=current_value,
                 joint_target=current_value + math.radians(segment_delta_deg) / sign,
+                user_id=active_user_id,
             )
             if result != 0:
                 return result
@@ -1209,6 +1211,7 @@ class MoveItRobotBackend(IRobotBackend):
             joint_name=None,
             joint_start=None,
             joint_target=None,
+            user_id=0,
     ):
         if bool(getattr(config, 'EXECUTOR_POST_UNWIND_USE_DIRECT_IK', False)):
             result = self._send_rotational_unwind_direct_ik_path(
@@ -1220,6 +1223,7 @@ class MoveItRobotBackend(IRobotBackend):
                 joint_name=joint_name,
                 joint_start=joint_start,
                 joint_target=joint_target,
+                user_id=user_id,
             )
             if result == 0:
                 return 0
@@ -1234,6 +1238,7 @@ class MoveItRobotBackend(IRobotBackend):
             rotation_index,
             vel_scale,
             acc_scale,
+            user_id=user_id,
         )
 
     def _send_rotational_unwind_direct_ik_path(
@@ -1246,6 +1251,7 @@ class MoveItRobotBackend(IRobotBackend):
             joint_name=None,
             joint_start=None,
             joint_target=None,
+            user_id=0,
     ):
         started_at = perf_counter()
         direct_ik_step_deg = max(0.1, float(getattr(config, 'EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG', 4.0)))
@@ -1254,6 +1260,7 @@ class MoveItRobotBackend(IRobotBackend):
             target_pos_wobj,
             rotation_index,
             max_step_override_deg=direct_ik_step_deg,
+            user_id=user_id,
         )
         if len(waypoints_base) < 2:
             return -1
