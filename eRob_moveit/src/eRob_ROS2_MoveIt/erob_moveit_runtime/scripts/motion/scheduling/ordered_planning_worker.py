@@ -203,6 +203,7 @@ def _plan_blend_group(
         )
 
     planned_group = []
+    leading_noops = []
     group_target = list(previous_target)
     group_state = previous_state
 
@@ -216,13 +217,62 @@ def _plan_blend_group(
         )
 
         if bool(planned_member.get("noop", False)):
+            if not planned_group:
+                leading_noops.append((group_index, planned_member))
+                group_target = planned_member["target_position"]
+                group_state = planned_member["final_state"]
+                continue
             raise RuntimeError(
-                f"Cannot blend no-op segment {planned_member['label']!r}"
+                f"Cannot blend internal no-op segment {planned_member['label']!r}"
             )
 
         planned_group.append(planned_member)
         group_target = planned_member["target_position"]
         group_state = planned_member["final_state"]
+
+    for logical_index, noop_member in leading_noops:
+        hooks.mark_motion_timing(
+            hooks.node,
+            "ordered_segment_queued",
+            index=logical_index + 1,
+            label=noop_member.get("label"),
+            segment_type=noop_member.get("type"),
+            noop=True,
+            duration_s=perf_counter() - worker_started,
+        )
+        hooks.publish_planned(logical_index, noop_member)
+
+    if not planned_group:
+        last_noop = leading_noops[-1][1]
+        return (
+            group_end + 1,
+            list(last_noop["target_position"]),
+            last_noop["final_state"],
+        )
+
+    active_start_index = start_index + len(leading_noops)
+    if len(planned_group) == 1:
+        # A blend group needs at least two real motions. Re-plan the remaining
+        # member normally so its deferred raw trajectory is optimized.
+        only_member = hooks.plan_ordered_segment(
+            active_start_index,
+            segments[active_start_index],
+            leading_noops[-1][1]["target_position"],
+            leading_noops[-1][1]["final_state"],
+        )
+        hooks.mark_motion_timing(
+            hooks.node,
+            "ordered_segment_queued",
+            index=active_start_index + 1,
+            label=only_member.get("label"),
+            duration_s=perf_counter() - worker_started,
+        )
+        hooks.publish_planned(active_start_index, only_member)
+        return (
+            group_end + 1,
+            list(only_member["target_position"]),
+            only_member["final_state"],
+        )
 
     raw_blended, effective_radii = hooks.blend_builder.build(planned_group)
 
@@ -279,7 +329,7 @@ def _plan_blend_group(
     hooks.mark_motion_timing(
         hooks.node,
         "ordered_segment_queued",
-        index=start_index + 1,
+        index=active_start_index + 1,
         label=combined.get("label"),
         segment_type="blended",
         blend_group_size=len(planned_group),
@@ -287,10 +337,10 @@ def _plan_blend_group(
         duration_s=perf_counter() - worker_started,
     )
 
-    hooks.publish_planned(start_index, combined)
+    hooks.publish_planned(active_start_index, combined)
 
     for consumed_offset in range(1, len(planned_group)):
-        logical_index = start_index + consumed_offset
+        logical_index = active_start_index + consumed_offset
         member = planned_group[consumed_offset]
         consumed = {
             "type": "blend_consumed",
