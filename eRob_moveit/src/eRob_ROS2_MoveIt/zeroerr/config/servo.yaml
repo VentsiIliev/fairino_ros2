@@ -1,9 +1,10 @@
 update_period: 0.01
 publish_period: 0.01
 # Keep the rolling trajectory horizon short so Cartesian Servo stop commands
-# take effect promptly. At 250 mm/s, the previous 100 ms horizon could leave
-# up to 25 mm of already-scheduled motion after a stop request.
-max_expected_latency: 0.03
+# take effect promptly. MoveIt requires this to be greater than three publish
+# periods; low-CPU hardware runs Servo at 20 ms, so 65 ms is the shortest safe
+# configured horizon with a small scheduling margin.
+max_expected_latency: 0.065
 
 command_in_type: "speed_units"
 
