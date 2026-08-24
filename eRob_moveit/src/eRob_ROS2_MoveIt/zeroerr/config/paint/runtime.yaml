@@ -74,6 +74,15 @@ MOUNTING_SURFACE_COLLISION_ORIGIN:
 - 0.0
 - 0.0
 
+# Generic guarded passage. Its collision lid is present by default and may be
+# removed only for an authorized passage LIN descent/retract.
+MOTION_PASSAGES:
+- id: workpiece_drop_opening
+  object_id: motion_passage_lid_workpiece_drop_opening
+  frame: mounting_surface
+  box_size_m: [0.197, 0.307, 0.008]
+  origin_m: [0.3175, 0.0225, -0.004]
+
 # If Servo has already halted in contact with the fixture, allow only a
 # deliberate base +Z recovery command to back out, then restore collision checks.
 CARTESIAN_SERVO_COLLISION_ESCAPE_ENABLED: true

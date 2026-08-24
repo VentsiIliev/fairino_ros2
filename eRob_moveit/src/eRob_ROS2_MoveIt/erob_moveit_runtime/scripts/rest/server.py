@@ -432,6 +432,16 @@ def start_rest_server(
     def disable_safety_walls():
         return api_response(runtime_api.disable_safety_walls())
 
+    @app.route("/safety/passages", methods=["GET"])
+    def motion_passages_status():
+        return api_response(runtime_api.motion_passage_status())
+
+    @app.route("/safety/passages/<passage_id>", methods=["GET", "POST"])
+    def motion_passage(passage_id):
+        if request.method == "GET":
+            return api_response(runtime_api.motion_passage_status(passage_id))
+        return api_response(runtime_api.set_motion_passage_closed(passage_id, request.json))
+
     @app.route("/position/current", methods=["GET"])
     def get_position():
         return api_response(runtime_api.current_position())

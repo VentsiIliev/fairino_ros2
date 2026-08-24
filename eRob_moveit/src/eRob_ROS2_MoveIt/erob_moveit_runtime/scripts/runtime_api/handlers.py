@@ -395,6 +395,22 @@ class RuntimeApi:
         success = not bool(body.get("enabled", True)) and not body.get("error")
         return ApiResponse({**body, "success": success}, 200 if success else 500)
 
+    def motion_passage_status(self, passage_id: str | None = None) -> ApiResponse:
+        body = as_dict(
+            self._gateway_or_local().get_motion_passage_status(passage_id),
+            "invalid motion passage status",
+        )
+        return ApiResponse(body, 200 if body.get("success") else 404)
+
+    def set_motion_passage_closed(self, passage_id: str, data: dict[str, Any] | None) -> ApiResponse:
+        if not isinstance(data, dict) or not isinstance(data.get("closed"), bool):
+            return response_error("request requires boolean 'closed'", 400)
+        body = as_dict(
+            self._gateway_or_local().set_motion_passage_closed(passage_id, data["closed"]),
+            "invalid motion passage status",
+        )
+        return ApiResponse(body, 200 if body.get("success") else 404)
+
     def current_position(self) -> ApiResponse:
         pos = self._gateway_or_local().get_current_position()
         if pos is None:

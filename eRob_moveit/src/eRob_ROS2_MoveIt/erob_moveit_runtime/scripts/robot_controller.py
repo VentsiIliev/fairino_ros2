@@ -29,6 +29,7 @@ from backend.runtime_adapter import create_runtime_adapter
 
 from utils.transformation_utils import TransformationUtils
 from safety.safety_wall_manager import SafetyWallManager
+from safety.motion_passage_manager import MotionPassageManager
 from status.robot_monitor import RobotMonitor
 from status.robot_state_store import RobotStateStore
 from status.robot_status_publisher import RobotStatusPublisher
@@ -118,6 +119,11 @@ class RobotController(Node):
             PlanningScene,
             getattr(config, "TOPIC_PLANNING_SCENE", "/planning_scene"),
             10,
+        )
+        self.motion_passage_manager = MotionPassageManager(
+            self,
+            self.active_tool_collision_pub,
+            getattr(config, "MOTION_PASSAGES", []),
         )
         self.active_tool_marker_timer = None
         rviz_enabled = os.environ.get("ZEROERR_USE_RVIZ", "false").strip().lower() in {
@@ -324,11 +330,18 @@ class RobotController(Node):
         self.safety_manager.force_update()
         self.get_logger().info('[Init] Safety walls published')
         self._publish_mounting_surface_collision()
+        self.motion_passage_manager.publish_all_closed()
         self._publish_active_tool_collision()
 
         if hasattr(self, '_safety_init_timer'):
             self._safety_init_timer.cancel()
             self.destroy_timer(self._safety_init_timer)
+
+    def set_motion_passage_closed(self, passage_id: str, closed: bool) -> dict:
+        return self.motion_passage_manager.set_closed(passage_id, closed)
+
+    def get_motion_passage_status(self, passage_id: str | None = None) -> dict:
+        return self.motion_passage_manager.status(passage_id)
 
     def _active_tool_collision_enabled(self) -> bool:
         return bool(getattr(config, "ACTIVE_TOOL_COLLISION_ENABLED", False))

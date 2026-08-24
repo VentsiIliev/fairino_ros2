@@ -470,6 +470,12 @@ class LocalRuntimeGateway(RuntimeGateway):
     def disable_safety_walls(self):
         return self.robot.disable_safety_walls()
 
+    def get_motion_passage_status(self, passage_id=None):
+        return self.robot.get_motion_passage_status(passage_id)
+
+    def set_motion_passage_closed(self, passage_id, closed):
+        return self.robot.set_motion_passage_closed(passage_id, closed)
+
     # --- tools / workobject ------------------------------------------------
 
     def tool_registry(self) -> dict:

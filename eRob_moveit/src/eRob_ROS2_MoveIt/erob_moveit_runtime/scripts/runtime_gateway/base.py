@@ -287,6 +287,14 @@ class RuntimeGateway(ABC):
     def disable_safety_walls(self) -> Any:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_motion_passage_status(self, passage_id: str | None = None) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_motion_passage_closed(self, passage_id: str, closed: bool) -> Any:
+        raise NotImplementedError
+
     # --- tools / workobject ------------------------------------------------
 
     @abstractmethod
