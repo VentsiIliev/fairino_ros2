@@ -4,7 +4,7 @@ from __future__ import annotations
 from threading import Thread
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 
 from backend.backend_factory import create_robot_backend
 import config
@@ -13,10 +13,15 @@ from utils.work_object import WorkObject
 
 
 def ros_spin_thread(node: RobotController) -> None:
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except ExternalShutdownException:
         pass
+    finally:
+        executor.remove_node(node)
+        executor.shutdown()
 
 
 def initialize_robot_runtime(update_status=None):
