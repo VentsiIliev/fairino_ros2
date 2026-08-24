@@ -398,6 +398,20 @@ def start_rest_server(
     def execute_ordered_motion_chain():
         return api_response(runtime_api.execute_ordered_motion_chain(request.json))
 
+    @app.route("/execute/ordered_motion_chain/prepare", methods=["POST"])
+    def prepare_ordered_motion_chain():
+        return api_response(runtime_api.prepare_ordered_motion_chain(request.json))
+
+    @app.route("/execute/ordered_motion_chain/prepared/<plan_id>/execute", methods=["POST"])
+    def execute_prepared_ordered_motion_chain(plan_id):
+        return api_response(runtime_api.execute_prepared_ordered_motion_chain(plan_id))
+
+    @app.route("/execute/ordered_motion_chain/prepared/<plan_id>", methods=["GET", "DELETE"])
+    def prepared_ordered_motion_chain(plan_id):
+        if request.method == "DELETE":
+            return api_response(runtime_api.discard_prepared_ordered_motion_chain(plan_id))
+        return api_response(runtime_api.prepared_ordered_motion_chain_status(plan_id))
+
     @app.route("/unwind/joint6", methods=["POST"])
     def unwind_joint6():
         return api_response(runtime_api.unwind_joint6(request.json))

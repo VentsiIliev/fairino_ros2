@@ -137,6 +137,23 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
+                                     trajectory_optimizer=None) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def execute_prepared_ordered_motion_chain(self, plan_id: str) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def discard_prepared_ordered_motion_chain(self, plan_id: str) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def prepared_ordered_motion_chain_status(self, plan_id: str) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
     def unwind_joint6(
         self,
         blocking: bool = True,

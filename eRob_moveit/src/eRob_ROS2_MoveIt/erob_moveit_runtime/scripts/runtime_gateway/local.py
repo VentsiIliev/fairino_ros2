@@ -315,6 +315,21 @@ class LocalRuntimeGateway(RuntimeGateway):
             trajectory_optimizer=trajectory_optimizer,
         )
 
+    def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
+                                     trajectory_optimizer=None) -> dict:
+        return self.robot.prepare_ordered_motion_chain(
+            segments, start_position, tool, user, trajectory_optimizer
+        )
+
+    def execute_prepared_ordered_motion_chain(self, plan_id: str) -> dict:
+        return self.robot.execute_prepared_ordered_motion_chain(plan_id)
+
+    def discard_prepared_ordered_motion_chain(self, plan_id: str) -> dict:
+        return self.robot.discard_prepared_ordered_motion_chain(plan_id)
+
+    def prepared_ordered_motion_chain_status(self, plan_id: str) -> dict:
+        return self.robot.get_prepared_ordered_motion_chain(plan_id)
+
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None) -> int:
         return self.robot.unwind_joint6(
             blocking=blocking,

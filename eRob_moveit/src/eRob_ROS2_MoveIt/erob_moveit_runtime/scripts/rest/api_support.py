@@ -395,6 +395,16 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
     }
 
 
+def parse_prepare_ordered_motion_chain_request(data: dict[str, Any] | None) -> dict[str, Any]:
+    payload = parse_execute_ordered_motion_chain_request(data)
+    raw_start = (data or {}).get("start_position")
+    if not isinstance(raw_start, (list, tuple)) or len(raw_start) != 6:
+        raise ValueError("Missing 6-value 'start_position'")
+    payload["start_position"] = [float(value) for value in raw_start]
+    payload["blocking"] = True
+    return payload
+
+
 def parse_cartesian_servo_start_request(
     data: dict[str, Any] | None,
 ) -> dict[str, Any]:

@@ -30,6 +30,7 @@ def run_ordered_planning_and_execution(
     scheduler_bridge: Any,
     segments_count: int,
     config: OrderedPipelineRunnerConfig,
+    execution_authorized: Event | None = None,
 ) -> int:
     """Run ordered planning in one worker while consuming planned segments."""
 
@@ -42,6 +43,13 @@ def run_ordered_planning_and_execution(
     mark_motion_timing(node, "ordered_planner_submit_done")
 
     try:
+        if execution_authorized is not None:
+            mark_motion_timing(node, "ordered_execution_waiting_for_authorization")
+            while not execution_authorized.wait(timeout=0.1):
+                if bool(getattr(node, "_ordered_motion_chain_stop_requested", False)):
+                    stop_planning.set()
+                    return config.stopped_result
+            mark_motion_timing(node, "ordered_execution_authorized")
         return execute_ordered_planned_sequence(
             hooks=sequence_hooks,
             segments_count=segments_count,

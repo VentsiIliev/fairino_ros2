@@ -15,6 +15,7 @@ from rest.api_support import (
     parse_cartesian_servo_start_request,
     parse_cartesian_servo_update_request,
     parse_execute_ordered_motion_chain_request,
+    parse_prepare_ordered_motion_chain_request,
     parse_execute_path_request,
     parse_execute_sequence_request,
     parse_joint_jog_request,
@@ -305,6 +306,42 @@ class RuntimeApi:
             logger.error(f"Error executing ordered motion chain: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
         return self._motion_result(result)
+
+    def prepare_ordered_motion_chain(self, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = parse_prepare_ordered_motion_chain_request(data)
+            result = self._gateway_or_local().prepare_ordered_motion_chain(
+                segments=payload["segments"], start_position=payload["start_position"],
+                tool=payload["tool"], user=payload["user"],
+                trajectory_optimizer=payload["trajectory_optimizer"],
+            )
+            return ApiResponse({"success": True, **result}, 202)
+        except (ValueError, RuntimeError) as exc:
+            return response_error(str(exc), 409 if isinstance(exc, RuntimeError) else 400)
+
+    def execute_prepared_ordered_motion_chain(self, plan_id: str) -> ApiResponse:
+        try:
+            result = self._gateway_or_local().execute_prepared_ordered_motion_chain(plan_id)
+            success = result.get("state") == "completed" and result.get("result") == 0
+            return ApiResponse({"success": success, **result}, 200 if success else 500)
+        except KeyError as exc:
+            return response_error(str(exc), 404)
+        except RuntimeError as exc:
+            return response_error(str(exc), 409)
+
+    def discard_prepared_ordered_motion_chain(self, plan_id: str) -> ApiResponse:
+        try:
+            return ApiResponse({"success": True, **self._gateway_or_local().discard_prepared_ordered_motion_chain(plan_id)}, 200)
+        except KeyError as exc:
+            return response_error(str(exc), 404)
+        except RuntimeError as exc:
+            return response_error(str(exc), 409)
+
+    def prepared_ordered_motion_chain_status(self, plan_id: str) -> ApiResponse:
+        try:
+            return ApiResponse({"success": True, **self._gateway_or_local().prepared_ordered_motion_chain_status(plan_id)}, 200)
+        except KeyError as exc:
+            return response_error(str(exc), 404)
 
     def unwind_joint6(self, data: dict[str, Any] | None) -> ApiResponse:
         payload = data or {}

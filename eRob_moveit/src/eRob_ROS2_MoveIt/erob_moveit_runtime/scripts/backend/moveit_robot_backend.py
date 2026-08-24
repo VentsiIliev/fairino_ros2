@@ -12,6 +12,9 @@ from motion.servo.cartesian_servo.i_cartesian_servo import CartesianServo, Carte
 from utils.work_object import WorkObject
 from builtin_interfaces.msg import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
+from uuid import uuid4
 
 
 class MoveItRobotBackend(IRobotBackend):
@@ -38,6 +41,9 @@ class MoveItRobotBackend(IRobotBackend):
         self._cartesian_servo = cartesian_servo
         self._planned_jog = PlannedJogCapability(self)
         self._servo_jog = ServoJogCapability(self)
+        self._prepared_ordered_lock = Lock()
+        self._prepared_ordered = {}
+        self._prepared_ordered_executor = ThreadPoolExecutor(max_workers=1)
 
     # ---------------- WorkObject Methods ----------------
     def _build_workobject_registry(self, default_workobject=None):
@@ -570,6 +576,95 @@ class MoveItRobotBackend(IRobotBackend):
             return {"active": False}
         return dict(status)
 
+    def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
+                                     trajectory_optimizer=None):
+        if not isinstance(start_position, (list, tuple)) or len(start_position) != 6:
+            raise ValueError("start_position must contain 6 values")
+        with self._prepared_ordered_lock:
+            active = [item for item in self._prepared_ordered.values()
+                      if not item["future"].done()]
+            if active:
+                raise RuntimeError("an ordered motion chain is already prepared or executing")
+            plan_id = uuid4().hex
+            authorized = Event()
+            record = {
+                "plan_id": plan_id,
+                "state": "planning",
+                "authorized": authorized,
+                "created_at": time.time(),
+                "result": None,
+            }
+            self._prepared_ordered[plan_id] = record
+
+            def run_prepared():
+                try:
+                    result = self.execute_ordered_motion_chain(
+                        segments=segments,
+                        tool=tool,
+                        user=user,
+                        blocking=True,
+                        trajectory_optimizer=trajectory_optimizer,
+                        start_position=list(start_position),
+                        execution_authorized=authorized,
+                    )
+                    record["result"] = int(result)
+                    record["state"] = "completed" if result == 0 else "failed"
+                    return result
+                except Exception as exc:
+                    record["error"] = str(exc)
+                    record["state"] = "failed"
+                    record["result"] = -1
+                    raise
+
+            record["future"] = self._prepared_ordered_executor.submit(run_prepared)
+            return self._prepared_status(record)
+
+    def execute_prepared_ordered_motion_chain(self, plan_id, blocking=True):
+        with self._prepared_ordered_lock:
+            record = self._prepared_ordered.get(str(plan_id))
+            if record is None:
+                raise KeyError(f"unknown prepared plan {plan_id!r}")
+            if record["state"] in {"completed", "failed", "discarded"}:
+                raise RuntimeError(f"prepared plan is {record['state']}")
+            record["state"] = "executing"
+            record["authorized"].set()
+            future = record["future"]
+            status = self._prepared_status(record)
+        if blocking:
+            future.result()
+            return self.get_prepared_ordered_motion_chain(plan_id)
+        return status
+
+    def discard_prepared_ordered_motion_chain(self, plan_id):
+        with self._prepared_ordered_lock:
+            record = self._prepared_ordered.get(str(plan_id))
+            if record is None:
+                raise KeyError(f"unknown prepared plan {plan_id!r}")
+            if record["state"] == "executing":
+                raise RuntimeError("cannot discard a prepared plan after execution started")
+            record["state"] = "discarded"
+            setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+            record["authorized"].set()
+            return self._prepared_status(record)
+
+    def get_prepared_ordered_motion_chain(self, plan_id):
+        with self._prepared_ordered_lock:
+            record = self._prepared_ordered.get(str(plan_id))
+            if record is None:
+                raise KeyError(f"unknown prepared plan {plan_id!r}")
+            status = self._prepared_status(record)
+        status["pipeline"] = self.get_ordered_motion_chain_status()
+        return status
+
+    @staticmethod
+    def _prepared_status(record):
+        return {
+            "plan_id": record["plan_id"],
+            "state": record["state"],
+            "result": record.get("result"),
+            "created_at": record["created_at"],
+        }
+
     def _set_ordered_motion_chain_status(self, **updates):
         if self.node is None:
             return
@@ -582,7 +677,9 @@ class MoveItRobotBackend(IRobotBackend):
         )
         setattr(self.node, "_ordered_motion_chain_status", status)
 
-    def execute_ordered_motion_chain(self, segments, tool=0, user=0, blocking=True, trajectory_optimizer=None):
+    def execute_ordered_motion_chain(self, segments, tool=0, user=0, blocking=True,
+                                     trajectory_optimizer=None, start_position=None,
+                                     execution_authorized=None):
         started_at = perf_counter()
         if self.node is None or not segments:
             return -1
@@ -647,6 +744,8 @@ class MoveItRobotBackend(IRobotBackend):
                 scheduler_group_status=scheduler_group_status,
                 scheduler_group_states=scheduler_group_states,
                 scheduler_segment_states=scheduler_segment_states,
+                start_position=start_position,
+                execution_authorized=execution_authorized,
             )
         )
         drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
@@ -721,7 +820,9 @@ class MoveItRobotBackend(IRobotBackend):
             user=0,
             trajectory_optimizer=None,
             scheduler_group_status=(),
-            scheduler_segment_states=None):
+            scheduler_segment_states=None,
+            start_position=None,
+            execution_authorized=None):
         from motion.execution.ordered_execution import (
             OrderedPlannedSequenceHooks,
             OrderedPlannedSegmentExecutorConfig,
@@ -775,11 +876,32 @@ class MoveItRobotBackend(IRobotBackend):
         #
         # planning_node.force_safety_update()
         tool_transform = self.node.get_tool_transform(tool)
+        explicit_start_cartesian = None
+        explicit_start_state = None
+        if start_position is not None:
+            from motion.planning.planner_utils import _to_pose_list
+            from motion.planning.single_target import _resolve_start_state
+
+            explicit_start_cartesian = list(
+                self.apply_workobject(start_position, user_id=user)[:6]
+            )
+            start_poses, start_error = _to_pose_list(
+                planning_node,
+                [explicit_start_cartesian],
+                tool_transform,
+            )
+            if start_error is not None or not start_poses:
+                raise ValueError("prepared chain start_position failed safety validation")
+            explicit_start_state = _resolve_start_state(planning_node, start_poses[0])
+            if explicit_start_state is None:
+                raise RuntimeError("prepared chain start_position IK could not be resolved")
         initial_state = build_ordered_initial_planning_state(
             node=self.node,
             planning_node=planning_node,
             config_obj=config,
             trajectory_optimizer=trajectory_optimizer,
+            start_cartesian=explicit_start_cartesian,
+            start_state=explicit_start_state,
         )
         mark_motion_timing(
             self.node,
@@ -898,6 +1020,7 @@ class MoveItRobotBackend(IRobotBackend):
                 previous_execution_suppress=initial_state.previous_execution_suppress,
                 stopped_result=-14,
             ),
+            execution_authorized=execution_authorized,
         )
 
     def unwind_joint6(self, blocking=True, queue_if_busy=True, vel=None, acc=None):
@@ -1861,6 +1984,10 @@ class MoveItRobotBackend(IRobotBackend):
             }
 
         setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+        with self._prepared_ordered_lock:
+            for record in self._prepared_ordered.values():
+                if record["state"] not in {"completed", "failed", "discarded"}:
+                    record["authorized"].set()
         try:
             self.stop_servo_jog()
         except Exception as exc:
