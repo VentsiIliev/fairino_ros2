@@ -25,7 +25,7 @@ class MotionPassageManager:
             origin = list(passage.get("origin_m", []) or [])
             if not passage_id or len(size) != 3 or len(origin) != 3:
                 node.get_logger().error(
-                    "[MotionPassage] Ignoring invalid passage definition: %s", raw
+                    f"[MotionPassage] Ignoring invalid passage definition: {raw}"
                 )
                 continue
             self._passages[passage_id] = {
@@ -92,7 +92,7 @@ class MotionPassageManager:
         scene.is_diff = True
         scene.world.collision_objects.append(obj)
         self._publisher.publish(scene)
+        lid_state = "closed" if closed else "open"
         self._node.get_logger().info(
-            "[MotionPassage] passage=%s lid=%s object_id=%s",
-            passage["id"], "closed" if closed else "open", obj.id,
+            f"[MotionPassage] passage={passage['id']} lid={lid_state} object_id={obj.id}"
         )
