@@ -242,6 +242,7 @@ class RobotController(Node):
         self._ethercat_fault_reason = ""
         self._ethercat_fault_stop_issued = False
         self._ethercat_last_recovery_attempt_ts = 0.0
+        self._ethercat_fault_diagnostics_captured = False
         self._startup_auto_enable_thread = None
         self._motion_interlock_lock = Lock()
         self._motion_interlock_active = False
@@ -1410,6 +1411,9 @@ class RobotController(Node):
         if faulted:
             if not previous_fault or previous_reason != self._ethercat_fault_reason:
                 self.get_logger().error(f'[EtherCAT] Motion fault active: {self._ethercat_fault_reason}')
+            if not self._ethercat_fault_diagnostics_captured:
+                self._ethercat_fault_diagnostics_captured = True
+                self._capture_ethercat_fault_diagnostics()
             self._attempt_ethercat_recovery()
             should_stop = False
             with self._ethercat_fault_lock:
@@ -1422,7 +1426,35 @@ class RobotController(Node):
                 except Exception as exc:
                     self.get_logger().error(f'[EtherCAT] Failed to stop motion after EtherCAT fault: {exc}')
         elif previous_fault:
+            self._ethercat_fault_diagnostics_captured = False
             self.get_logger().info('[EtherCAT] Motion fault cleared; all slaves are OP')
+
+    def _capture_ethercat_fault_diagnostics(self):
+        """Log one pre-recovery bus snapshot per fault episode."""
+        self.get_logger().warning('[EtherCAT] Capturing pre-recovery diagnostic snapshot')
+        commands = (
+            ('master', ['ethercat', 'master']),
+            ('slaves_verbose', ['ethercat', 'slaves', '-v']),
+        )
+        for label, command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=ETHERCAT_WATCHDOG_CMD_TIMEOUT_S,
+                    check=False,
+                )
+                stdout = result.stdout.strip() or '<empty>'
+                stderr = result.stderr.strip() or '<empty>'
+                self.get_logger().warning(
+                    f'[EtherCATDiag] command={label} rc={result.returncode} '
+                    f'stdout={stdout!r} stderr={stderr!r}'
+                )
+            except Exception as exc:
+                self.get_logger().warning(
+                    f'[EtherCATDiag] command={label} failed: {exc}'
+                )
 
     def _attempt_ethercat_recovery(self):
         if self._fake_hardware:
@@ -1437,33 +1469,19 @@ class RobotController(Node):
 
         self.get_logger().warning('[EtherCAT] Attempting one recovery pass')
         try:
-            subprocess.run(
-                ['ethercat', 'states', '-p', '0-5', 'INIT'],
-                capture_output=True,
-                text=True,
-                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
-                check=False,
-            )
-            subprocess.run(
-                ['ethercat', 'states', '-p', '0-5', 'PREOP'],
-                capture_output=True,
-                text=True,
-                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
-                check=False,
-            )
-            subprocess.run(
-                ['ethercat', 'states', '-p', '0-5', 'SAFEOP'],
-                capture_output=True,
-                text=True,
-                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
-                check=False,
-            )
-            subprocess.run(
-                ['ethercat', 'states', '-p', '0-5', 'OP'],
-                capture_output=True,
-                text=True,
-                timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
-                check=False,
-            )
+            for requested_state in ('INIT', 'PREOP', 'SAFEOP', 'OP'):
+                result = subprocess.run(
+                    ['ethercat', 'states', '-p', '0-5', requested_state],
+                    capture_output=True,
+                    text=True,
+                    timeout=ETHERCAT_RECOVERY_CMD_TIMEOUT_S,
+                    check=False,
+                )
+                if result.returncode != 0 or result.stderr.strip():
+                    self.get_logger().warning(
+                        f'[EtherCATRecovery] requested_state={requested_state} '
+                        f'rc={result.returncode} stdout={result.stdout.strip()!r} '
+                        f'stderr={result.stderr.strip()!r}'
+                    )
         except Exception as exc:
             self.get_logger().warning(f'[EtherCAT] Recovery command failed: {exc}')
