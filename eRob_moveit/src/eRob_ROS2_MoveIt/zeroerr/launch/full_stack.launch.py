@@ -197,8 +197,6 @@ def generate_launch_description():
         ],
         condition=IfCondition(LaunchConfiguration("use_rviz")),
     )
-    demo_ld.add_action(rviz)
-
     config_dir = os.path.join(package_path, "config")
     fake_controllers_yaml = os.path.join(config_dir, "ros2_controllers_fake.yaml")
     real_controllers_yaml = os.path.join(config_dir, "ros2_controllers.yaml")
@@ -455,7 +453,7 @@ def generate_launch_description():
     demo_ld.add_action(_after_success(
         joint_state_broadcaster_spawner,
         "joint_state_broadcaster spawner",
-        [manipulator_controller_spawner],
+        [manipulator_controller_spawner, rviz],
     ))
     demo_ld.add_action(_after_success(
         manipulator_controller_spawner,

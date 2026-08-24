@@ -56,9 +56,10 @@ ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
 - tcp
 - Link_6
 
-# Publish the fixture as MoveIt world geometry so Servo collision checking sees
-# the mounting surface as scene geometry, not only as an RViz/URDF visual.
-MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED: true
+# Disabled because mounting_surface now has a 12-box URDF collision model that
+# preserves its openings. The legacy world box obscures that model in RViz and
+# incorrectly treats the opening as solid.
+MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED: false
 MOUNTING_SURFACE_COLLISION_OBJECT_ID: mounting_surface_collision
 MOUNTING_SURFACE_COLLISION_OBJECT_FRAME: mounting_surface
 MOUNTING_SURFACE_COLLISION_BOX_M:
