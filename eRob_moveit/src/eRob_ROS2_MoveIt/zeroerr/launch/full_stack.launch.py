@@ -19,12 +19,36 @@ from zeroerr_launch.runtime_config import (
 
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, RegisterEventHandler, SetEnvironmentVariable, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, RegisterEventHandler, SetEnvironmentVariable
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
 from moveit_configs_utils.launches import generate_static_virtual_joint_tfs_launch
+
+
+def _continue_on_success(event, context, *, label, actions):
+    """Return follow-up actions only when the process that triggered us succeeded."""
+    if event.returncode == 0:
+        return actions
+    return [
+        LogInfo(msg=f"[ZEROERR] {label} failed (exit {event.returncode}); dependent startup stopped")
+    ]
+
+
+def _after_success(target, label, actions, condition=None):
+    def handle_exit(event, context):
+        return _continue_on_success(
+            event, context, label=label, actions=actions
+        )
+
+    return RegisterEventHandler(
+        OnProcessExit(
+            target_action=target,
+            on_exit=handle_exit,
+        ),
+        condition=condition,
+    )
 
 
 def generate_launch_description():
@@ -214,11 +238,10 @@ def generate_launch_description():
         arguments=["joint_state_broadcaster"],
         output="screen",
     )
-    demo_ld.add_action(servo_node)
-    demo_ld.add_action(manipulator_controller_spawner)
     demo_ld.add_action(joint_state_broadcaster_spawner)
 
     wait_for_slaves_op = os.path.join(package_path, "scripts", "WaitForSlavesOp.sh")
+    wait_for_ros = os.path.join(package_path, "scripts", "wait_for_ros.py")
     state_publisher_params = load_state_publisher_params(package_path)
 
     demo_ld.add_action(
@@ -314,8 +337,6 @@ def generate_launch_description():
         condition=UnlessCondition(use_fake_hardware),
         output="screen",
     )
-    demo_ld.add_action(TimerAction(period=3.0, actions=[drive_enable_set_spawner]))
-    demo_ld.add_action(TimerAction(period=4.0, actions=[drive_disable_set_spawner]))
 
     ipp_helper_node = Node(
         package="erob_moveit_runtime",
@@ -429,76 +450,95 @@ def generate_launch_description():
         prefix=non_rt_prefix,
     )
 
-    # Real hardware keeps the existing startup order unchanged.
-    demo_ld.add_action(
-        TimerAction(
-            period=1.0,
-            actions=[zeroerr_runtime],
-            condition=UnlessCondition(use_fake_hardware),
-        )
-    )
-    demo_ld.add_action(TimerAction(period=2.0, actions=[zeroerr_state_publisher]))
+    # Controller spawners already wait for controller_manager. Chain them and
+    # only start state consumers after each preceding spawner exits cleanly.
+    demo_ld.add_action(_after_success(
+        joint_state_broadcaster_spawner,
+        "joint_state_broadcaster spawner",
+        [manipulator_controller_spawner],
+    ))
+    demo_ld.add_action(_after_success(
+        manipulator_controller_spawner,
+        "manipulator_controller spawner",
+        [zeroerr_state_publisher, servo_node],
+    ))
 
-    # Fake hardware must first produce a real Cartesian state from
-    # GenericSystem -> /joint_states -> TF -> /cartesian_position. Start the
-    # normal runtime only after one Cartesian sample has actually arrived so
-    # the production runtime code does not need fake-specific motion logic.
-    fake_cartesian_ready = ExecuteProcess(
-        cmd=[
-            "bash",
-            "-lc",
-            "timeout 15s ros2 topic echo /cartesian_position --once >/dev/null 2>&1",
-        ],
-        condition=IfCondition(use_fake_hardware),
+    demo_ld.add_action(_after_success(
+        manipulator_controller_spawner,
+        "manipulator_controller spawner",
+        [drive_enable_set_spawner],
+        condition=UnlessCondition(use_fake_hardware),
+    ))
+    demo_ld.add_action(_after_success(
+        drive_enable_set_spawner,
+        "drive_enable_set_controller spawner",
+        [drive_disable_set_spawner],
+        condition=UnlessCondition(use_fake_hardware),
+    ))
+
+    moveit_ready = ExecuteProcess(
+        cmd=[wait_for_ros, "--service", "/get_planning_scene"],
         output="screen",
     )
-    demo_ld.add_action(
-        TimerAction(
-            period=2.1,
-            actions=[fake_cartesian_ready],
-            condition=IfCondition(use_fake_hardware),
-        )
-    )
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=fake_cartesian_ready,
-                on_exit=[
-                    LogInfo(msg="[ZEROERR] Fake Cartesian state is available; starting runtime"),
-                    zeroerr_runtime,
-                ],
-            ),
-            condition=IfCondition(use_fake_hardware),
-        )
-    )
-
-    demo_ld.add_action(TimerAction(period=5.0, actions=[ipp_helper_node]))
-    demo_ld.add_action(TimerAction(period=6.5, actions=[ruckig_helper_node]))
-    demo_ld.add_action(TimerAction(period=8.0, actions=[contour_ik_helper_node]))
-    demo_ld.add_action(TimerAction(period=8.5, actions=[ptp_helper_node]))
-    demo_ld.add_action(TimerAction(period=9.0, actions=[linked_lin_helper_node]))
-    demo_ld.add_action(TimerAction(period=9.5, actions=[trajectory_state_validator_node]))
-
-    delayed_zeroerr_actions = [
-        TimerAction(period=10.0, actions=[ethercat_sdo_server]),
+    demo_ld.add_action(moveit_ready)
+    helper_nodes = [
+        ipp_helper_node,
+        ruckig_helper_node,
+        contour_ik_helper_node,
+        ptp_helper_node,
+        linked_lin_helper_node,
+        trajectory_state_validator_node,
     ]
-    if bool(runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
-        delayed_zeroerr_actions.append(
-            TimerAction(period=42.0, actions=[zeroerr_drive_diagnostics])
-        )
-    if bool(runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
-        delayed_zeroerr_actions.append(
-            TimerAction(period=50.0, actions=[zeroerr_error_monitor])
-        )
+    demo_ld.add_action(_after_success(moveit_ready, "MoveIt readiness check", helper_nodes))
 
-    demo_ld.add_action(
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=wait_for_op_process,
-                on_exit=delayed_zeroerr_actions,
-            ),
-            condition=UnlessCondition(use_fake_hardware),
-        )
+    runtime_ready = ExecuteProcess(
+        cmd=[
+            wait_for_ros,
+            "--topic", "/joint_states",
+            "--topic", "/cartesian_position",
+            "--service", "/apply_ipp",
+            "--service", "/apply_ruckig",
+            "--service", "/compute_contour_ik",
+            "--service", "/compute_ptp",
+            "--service", "/compute_linked_lin",
+            "--service", "/validate_trajectory_states",
+        ],
+        output="screen",
     )
+    demo_ld.add_action(runtime_ready)
+    demo_ld.add_action(_after_success(runtime_ready, "runtime readiness check", [zeroerr_runtime]))
+
+    # EtherCAT auxiliary services start after the bus is demonstrably in OP.
+    demo_ld.add_action(_after_success(
+        wait_for_op_process,
+        "EtherCAT OP readiness check",
+        [ethercat_sdo_server],
+        condition=UnlessCondition(use_fake_hardware),
+    ))
+
+    sdo_ready = ExecuteProcess(
+        cmd=[wait_for_ros, "--service", "/ethercat_manager/get_sdo"],
+        condition=UnlessCondition(use_fake_hardware),
+        output="screen",
+    )
+    demo_ld.add_action(_after_success(
+        wait_for_op_process,
+        "EtherCAT OP readiness check",
+        [sdo_ready],
+        condition=UnlessCondition(use_fake_hardware),
+    ))
+
+    sdo_dependents = []
+    if bool(runtime_value(package_path, "ZEROERR_DRIVE_DIAGNOSTICS_ENABLED", False)):
+        sdo_dependents.append(zeroerr_drive_diagnostics)
+    if bool(runtime_value(package_path, "ZEROERR_ERROR_MONITOR_ENABLED", False)):
+        sdo_dependents.append(zeroerr_error_monitor)
+    if sdo_dependents:
+        demo_ld.add_action(_after_success(
+            sdo_ready,
+            "EtherCAT SDO readiness check",
+            sdo_dependents,
+            condition=UnlessCondition(use_fake_hardware),
+        ))
 
     return demo_ld

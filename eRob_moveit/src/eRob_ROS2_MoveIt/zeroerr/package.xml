@@ -44,6 +44,7 @@
   <exec_depend>erob_arm</exec_depend>
   <exec_depend>erob_moveit_runtime</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>interactive_markers</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>

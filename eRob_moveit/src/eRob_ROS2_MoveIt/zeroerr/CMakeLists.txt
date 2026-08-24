@@ -41,6 +41,7 @@ install(PROGRAMS
   scripts/EtherCatStart.sh
   scripts/PollEthercat.sh
   scripts/WaitForSlavesOp.sh
+  scripts/wait_for_ros.py
   scripts/StartMoveIt.sh
   DESTINATION share/${PROJECT_NAME}/scripts
 )
