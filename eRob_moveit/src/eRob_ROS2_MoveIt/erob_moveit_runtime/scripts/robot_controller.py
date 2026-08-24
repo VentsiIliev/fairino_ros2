@@ -196,9 +196,16 @@ class RobotController(Node):
             marker_publish_interval=MARKER_PUBLISH_INTERVAL_S
         )
 
-        # Defer initial safety wall publishing to speed up initialization
-        # Will be published on first use or after 1 second
-        self._safety_init_timer = self.create_timer(1.0, self._delayed_safety_init)
+        # Planning-scene publication can block while MoveIt subscribers catch up.
+        # Keep delayed initialization out of the default mutually-exclusive group;
+        # otherwise it prevents state-validity responses from completing and leaves
+        # short Jacobian moves queued forever without a cancellable goal handle.
+        self._safety_init_callback_group = ReentrantCallbackGroup()
+        self._safety_init_timer = self.create_timer(
+            1.0,
+            self._delayed_safety_init,
+            callback_group=self._safety_init_callback_group,
+        )
 
         # ROS clients
         self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
