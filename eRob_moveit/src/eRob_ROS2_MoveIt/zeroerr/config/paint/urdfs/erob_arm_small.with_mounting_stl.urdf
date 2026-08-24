@@ -287,10 +287,13 @@
         <color rgba="1.0 1.0 1.0 1.0"/>
       </material>
     </visual>
-    <collision name="mounted_fixture_collision">
-      <origin xyz="0.1000 0.57645 0.15800" rpy="0 0 0"/>
+    <!-- Keep collision geometry aligned with the rendered CAD surface.  The
+         previous small fixture box left most of the plate invisible to MoveIt
+         Servo and therefore could not stop motion over its solid regions. -->
+    <collision name="mounting_surface_collision">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.115 0.190 0.1475"/>
+        <mesh filename="package://zeroerr/meshes/paint/latest_mounting.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
