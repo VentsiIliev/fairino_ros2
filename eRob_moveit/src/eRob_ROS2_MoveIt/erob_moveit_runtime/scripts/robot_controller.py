@@ -15,6 +15,7 @@ from moveit_msgs.msg import AttachedCollisionObject, CollisionObject, MotionSequ
 from moveit_msgs.srv import GetCartesianPath, GetMotionSequence
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
@@ -201,13 +202,16 @@ class RobotController(Node):
 
         # ROS clients
         self.controller_client = ActionClient(self, FollowJointTrajectory, ACTION_FOLLOW_TRAJECTORY)
+        self._controller_manager_callback_group = ReentrantCallbackGroup()
         self.list_controllers_client = self.create_client(
             ListControllers,
             '/controller_manager/list_controllers',
+            callback_group=self._controller_manager_callback_group,
         )
         self.switch_controller_client = self.create_client(
             SwitchController,
             '/controller_manager/switch_controller',
+            callback_group=self._controller_manager_callback_group,
         )
         self.cart_path_client = self.create_client(GetCartesianPath, SERVICE_CARTESIAN_PATH)
         self.sequence_client = self.create_client(GetMotionSequence, SERVICE_MOTION_SEQUENCE)
@@ -1112,6 +1116,7 @@ class RobotController(Node):
 
         future.add_done_callback(_done_callback)
         if not event.wait(timeout_s):
+            future.cancel()
             return None
         if result["error"] is not None:
             self.get_logger().error(f'[DriveEnable] Service future failed: {result["error"]}')
