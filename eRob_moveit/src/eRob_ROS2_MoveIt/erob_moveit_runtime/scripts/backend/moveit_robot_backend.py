@@ -744,8 +744,6 @@ class MoveItRobotBackend(IRobotBackend):
                 scheduler_group_status=scheduler_group_status,
                 scheduler_group_states=scheduler_group_states,
                 scheduler_segment_states=scheduler_segment_states,
-                start_position=start_position,
-                execution_authorized=execution_authorized,
             )
         )
         drive_error = self._reject_if_drive_not_enabled("EXECUTE_ORDERED_MOTION_CHAIN")
@@ -786,6 +784,8 @@ class MoveItRobotBackend(IRobotBackend):
                 trajectory_optimizer=trajectory_optimizer,
                 scheduler_group_status=scheduler_group_status,
                 scheduler_segment_states=scheduler_segment_states,
+                start_position=start_position,
+                execution_authorized=execution_authorized,
             )
             if result != 0:
                 self._set_ordered_motion_chain_status(
