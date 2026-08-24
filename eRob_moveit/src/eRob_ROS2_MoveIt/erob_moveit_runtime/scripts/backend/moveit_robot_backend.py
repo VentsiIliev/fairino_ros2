@@ -1500,6 +1500,18 @@ class MoveItRobotBackend(IRobotBackend):
             return {"enabled": False, "error": "Robot controller unavailable"}
         return self.node.get_safety_walls_status()
 
+    def get_motion_passage_status(self, passage_id=None):
+        """Return reusable motion-passage state from the ROS controller."""
+        if self.node is None:
+            return {"error": "Robot controller unavailable"}
+        return self.node.get_motion_passage_status(passage_id)
+
+    def set_motion_passage_closed(self, passage_id, closed):
+        """Add or remove a motion-passage collision lid."""
+        if self.node is None:
+            return {"error": "Robot controller unavailable"}
+        return self.node.set_motion_passage_closed(passage_id, bool(closed))
+
     # ---------------- Status Methods ----------------
     def get_current_position(self, user_id=None):
         """
