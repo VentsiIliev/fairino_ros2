@@ -1,6 +1,9 @@
 update_period: 0.01
 publish_period: 0.01
-max_expected_latency: 0.1
+# Keep the rolling trajectory horizon short so Cartesian Servo stop commands
+# take effect promptly. At 250 mm/s, the previous 100 ms horizon could leave
+# up to 25 mm of already-scheduled motion after a stop request.
+max_expected_latency: 0.03
 
 command_in_type: "speed_units"
 
