@@ -236,8 +236,10 @@ private:
                         moveit_servo::KinematicState& current_state, const rclcpp::Time& cur_time,
                         bool use_trajectory)
   {
-    if (next_joint_state && servo_->getStatus() != moveit_servo::StatusCode::INVALID &&
-        servo_->getStatus() != moveit_servo::StatusCode::HALT_FOR_COLLISION)
+    const auto status = servo_->getStatus();
+    const bool collision_halt_blocks_output =
+        status == moveit_servo::StatusCode::HALT_FOR_COLLISION && collision_checking_enabled_;
+    if (next_joint_state && status != moveit_servo::StatusCode::INVALID && !collision_halt_blocks_output)
     {
       if (use_trajectory)
       {
