@@ -201,6 +201,12 @@ class ServoJogCapability(JogCapability):
                 node.get_logger().error(f"[SERVO_JOG] Servo start failed: {start_result.value}")
             return False
 
+        begin_manual_jog = getattr(servo, "begin_manual_jog", None)
+        if callable(begin_manual_jog) and not begin_manual_jog():
+            node.get_logger().error("[SERVO_JOG] Could not disable collision checking for manual jog")
+            self._stop_servo()
+            return False
+
         update_result = servo.update(
             linear_mm_s=linear_mm_s,
             angular_deg_s=angular_deg_s,
@@ -225,6 +231,9 @@ class ServoJogCapability(JogCapability):
         except Exception:
             node.get_logger().debug("[SERVO_JOG] zero update failed", exc_info=True)
         stop_result = servo.stop()
+        end_manual_jog = getattr(servo, "end_manual_jog", None)
+        if callable(end_manual_jog):
+            end_manual_jog()
         if stop_result not in (CartesianServoResult.OK, CartesianServoResult.NOT_STARTED):
             node.get_logger().warning(f"[SERVO_JOG] Servo stop returned {stop_result.value}")
             return False
