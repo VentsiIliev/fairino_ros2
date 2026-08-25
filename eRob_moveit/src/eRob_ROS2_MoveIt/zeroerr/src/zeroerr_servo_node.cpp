@@ -247,8 +247,23 @@ private:
     // cycle was halted.  Keep INVALID as a hard stop, and retain the normal
     // collision halt whenever collision checking is enabled (production Servo).
     const auto status = servo_->getStatus();
+    const bool collision_halted = status == moveit_servo::StatusCode::HALT_FOR_COLLISION;
+    if (collision_halted && !collision_halt_latched_)
+    {
+      // A trajectory command can contain points in the future.  Never leave
+      // those points queued when collision stopping becomes active: a later
+      // recovery jog must start from measured joints, not finish the old
+      // trajectory (the observed "catch-up" swing).
+      rebaseToMeasuredStateAndHold(current_state, cur_time, use_trajectory, "collision halt");
+      collision_halt_latched_ = true;
+      return;
+    }
+    if (!collision_halted)
+    {
+      collision_halt_latched_ = false;
+    }
     const bool collision_halt_recovery =
-        status == moveit_servo::StatusCode::HALT_FOR_COLLISION && !collision_checking_enabled_;
+        collision_halted && !collision_checking_enabled_;
     if (next_joint_state && status != moveit_servo::StatusCode::INVALID &&
         (status != moveit_servo::StatusCode::HALT_FOR_COLLISION || collision_halt_recovery))
     {
@@ -277,6 +292,39 @@ private:
     }
   }
 
+  void rebaseToMeasuredStateAndHold(moveit_servo::KinematicState& current_state, const rclcpp::Time& cur_time,
+                                    bool use_trajectory, const char* reason)
+  {
+    joint_cmd_rolling_window_.clear();
+    {
+      std::lock_guard<std::mutex> command_guard(command_lock_);
+      new_joint_jog_msg_ = false;
+      new_twist_msg_ = false;
+      new_pose_msg_ = false;
+    }
+
+    current_state = servo_->getCurrentRobotState(true);
+    current_state.velocities *= 0.0;
+    current_state.time_stamp = cur_time;
+    last_commanded_state_ = current_state;
+    servo_->resetSmoothing(current_state);
+
+    // Replacing the controller's active topic trajectory with a measured-state
+    // hold is essential. Clearing our local deque alone cannot retract points
+    // that have already been accepted by JointTrajectoryController.
+    if (use_trajectory && trajectory_publisher_)
+    {
+      moveit_servo::updateSlidingWindow(current_state, joint_cmd_rolling_window_,
+                                        servo_params_.max_expected_latency, cur_time);
+      if (const auto hold = moveit_servo::composeTrajectoryMessage(servo_params_, joint_cmd_rolling_window_))
+      {
+        trajectory_publisher_->publish(hold.value());
+      }
+      joint_cmd_rolling_window_.clear();
+    }
+    RCLCPP_ERROR(node_->get_logger(), "Servo queue flushed and measured-position hold published: %s", reason);
+  }
+
   void pauseServo(const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
                   const std::shared_ptr<std_srvs::srv::SetBool::Response>& response)
   {
@@ -293,10 +341,9 @@ private:
     response->success = (servo_paused_ == request->data);
     if (servo_paused_)
     {
-      joint_cmd_rolling_window_.clear();
-      new_joint_jog_msg_ = false;
-      new_twist_msg_ = false;
-      new_pose_msg_ = false;
+      auto measured_state = servo_->getCurrentRobotState(true);
+      rebaseToMeasuredStateAndHold(measured_state, node_->now(),
+                                   servo_params_.command_out_type == "trajectory_msgs/JointTrajectory", "Servo stop");
       if (collision_checking_enabled_)
       {
         servo_->setCollisionChecking(false);
@@ -338,12 +385,10 @@ private:
       // actual measured state before accepting an escape command; otherwise
       // the first jog after disabling collision checking may start from stale
       // state and move in an unexpected direction.
-      joint_cmd_rolling_window_.clear();
-      new_joint_jog_msg_ = false;
-      new_twist_msg_ = false;
-      new_pose_msg_ = false;
-      last_commanded_state_ = servo_->getCurrentRobotState(true);
-      servo_->resetSmoothing(last_commanded_state_);
+      auto measured_state = servo_->getCurrentRobotState(true);
+      rebaseToMeasuredStateAndHold(measured_state, node_->now(),
+                                   servo_params_.command_out_type == "trajectory_msgs/JointTrajectory",
+                                   "collision recovery armed");
       RCLCPP_WARN(node_->get_logger(),
                   "Collision checking disabled: Servo command state rebased to live robot state");
     }
@@ -546,6 +591,7 @@ private:
   std::thread servo_loop_thread_;
   std::mutex lock_;
   std::mutex command_lock_;
+  bool collision_halt_latched_{ false };
   std::deque<moveit_servo::KinematicState> joint_cmd_rolling_window_;
 };
 }  // namespace
