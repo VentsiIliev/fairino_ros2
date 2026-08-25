@@ -178,7 +178,11 @@ private:
     {
       if (servo_paused_)
       {
-        servo_->resetSmoothing(current_state);
+        if (!smoothing_halted_)
+        {
+          servo_->resetSmoothing(current_state);
+          smoothing_halted_ = true;
+        }
         paused_frequency.sleep();
         continue;
       }
@@ -263,12 +267,20 @@ private:
         multi_array_publisher_->publish(moveit_servo::composeMultiArrayMessage(servo_->getParams(), next_joint_state.value()));
       }
       last_commanded_state_ = next_joint_state.value();
+      smoothing_halted_ = false;
     }
     else
     {
       moveit_servo::updateSlidingWindow(current_state, joint_cmd_rolling_window_, servo_params_.max_expected_latency,
                                         cur_time);
-      servo_->resetSmoothing(current_state);
+      // Reset once when entering a halt. Repeated resets make an isolated
+      // command gap restart the acceleration filter on every Servo cycle,
+      // which produces visible velocity discontinuities when commands resume.
+      if (!smoothing_halted_)
+      {
+        servo_->resetSmoothing(current_state);
+        smoothing_halted_ = true;
+      }
     }
   }
 
@@ -303,6 +315,7 @@ private:
     {
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
+      smoothing_halted_ = true;
       joint_cmd_rolling_window_.clear();
       if (servo_params_.check_collisions && !collision_checking_enabled_)
       {
@@ -339,6 +352,7 @@ private:
       new_pose_msg_ = false;
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
+      smoothing_halted_ = true;
       RCLCPP_WARN(node_->get_logger(),
                   "Collision checking disabled: Servo command state rebased to live robot state");
     }
@@ -393,18 +407,21 @@ private:
 
   void jointJogCallback(const control_msgs::msg::JointJog::ConstSharedPtr& msg)
   {
+    std::lock_guard<std::mutex> lock_guard(lock_);
     latest_joint_jog_ = *msg;
     new_joint_jog_msg_ = true;
   }
 
   void twistCallback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr& msg)
   {
+    std::lock_guard<std::mutex> lock_guard(lock_);
     latest_twist_ = *msg;
     new_twist_msg_ = true;
   }
 
   void poseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr& msg)
   {
+    std::lock_guard<std::mutex> lock_guard(lock_);
     latest_pose_ = *msg;
     new_pose_msg_ = true;
   }
@@ -519,6 +536,7 @@ private:
   std::atomic<bool> new_joint_jog_msg_{ false };
   std::atomic<bool> new_twist_msg_{ false };
   std::atomic<bool> new_pose_msg_{ false };
+  std::atomic<bool> smoothing_halted_{ true };
 
   std::thread servo_loop_thread_;
   std::mutex lock_;

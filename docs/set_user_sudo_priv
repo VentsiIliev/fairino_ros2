@@ -1,0 +1,13 @@
+  plp ALL=(root) NOPASSWD: /etc/init.d/ethercat start, /etc/init.d/ethercat stop, /etc/init.d/ethercat restart
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpu*/online
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /proc/irq/*/smp_affinity
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/zeroerr_control/cpuset.cpus
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/zeroerr_control/cpuset.mems
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/zeroerr_control/cgroup.procs
+  plp ALL=(root) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/cgroup.subtree_control
+  plp ALL=(root) NOPASSWD: /usr/bin/mkdir -p /sys/fs/cgroup/zeroerr_control
+  plp ALL=(root) NOPASSWD: /usr/bin/chmod a+rw /dev/EtherCAT0
+  plp ALL=(root) NOPASSWD: /usr/bin/taskset -cp *
+  plp ALL=(root) NOPASSWD: /usr/bin/chrt -f -p *
+  plp ALL=(root) NOPASSWD: /usr/bin/pkill -f EtherCAT
