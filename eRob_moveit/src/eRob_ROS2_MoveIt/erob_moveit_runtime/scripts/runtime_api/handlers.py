@@ -165,6 +165,7 @@ class RuntimeApi:
             acc=payload["acc"],
             blocking=payload["blocking"],
             trajectory_optimizer=payload["trajectory_optimizer"],
+            allow_collision_recovery=payload["allow_collision_recovery"],
         )
         return self._motion_result(result)
 

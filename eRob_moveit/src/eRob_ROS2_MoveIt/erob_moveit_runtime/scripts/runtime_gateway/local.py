@@ -231,6 +231,7 @@ class LocalRuntimeGateway(RuntimeGateway):
         acc=30,
         blocking=True,
         trajectory_optimizer=None,
+        allow_collision_recovery=False,
     ) -> int:
         try:
             from motion.move_linear_timing import begin as begin_move_linear_timing
@@ -245,6 +246,7 @@ class LocalRuntimeGateway(RuntimeGateway):
             acc=acc,
             blocking=blocking,
             trajectory_optimizer=trajectory_optimizer,
+            allow_collision_recovery=allow_collision_recovery,
         )
 
     def move_ptp(

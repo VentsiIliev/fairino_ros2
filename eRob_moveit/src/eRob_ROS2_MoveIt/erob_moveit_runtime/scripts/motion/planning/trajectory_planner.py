@@ -1417,6 +1417,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
                     vel_scaling,
                     acc_scaling,
                     generation,
+                    avoid_collisions=avoid_collisions,
                 )
                 if ok:
                     return

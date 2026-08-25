@@ -255,6 +255,7 @@ def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
         "acc": payload.get("acc", config.DEFAULT_ACC_PERCENT),
         "blocking": payload.get("blocking", True),
         "trajectory_optimizer": trajectory_optimizer,
+        "allow_collision_recovery": bool(payload.get("allow_collision_recovery", False)),
     }
 
 

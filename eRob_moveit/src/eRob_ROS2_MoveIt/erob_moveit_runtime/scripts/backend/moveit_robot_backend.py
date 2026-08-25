@@ -159,7 +159,7 @@ class MoveItRobotBackend(IRobotBackend):
             return config.MOTION_ERROR_DRIVE_NOT_ENABLED
         return None
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None, allow_collision_recovery=False):
         started_at = perf_counter()
         if len(position) != 6:
             return -1
@@ -188,18 +188,21 @@ class MoveItRobotBackend(IRobotBackend):
             tool_transform = self.node.get_tool_transform(tool)
             vel_scale = max(0.0, min(1.0, vel / 100.0))
             acc_scale = max(0.0, min(1.0, acc / 100.0))
+            avoid_collisions = not bool(allow_collision_recovery)
             x, y, z, rx, ry, rz = position_base
             from motion.strategies import SingleTargetStrategy
             if trajectory_optimizer is not None:
                 result = self.node.execute(SingleTargetStrategy(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
+                    avoid_collisions=avoid_collisions,
                     trajectory_optimizer=trajectory_optimizer,
                 ))
             else:
                 result = self.node.execute(SingleTargetStrategy(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
+                    avoid_collisions=avoid_collisions,
                 ))
             self.node.get_logger().info(
                 f"[TIMING] backend_move_linear submitted blocking={bool(blocking)} "

@@ -84,6 +84,7 @@ class RuntimeGateway(ABC):
         acc: float = 30,
         blocking: bool = True,
         trajectory_optimizer: str | None = None,
+        allow_collision_recovery: bool = False,
     ) -> int:
         raise NotImplementedError
 
