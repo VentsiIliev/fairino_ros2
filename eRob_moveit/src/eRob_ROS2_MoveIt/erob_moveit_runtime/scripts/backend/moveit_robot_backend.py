@@ -583,9 +583,12 @@ class MoveItRobotBackend(IRobotBackend):
                                      trajectory_optimizer=None):
         if not isinstance(start_position, (list, tuple)) or len(start_position) != 6:
             raise ValueError("start_position must contain 6 values")
+        servo_status = self.cartesian_servo.get_status() if self.cartesian_servo is not None else None
+        if servo_status is not None and str(servo_status.state.value) == "running":
+            raise RuntimeError("cannot prepare an ordered motion chain while Cartesian Servo is running")
         with self._prepared_ordered_lock:
             active = [item for item in self._prepared_ordered.values()
-                      if not item["future"].done()]
+                      if item.get("future") is None or not item["future"].done()]
             if active:
                 raise RuntimeError("an ordered motion chain is already prepared or executing")
             plan_id = uuid4().hex
@@ -596,6 +599,10 @@ class MoveItRobotBackend(IRobotBackend):
                 "authorized": authorized,
                 "created_at": time.time(),
                 "result": None,
+                "future": None,
+                "start_position": [float(value) for value in start_position],
+                "tool": int(tool),
+                "user": int(user),
             }
             self._prepared_ordered[plan_id] = record
 
@@ -629,6 +636,39 @@ class MoveItRobotBackend(IRobotBackend):
                 raise KeyError(f"unknown prepared plan {plan_id!r}")
             if record["state"] in {"completed", "failed", "discarded"}:
                 raise RuntimeError(f"prepared plan is {record['state']}")
+            if self.node.is_motion_active() or self.node.has_pending_motion():
+                raise RuntimeError("cannot execute a prepared chain while another motion is active or queued")
+            servo_status = self.cartesian_servo.get_status() if self.cartesian_servo is not None else None
+            if servo_status is not None and str(servo_status.state.value) == "running":
+                raise RuntimeError("cannot execute a prepared chain while Cartesian Servo is running")
+            current_position = self.get_current_position(user_id=record["user"])
+            if current_position is None or len(current_position) < 6:
+                raise RuntimeError("cannot verify prepared chain start position")
+            expected = record["start_position"]
+            xyz_error_mm = math.sqrt(sum(
+                (float(current_position[index]) - float(expected[index])) ** 2
+                for index in range(3)
+            ))
+            angular_errors_deg = [
+                abs((float(current_position[index]) - float(expected[index]) + 180.0) % 360.0 - 180.0)
+                for index in range(3, 6)
+            ]
+            position_tolerance_mm = float(getattr(
+                config, "PREPARED_CHAIN_START_POSITION_TOLERANCE_MM", 2.0
+            ))
+            orientation_tolerance_deg = float(getattr(
+                config, "PREPARED_CHAIN_START_ORIENTATION_TOLERANCE_DEG", 2.0
+            ))
+            if (
+                xyz_error_mm > position_tolerance_mm
+                or max(angular_errors_deg, default=0.0) > orientation_tolerance_deg
+            ):
+                raise RuntimeError(
+                    "prepared chain start mismatch: "
+                    f"xyz_error_mm={xyz_error_mm:.3f} "
+                    f"max_orientation_error_deg={max(angular_errors_deg, default=0.0):.3f} "
+                    f"limits=({position_tolerance_mm:.3f}mm,{orientation_tolerance_deg:.3f}deg)"
+                )
             record["state"] = "executing"
             record["authorized"].set()
             future = record["future"]
@@ -637,6 +677,14 @@ class MoveItRobotBackend(IRobotBackend):
             future.result()
             return self.get_prepared_ordered_motion_chain(plan_id)
         return status
+
+    def has_active_prepared_ordered_motion_chain(self):
+        with self._prepared_ordered_lock:
+            return any(
+                record["state"] not in {"completed", "failed", "discarded"}
+                and (record.get("future") is None or not record["future"].done())
+                for record in self._prepared_ordered.values()
+            )
 
     def discard_prepared_ordered_motion_chain(self, plan_id):
         with self._prepared_ordered_lock:

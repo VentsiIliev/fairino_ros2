@@ -176,6 +176,12 @@ class ServoJogCapability(JogCapability):
         if node.is_motion_active() or node.has_pending_motion():
             node.get_logger().info(f"[{label}] Busy or queued motion pending - ignoring")
             return -1
+        has_prepared_chain = getattr(backend, "has_active_prepared_ordered_motion_chain", None)
+        if callable(has_prepared_chain) and has_prepared_chain():
+            node.get_logger().error(
+                f"[{label}] Rejected: an ordered motion chain is prepared or executing"
+            )
+            return -1
 
         return 0
 
