@@ -236,8 +236,16 @@ private:
                         moveit_servo::KinematicState& current_state, const rclcpp::Time& cur_time,
                         bool use_trajectory)
   {
-    if (next_joint_state && servo_->getStatus() != moveit_servo::StatusCode::INVALID &&
-        servo_->getStatus() != moveit_servo::StatusCode::HALT_FOR_COLLISION)
+    // MoveIt Servo latches HALT_FOR_COLLISION after a collision.  Manual jog
+    // explicitly disables collision checking and is the operator's recovery
+    // path, so do not discard the recovery state solely because the previous
+    // cycle was halted.  Keep INVALID as a hard stop, and retain the normal
+    // collision halt whenever collision checking is enabled (production Servo).
+    const auto status = servo_->getStatus();
+    const bool collision_halt_recovery =
+        status == moveit_servo::StatusCode::HALT_FOR_COLLISION && !collision_checking_enabled_;
+    if (next_joint_state && status != moveit_servo::StatusCode::INVALID &&
+        (status != moveit_servo::StatusCode::HALT_FOR_COLLISION || collision_halt_recovery))
     {
       if (use_trajectory)
       {
