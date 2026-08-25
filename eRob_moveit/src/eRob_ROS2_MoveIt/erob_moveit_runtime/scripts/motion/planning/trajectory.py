@@ -261,6 +261,7 @@ def _execute_path(
             acc_scaling,
             gen,
             trajectory_optimizer_name=trajectory_optimizer_name,
+            avoid_collisions=avoid_collisions,
         )
     )
     return 0

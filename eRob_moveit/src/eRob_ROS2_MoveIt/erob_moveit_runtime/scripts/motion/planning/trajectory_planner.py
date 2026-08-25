@@ -1309,7 +1309,7 @@ def _build_cartesian_request(rc, poses, max_step, vel_scaling, acc_scaling,
     return req
 
 
-def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None, trajectory_optimizer_name=None):
+def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling, generation=None, trajectory_optimizer_name=None, avoid_collisions=True):
     """
     Callback triggered when MoveIt's /compute_cartesian_path service responds.
 

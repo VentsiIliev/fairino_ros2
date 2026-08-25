@@ -154,7 +154,8 @@ def _dispatch_moveit(robot_controller, request, vel_scaling, acc_scaling, trajec
     future.add_done_callback(
         lambda f: _cartesian_path_response(
             robot_controller, f, vel_scaling, acc_scaling, gen,
-            trajectory_optimizer_name=trajectory_optimizer_name))
+            trajectory_optimizer_name=trajectory_optimizer_name,
+            avoid_collisions=bool(getattr(request, 'avoid_collisions', True))))
 
 
 def _resolve_start_state(robot_controller, start_pose):
