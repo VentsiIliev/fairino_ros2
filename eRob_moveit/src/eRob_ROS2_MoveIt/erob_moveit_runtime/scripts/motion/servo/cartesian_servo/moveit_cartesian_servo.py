@@ -1102,7 +1102,14 @@ class MoveItCartesianServo(CartesianServo):
             angular=angular_rad_s,
         )
 
-        self._update_collision_escape(linear_base)
+        if not self._update_collision_escape(linear_base):
+            # Never publish motion while the collision-monitor transition is
+            # unconfirmed.  In particular, an upward escape must not race the
+            # asynchronous disable request: DECELERATE_FOR_COLLISION can turn
+            # into HALT_FOR_COLLISION during that window, after which ZeroErr's
+            # deliberate hard latch rejects the retract.
+            linear_base = np.zeros(3, dtype=float)
+            angular_base = np.zeros(3, dtype=float)
 
         msg.twist.linear.x = float(linear_base[0])
         msg.twist.linear.y = float(linear_base[1])
@@ -1170,7 +1177,7 @@ class MoveItCartesianServo(CartesianServo):
         ee_linear_base = linear_base - np.cross(angular_base, ee_to_tcp_base)
         return ee_linear_base, angular_base
 
-    def _update_collision_escape(self, linear_base: np.ndarray) -> None:
+    def _update_collision_escape(self, linear_base: np.ndarray) -> bool:
         """
         Let the operator back away from a hard Servo collision halt.
 
@@ -1178,13 +1185,16 @@ class MoveItCartesianServo(CartesianServo):
         including commands that move out of contact. For the mounting fixture,
         the escape direction is configured in the base frame and defaults to +Z.
 
-        Collision checking service calls are intentionally dispatched in the
-        background. This method runs from the Servo publish timer and must keep
-        publishing fresh commands while the collision monitor changes state.
+        The monitor transition is a command gate.  No escape twist is sent
+        until collision checking is confirmed disabled and Servo has rebased
+        to measured joints.  Likewise, ordinary motion is not sent until
+        collision checking is confirmed restored.  This avoids the race where
+        an approaching-collision status becomes a hard collision latch between
+        the first +Z command and the asynchronous service response.
         """
 
         if not self._collision_escape_enabled:
-            return
+            return True
 
         status_code = self._latest_servo_status_code
         escape_speed_m_s = float(np.dot(linear_base, self._collision_escape_axis_base))
@@ -1192,39 +1202,50 @@ class MoveItCartesianServo(CartesianServo):
 
         if should_escape:
             if not self._collision_escape_active:
-                self._collision_escape_active = True
                 logger.warning(
                     "[MOVEIT_CARTESIAN_SERVO] "
-                    "Collision escape active: status=%s escape_speed_m_s=%.4f",
+                    "Collision escape requested: status=%s escape_speed_m_s=%.4f",
                     status_code,
                     escape_speed_m_s,
                 )
-                self._set_collision_checking_background(
-                    False,
-                    reason=(
-                        "collision escape "
-                        f"status={status_code} "
-                        f"escape_speed_m_s={escape_speed_m_s:.4f}"
-                    ),
+                if not self._set_collision_checking(False):
+                    logger.error(
+                        "[MOVEIT_CARTESIAN_SERVO] "
+                        "Collision escape blocked: collision checking disable "
+                        "was not confirmed"
+                    )
+                    return False
+                self._collision_escape_active = True
+                logger.warning(
+                    "[MOVEIT_CARTESIAN_SERVO] "
+                    "Collision escape armed after measured-state rebase: "
+                    "status=%s escape_speed_m_s=%.4f",
+                    status_code,
+                    escape_speed_m_s,
                 )
-            return
+            return True
 
         if self._collision_escape_active:
-            self._collision_escape_active = False
             logger.warning(
                 "[MOVEIT_CARTESIAN_SERVO] "
-                "Collision escape cleared: status=%s escape_speed_m_s=%.4f",
+                "Collision escape restore requested: status=%s escape_speed_m_s=%.4f",
                 status_code,
                 escape_speed_m_s,
             )
-            self._set_collision_checking_background(
-                True,
-                reason=(
-                    "collision escape cleared "
-                    f"status={status_code} "
-                    f"escape_speed_m_s={escape_speed_m_s:.4f}"
-                ),
+            if not self._set_collision_checking(True):
+                logger.error(
+                    "[MOVEIT_CARTESIAN_SERVO] "
+                    "Non-escape motion blocked: collision checking restore "
+                    "was not confirmed"
+                )
+                return False
+            self._collision_escape_active = False
+            logger.warning(
+                "[MOVEIT_CARTESIAN_SERVO] Collision escape cleared; "
+                "collision checking restored"
             )
+
+        return True
 
     def _set_collision_checking_background(
         self,
