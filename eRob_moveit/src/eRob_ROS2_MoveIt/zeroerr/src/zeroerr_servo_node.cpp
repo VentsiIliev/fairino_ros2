@@ -241,31 +241,27 @@ private:
                         moveit_servo::KinematicState& current_state, const rclcpp::Time& cur_time,
                         bool use_trajectory)
   {
-    // MoveIt Servo latches HALT_FOR_COLLISION after a collision.  Manual jog
-    // explicitly disables collision checking and is the operator's recovery
-    // path, so do not discard the recovery state solely because the previous
-    // cycle was halted.  Keep INVALID as a hard stop, and retain the normal
-    // collision halt whenever collision checking is enabled (production Servo).
+    // HALT_FOR_COLLISION is a hard latch. Never calculate or publish another
+    // Servo trajectory from this Servo instance after it is reached. In
+    // particular, disabling collision checking must not turn a latched halt
+    // into a recovery path: near a singularity, a tiny Cartesian recovery
+    // request can map to extreme joint velocities. Recovery requires an
+    // explicit Servo-node reset/restart so all internal state is recreated.
     const auto status = servo_->getStatus();
     const bool collision_halted = status == moveit_servo::StatusCode::HALT_FOR_COLLISION;
-    if (collision_halted && !collision_halt_latched_)
+    if (collision_halted)
     {
-      // A trajectory command can contain points in the future.  Never leave
-      // those points queued when collision stopping becomes active: a later
-      // recovery jog must start from measured joints, not finish the old
-      // trajectory (the observed "catch-up" swing).
-      rebaseToMeasuredStateAndHold(current_state, cur_time, use_trajectory, "collision halt");
-      collision_halt_latched_ = true;
+      if (!collision_halt_latched_)
+      {
+        // A trajectory command can contain points in the future. Never leave
+        // those points queued when collision stopping becomes active.
+        rebaseToMeasuredStateAndHold(current_state, cur_time, use_trajectory, "collision halt");
+        collision_halt_latched_ = true;
+      }
       return;
     }
-    if (!collision_halted)
-    {
-      collision_halt_latched_ = false;
-    }
-    const bool collision_halt_recovery =
-        collision_halted && !collision_checking_enabled_;
-    if (next_joint_state && status != moveit_servo::StatusCode::INVALID &&
-        (status != moveit_servo::StatusCode::HALT_FOR_COLLISION || collision_halt_recovery))
+    collision_halt_latched_ = false;
+    if (next_joint_state && status != moveit_servo::StatusCode::INVALID)
     {
       if (use_trajectory)
       {
