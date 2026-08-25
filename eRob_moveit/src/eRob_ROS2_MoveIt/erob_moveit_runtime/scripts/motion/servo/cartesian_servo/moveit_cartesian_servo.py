@@ -533,20 +533,6 @@ class MoveItCartesianServo(CartesianServo):
 
         return True
 
-    def begin_manual_jog(self) -> bool:
-        """Disable MoveIt collision stopping for an explicit operator jog."""
-        ok = self._set_collision_checking(False)
-        if ok:
-            logger.warning("[MOVEIT_CARTESIAN_SERVO] Collision checking disabled for manual Servo jog")
-        return ok
-
-    def end_manual_jog(self) -> bool:
-        """Restore collision stopping after an explicit operator jog."""
-        ok = self._set_collision_checking(True)
-        if ok:
-            logger.info("[MOVEIT_CARTESIAN_SERVO] Collision checking restored after manual Servo jog")
-        return ok
-
     def _on_update(
         self,
         command: CartesianServoCommand,
