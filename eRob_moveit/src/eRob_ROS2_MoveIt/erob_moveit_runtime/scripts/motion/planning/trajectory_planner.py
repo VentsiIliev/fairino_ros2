@@ -51,11 +51,16 @@ def _validate_cartesian_trajectory_state_validity_async(
     trajectory,
     generation,
     on_success,
+    *,
+    avoid_collisions=True,
 ) -> bool:
     if not bool(getattr(config, "CARTESIAN_STATE_VALIDITY_ENABLED", True)):
         on_success()
         return True
-    if not config.resolve_avoid_collisions(True):
+    if not avoid_collisions or not config.resolve_avoid_collisions(True):
+        robot_controller.get_logger().info(
+            '[Cartesian Path] Collision validation skipped for this request'
+        )
         on_success()
         return True
 
@@ -1515,6 +1520,7 @@ def _cartesian_path_response(robot_controller, future, vel_scaling, acc_scaling,
             trajectory,
             generation,
             _on_validated,
+            avoid_collisions=avoid_collisions,
         )
 
     except Exception as e:
