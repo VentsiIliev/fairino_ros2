@@ -318,6 +318,22 @@ private:
     }
 
     servo_->setCollisionChecking(request->data);
+    if (!request->data)
+    {
+      // A collision halt can leave a future-dated trajectory and smoothing
+      // state based on the pre-halt command stream.  Rebase Servo on the
+      // actual measured state before accepting an escape command; otherwise
+      // the first jog after disabling collision checking may start from stale
+      // state and move in an unexpected direction.
+      joint_cmd_rolling_window_.clear();
+      new_joint_jog_msg_ = false;
+      new_twist_msg_ = false;
+      new_pose_msg_ = false;
+      last_commanded_state_ = servo_->getCurrentRobotState(true);
+      servo_->resetSmoothing(last_commanded_state_);
+      RCLCPP_WARN(node_->get_logger(),
+                  "Collision checking disabled: Servo command state rebased to live robot state");
+    }
     collision_checking_enabled_ = request->data;
     response->success = true;
     response->message = request->data ? "Collision checking enabled" : "Collision checking disabled";
