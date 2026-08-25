@@ -178,18 +178,18 @@ private:
     {
       if (servo_paused_)
       {
-        if (!smoothing_halted_)
-        {
-          servo_->resetSmoothing(current_state);
-          smoothing_halted_ = true;
-        }
+        servo_->resetSmoothing(current_state);
         paused_frequency.sleep();
         continue;
       }
 
-      std::lock_guard<std::mutex> lock_guard(lock_);
-      const bool use_trajectory = servo_params_.command_out_type == "trajectory_msgs/JointTrajectory";
-      const auto cur_time = node_->now();
+      {
+        // Protect shared Servo lifecycle state only while it is being used.
+        // In particular, do not hold this mutex during WallRate::sleep(): doing
+        // so starves pause/collision service callbacks at Servo loop frequency.
+        std::lock_guard<std::mutex> lock_guard(lock_);
+        const bool use_trajectory = servo_params_.command_out_type == "trajectory_msgs/JointTrajectory";
+        const auto cur_time = node_->now();
 
       if (use_trajectory && !joint_cmd_rolling_window_.empty() && joint_cmd_rolling_window_.back().time_stamp > cur_time)
       {
@@ -228,9 +228,10 @@ private:
 
       publishServoStep(next_joint_state, current_state, cur_time, use_trajectory);
 
-      status_msg.code = static_cast<int8_t>(servo_->getStatus());
-      status_msg.message = servo_->getStatusMessage();
-      status_publisher_->publish(status_msg);
+        status_msg.code = static_cast<int8_t>(servo_->getStatus());
+        status_msg.message = servo_->getStatusMessage();
+        status_publisher_->publish(status_msg);
+      }
 
       servo_frequency.sleep();
     }
@@ -267,20 +268,12 @@ private:
         multi_array_publisher_->publish(moveit_servo::composeMultiArrayMessage(servo_->getParams(), next_joint_state.value()));
       }
       last_commanded_state_ = next_joint_state.value();
-      smoothing_halted_ = false;
     }
     else
     {
       moveit_servo::updateSlidingWindow(current_state, joint_cmd_rolling_window_, servo_params_.max_expected_latency,
                                         cur_time);
-      // Reset once when entering a halt. Repeated resets make an isolated
-      // command gap restart the acceleration filter on every Servo cycle,
-      // which produces visible velocity discontinuities when commands resume.
-      if (!smoothing_halted_)
-      {
-        servo_->resetSmoothing(current_state);
-        smoothing_halted_ = true;
-      }
+      servo_->resetSmoothing(current_state);
     }
   }
 
@@ -315,7 +308,6 @@ private:
     {
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
-      smoothing_halted_ = true;
       joint_cmd_rolling_window_.clear();
       if (servo_params_.check_collisions && !collision_checking_enabled_)
       {
@@ -352,7 +344,6 @@ private:
       new_pose_msg_ = false;
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
-      smoothing_halted_ = true;
       RCLCPP_WARN(node_->get_logger(),
                   "Collision checking disabled: Servo command state rebased to live robot state");
     }
@@ -407,21 +398,21 @@ private:
 
   void jointJogCallback(const control_msgs::msg::JointJog::ConstSharedPtr& msg)
   {
-    std::lock_guard<std::mutex> lock_guard(lock_);
+    std::lock_guard<std::mutex> lock_guard(command_lock_);
     latest_joint_jog_ = *msg;
     new_joint_jog_msg_ = true;
   }
 
   void twistCallback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr& msg)
   {
-    std::lock_guard<std::mutex> lock_guard(lock_);
+    std::lock_guard<std::mutex> lock_guard(command_lock_);
     latest_twist_ = *msg;
     new_twist_msg_ = true;
   }
 
   void poseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr& msg)
   {
-    std::lock_guard<std::mutex> lock_guard(lock_);
+    std::lock_guard<std::mutex> lock_guard(command_lock_);
     latest_pose_ = *msg;
     new_pose_msg_ = true;
   }
@@ -431,13 +422,18 @@ private:
   {
     std::optional<moveit_servo::KinematicState> next_joint_state = std::nullopt;
     new_twist_msg_ = new_pose_msg_ = false;
+    control_msgs::msg::JointJog latest_joint_jog;
+    {
+      std::lock_guard<std::mutex> lock_guard(command_lock_);
+      latest_joint_jog = latest_joint_jog_;
+    }
 
     const bool command_stale =
-        (node_->now() - latest_joint_jog_.header.stamp) >=
+        (node_->now() - latest_joint_jog.header.stamp) >=
         rclcpp::Duration::from_seconds(servo_params_.incoming_command_timeout);
     if (!command_stale)
     {
-      const moveit_servo::JointJogCommand command{ latest_joint_jog_.joint_names, latest_joint_jog_.velocities };
+      const moveit_servo::JointJogCommand command{ latest_joint_jog.joint_names, latest_joint_jog.velocities };
       next_joint_state = servo_->getNextJointState(robot_state, command);
     }
     else
@@ -457,16 +453,21 @@ private:
   {
     std::optional<moveit_servo::KinematicState> next_joint_state = std::nullopt;
     new_joint_jog_msg_ = new_pose_msg_ = false;
+    geometry_msgs::msg::TwistStamped latest_twist;
+    {
+      std::lock_guard<std::mutex> lock_guard(command_lock_);
+      latest_twist = latest_twist_;
+    }
 
     const bool command_stale =
-        (node_->now() - latest_twist_.header.stamp) >=
+        (node_->now() - latest_twist.header.stamp) >=
         rclcpp::Duration::from_seconds(servo_params_.incoming_command_timeout);
     if (!command_stale)
     {
-      const Eigen::Vector<double, 6> velocities{ latest_twist_.twist.linear.x, latest_twist_.twist.linear.y,
-                                                 latest_twist_.twist.linear.z, latest_twist_.twist.angular.x,
-                                                 latest_twist_.twist.angular.y, latest_twist_.twist.angular.z };
-      const moveit_servo::TwistCommand command{ latest_twist_.header.frame_id, velocities };
+      const Eigen::Vector<double, 6> velocities{ latest_twist.twist.linear.x, latest_twist.twist.linear.y,
+                                                 latest_twist.twist.linear.z, latest_twist.twist.angular.x,
+                                                 latest_twist.twist.angular.y, latest_twist.twist.angular.z };
+      const moveit_servo::TwistCommand command{ latest_twist.header.frame_id, velocities };
       next_joint_state = servo_->getNextJointState(robot_state, command);
     }
     else
@@ -486,12 +487,17 @@ private:
   {
     std::optional<moveit_servo::KinematicState> next_joint_state = std::nullopt;
     new_joint_jog_msg_ = new_twist_msg_ = false;
+    geometry_msgs::msg::PoseStamped latest_pose;
+    {
+      std::lock_guard<std::mutex> lock_guard(command_lock_);
+      latest_pose = latest_pose_;
+    }
 
     const bool command_stale =
-        (node_->now() - latest_pose_.header.stamp) >= rclcpp::Duration::from_seconds(servo_params_.incoming_command_timeout);
+        (node_->now() - latest_pose.header.stamp) >= rclcpp::Duration::from_seconds(servo_params_.incoming_command_timeout);
     if (!command_stale)
     {
-      const moveit_servo::PoseCommand command = moveit_servo::poseFromPoseStamped(latest_pose_);
+      const moveit_servo::PoseCommand command = moveit_servo::poseFromPoseStamped(latest_pose);
       next_joint_state = servo_->getNextJointState(robot_state, command);
     }
     else
@@ -536,10 +542,10 @@ private:
   std::atomic<bool> new_joint_jog_msg_{ false };
   std::atomic<bool> new_twist_msg_{ false };
   std::atomic<bool> new_pose_msg_{ false };
-  std::atomic<bool> smoothing_halted_{ true };
 
   std::thread servo_loop_thread_;
   std::mutex lock_;
+  std::mutex command_lock_;
   std::deque<moveit_servo::KinematicState> joint_cmd_rolling_window_;
 };
 }  // namespace
