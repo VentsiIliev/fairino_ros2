@@ -224,6 +224,10 @@ def parse_servo_jog_start_request(data: dict[str, Any] | None) -> dict[str, Any]
     except (TypeError, ValueError) as exc:
         raise ValueError("Invalid 'tool'") from exc
 
+    disable_collision_checking = payload.get("disable_collision_checking", False)
+    if not isinstance(disable_collision_checking, bool):
+        raise ValueError("Invalid 'disable_collision_checking'; expected boolean")
+
     return {
         "axis": axis,
         "direction": direction,
@@ -234,6 +238,7 @@ def parse_servo_jog_start_request(data: dict[str, Any] | None) -> dict[str, Any]
         "frame": frame,
         "tool": tool,
         "user": user,
+        "disable_collision_checking": disable_collision_checking,
     }
 
 

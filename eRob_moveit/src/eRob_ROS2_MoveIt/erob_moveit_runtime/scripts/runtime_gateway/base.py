@@ -202,6 +202,7 @@ class RuntimeGateway(ABC):
         user: int = 0,
         linear_mm_s: float | None = None,
         angular_deg_s: float | None = None,
+        disable_collision_checking: bool = False,
     ) -> int:
         raise NotImplementedError
 

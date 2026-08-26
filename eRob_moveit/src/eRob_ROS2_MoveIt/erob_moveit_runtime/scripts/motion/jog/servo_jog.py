@@ -21,6 +21,7 @@ class ServoJogCapability(JogCapability):
         self._backend = backend
         self._lock = threading.Lock()
         self._continuous_active = False
+        self._continuous_collision_override_active = False
 
     def start_jog(
         self,
@@ -86,6 +87,7 @@ class ServoJogCapability(JogCapability):
         user: int = 0,
         linear_mm_s: float | None = None,
         angular_deg_s: float | None = None,
+        disable_collision_checking: bool = False,
     ) -> int:
         with self._lock:
             if self._continuous_active:
@@ -120,10 +122,12 @@ class ServoJogCapability(JogCapability):
                 user=user,
                 linear_mm_s=linear_mm_s,
                 angular_deg_s=angular_deg_s,
+                disable_collision_checking=disable_collision_checking,
             ):
                 return -1
 
             self._continuous_active = True
+            self._continuous_collision_override_active = bool(disable_collision_checking)
             return 0
 
     def stop_continuous_jog(self) -> int:
@@ -132,7 +136,16 @@ class ServoJogCapability(JogCapability):
                 return 0
             result = self._stop_servo()
             self._continuous_active = False
-            return 0 if result else -1
+            restore_ok = True
+            if self._continuous_collision_override_active:
+                setter = getattr(self._backend.cartesian_servo, "set_collision_checking", None)
+                restore_ok = bool(callable(setter) and setter(True))
+                if not restore_ok:
+                    self._backend.node.get_logger().error(
+                        "[SERVO_JOG] Collision checking restore was not confirmed after stop"
+                    )
+            self._continuous_collision_override_active = False
+            return 0 if result and restore_ok else -1
 
     def _prepare_jog(
         self,
@@ -193,6 +206,7 @@ class ServoJogCapability(JogCapability):
         user: int,
         linear_mm_s,
         angular_deg_s,
+        disable_collision_checking: bool = False,
     ) -> bool:
         node = self._backend.node
         servo = self._backend.cartesian_servo
@@ -207,6 +221,15 @@ class ServoJogCapability(JogCapability):
                 node.get_logger().error(f"[SERVO_JOG] Servo start failed: {start_result.value}")
             return False
 
+        if disable_collision_checking:
+            setter = getattr(servo, "set_collision_checking", None)
+            if not callable(setter) or not setter(False):
+                node.get_logger().error(
+                    "[SERVO_JOG] Refusing motion: collision-check disable was not confirmed"
+                )
+                self._stop_servo()
+                return False
+
         update_result = servo.update(
             linear_mm_s=linear_mm_s,
             angular_deg_s=angular_deg_s,
@@ -214,6 +237,12 @@ class ServoJogCapability(JogCapability):
         if update_result != CartesianServoResult.OK:
             node.get_logger().error(f"[SERVO_JOG] Servo update failed: {update_result.value}")
             self._stop_servo()
+            if disable_collision_checking:
+                setter = getattr(servo, "set_collision_checking", None)
+                if not callable(setter) or not setter(True):
+                    node.get_logger().error(
+                        "[SERVO_JOG] Collision checking restore failed after start failure"
+                    )
             return False
 
         return True

@@ -373,6 +373,7 @@ class LocalRuntimeGateway(RuntimeGateway):
         user=0,
         linear_mm_s=None,
         angular_deg_s=None,
+        disable_collision_checking=False,
     ) -> int:
         return self.robot.start_servo_jog(
             axis,
@@ -384,6 +385,7 @@ class LocalRuntimeGateway(RuntimeGateway):
             user=user,
             linear_mm_s=linear_mm_s,
             angular_deg_s=angular_deg_s,
+            disable_collision_checking=disable_collision_checking,
         )
 
     def servo_jog_stop(self) -> int:

@@ -83,14 +83,6 @@ MOTION_PASSAGES:
   box_size_m: [0.197, 0.307, 0.008]
   origin_m: [0.3175, 0.0225, -0.004]
 
-# If Servo has already halted in contact with the fixture, allow only a
-# deliberate base +Z recovery command to back out, then restore collision checks.
-CARTESIAN_SERVO_COLLISION_ESCAPE_ENABLED: true
-CARTESIAN_SERVO_COLLISION_ESCAPE_AXIS_BASE:
-- 0.0
-- 0.0
-- 1.0
-CARTESIAN_SERVO_COLLISION_ESCAPE_MIN_LINEAR_M_S: 0.001
 CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
 CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
 CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05

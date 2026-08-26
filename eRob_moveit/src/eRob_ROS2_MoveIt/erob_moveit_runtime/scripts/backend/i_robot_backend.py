@@ -93,6 +93,7 @@ class IRobotBackend(ABC):
         user=0,
         linear_mm_s=None,
         angular_deg_s=None,
+        disable_collision_checking=False,
     ): ...
 
     @abstractmethod

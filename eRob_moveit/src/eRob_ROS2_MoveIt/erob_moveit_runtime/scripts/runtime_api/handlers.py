@@ -647,6 +647,7 @@ class RuntimeApi:
                 user=payload["user"],
                 linear_mm_s=payload["linear_mm_s"],
                 angular_deg_s=payload["angular_deg_s"],
+                disable_collision_checking=payload["disable_collision_checking"],
             )
             if result == 0:
                 return ApiResponse({"result": result, "success": True, "state": "running"})
