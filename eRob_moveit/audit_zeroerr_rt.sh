@@ -15,7 +15,10 @@ RT_CORES="${ZEROERR_ISOLATED_CORES:-2,3}"
 ETHERCAT_CORES="${ZEROERR_ETHERCAT_CORES:-2}"
 CONTROL_CORES="${ZEROERR_CONTROL_CORES:-3}"
 NON_RT_CORES="${ZEROERR_NON_RT_CORES:-0,1}"
-NIC="${ZEROERR_NIC:-enp3s0}"
+NIC="${ZEROERR_NIC:-${ZEROERR_ETHERCAT_IFACE:-}}"
+if [ -z "$NIC" ]; then
+  NIC="$(${SCRIPT_DIR}/src/eRob_ROS2_MoveIt/zeroerr/scripts/resolve_ethercat_nic.sh)"
+fi
 
 cpu_list_intersects() {
   local lhs="$1"
