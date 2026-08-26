@@ -128,6 +128,7 @@ class MoveItCartesianServo(CartesianServo):
         self._twist_command_type_selected = False
         self._collision_checking_enabled: bool | None = None
         self._collision_checking_request_lock = threading.Lock()
+        self._next_start_collision_checking_enabled = True
         self._session_generation = 0
         self._last_start_failure: str | None = None
         self._last_publish_diagnostic_s = 0.0
@@ -376,9 +377,16 @@ class MoveItCartesianServo(CartesianServo):
             return self._fail_start("failed to select TWIST command type")
 
         # --------------------------------------------------------
-        # 5. Resume MoveIt Servo. The Servo node enables its collision monitor
-        # as part of unpausing, so do not start it separately here.
+        # 5. Select collision policy while Servo is still paused, then resume.
+        # This ordering is safety-critical for contact pickup: briefly enabling
+        # the monitor at contact can create an irreversible HALT_FOR_COLLISION
+        # latch before the retract command is accepted.
         # --------------------------------------------------------
+
+        if not self._set_collision_checking(self._next_start_collision_checking_enabled):
+            return self._fail_start(
+                "failed to set collision checking before Servo resume"
+            )
 
         if not self._set_servo_paused(False):
             logger.warning(
@@ -890,6 +898,10 @@ class MoveItCartesianServo(CartesianServo):
         """Synchronously set the Servo collision monitor for a scoped jog session."""
         with self._collision_checking_request_lock:
             return self._set_collision_checking(bool(enabled))
+
+    def configure_next_start_collision_checking(self, enabled: bool) -> None:
+        """Choose collision policy for the next start, before Servo is resumed."""
+        self._next_start_collision_checking_enabled = bool(enabled)
 
     # ============================================================
     # High-rate command publisher

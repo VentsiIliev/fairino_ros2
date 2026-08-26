@@ -210,6 +210,14 @@ class ServoJogCapability(JogCapability):
     ) -> bool:
         node = self._backend.node
         servo = self._backend.cartesian_servo
+        configure_collision = getattr(servo, "configure_next_start_collision_checking", None)
+        if disable_collision_checking and not callable(configure_collision):
+            node.get_logger().error(
+                "[SERVO_JOG] Refusing motion: pre-start collision policy is unsupported"
+            )
+            return False
+        if callable(configure_collision):
+            configure_collision(not disable_collision_checking)
         start_result = servo.start(frame=frame, tool=tool, user=user)
         if start_result not in (CartesianServoResult.OK, CartesianServoResult.ALREADY_RUNNING):
             detail = getattr(servo, "last_start_failure", None)
@@ -220,15 +228,6 @@ class ServoJogCapability(JogCapability):
             else:
                 node.get_logger().error(f"[SERVO_JOG] Servo start failed: {start_result.value}")
             return False
-
-        if disable_collision_checking:
-            setter = getattr(servo, "set_collision_checking", None)
-            if not callable(setter) or not setter(False):
-                node.get_logger().error(
-                    "[SERVO_JOG] Refusing motion: collision-check disable was not confirmed"
-                )
-                self._stop_servo()
-                return False
 
         update_result = servo.update(
             linear_mm_s=linear_mm_s,

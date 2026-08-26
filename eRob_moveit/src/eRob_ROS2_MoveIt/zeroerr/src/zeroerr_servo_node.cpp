@@ -352,11 +352,10 @@ private:
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
       joint_cmd_rolling_window_.clear();
-      if (servo_params_.check_collisions && !collision_checking_enabled_)
-      {
-        servo_->setCollisionChecking(true);
-        collision_checking_enabled_ = true;
-      }
+      // Collision policy is selected explicitly through set_collision_checking
+      // while paused, before this resume call. Do not silently enable it here:
+      // contact pickup must never pass through a collision-enabled window
+      // between measured-state rebase and its first retract command.
       response->message = "Servoing enabled";
     }
   }
