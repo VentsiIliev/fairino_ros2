@@ -207,7 +207,7 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def servo_jog_stop(self) -> int:
+    def servo_jog_stop(self, *, restore_collision_checking: bool = True) -> int:
         raise NotImplementedError
 
     # --- position / kinematics queries ------------------------------------

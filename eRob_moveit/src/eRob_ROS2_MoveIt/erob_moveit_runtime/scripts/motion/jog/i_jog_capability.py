@@ -37,5 +37,5 @@ class JogCapability(ABC):
     ) -> int:
         raise NotImplementedError
 
-    def stop_continuous_jog(self) -> int:
+    def stop_continuous_jog(self, *, restore_collision_checking: bool = True) -> int:
         raise NotImplementedError

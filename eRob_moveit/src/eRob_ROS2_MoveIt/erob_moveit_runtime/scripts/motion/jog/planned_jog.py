@@ -54,5 +54,5 @@ class PlannedJogCapability(JogCapability):
             )
         return -1
 
-    def stop_continuous_jog(self) -> int:
+    def stop_continuous_jog(self, *, restore_collision_checking: bool = True) -> int:
         return 0

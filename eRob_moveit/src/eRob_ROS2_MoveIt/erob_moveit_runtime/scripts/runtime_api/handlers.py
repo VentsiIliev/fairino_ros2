@@ -658,9 +658,18 @@ class RuntimeApi:
             logger.error(f"ServoJog start endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
-    def servo_jog_stop(self) -> ApiResponse:
+    def servo_jog_stop(self, data: dict[str, Any] | None = None) -> ApiResponse:
         try:
-            result = self._gateway_or_local().servo_jog_stop()
+            payload = data or {}
+            restore_collision_checking = payload.get("restore_collision_checking", True)
+            if not isinstance(restore_collision_checking, bool):
+                return ApiResponse(
+                    {"result": -1, "success": False, "error": "Invalid 'restore_collision_checking'; expected boolean"},
+                    400,
+                )
+            result = self._gateway_or_local().servo_jog_stop(
+                restore_collision_checking=restore_collision_checking
+            )
             if result == 0:
                 return ApiResponse({"result": result, "success": True, "state": "stopped"})
             return motion_error(result)

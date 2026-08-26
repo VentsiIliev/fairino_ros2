@@ -388,8 +388,10 @@ class LocalRuntimeGateway(RuntimeGateway):
             disable_collision_checking=disable_collision_checking,
         )
 
-    def servo_jog_stop(self) -> int:
-        return self.robot.stop_servo_jog()
+    def servo_jog_stop(self, *, restore_collision_checking: bool = True) -> int:
+        return self.robot.stop_servo_jog(
+            restore_collision_checking=restore_collision_checking
+        )
 
     # --- position / kinematics queries ------------------------------------
 

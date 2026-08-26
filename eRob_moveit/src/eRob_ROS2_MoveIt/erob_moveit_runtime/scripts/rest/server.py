@@ -550,7 +550,7 @@ def start_rest_server(
 
     @app.route("/servojog/stop", methods=["POST"])
     def servo_jog_stop():
-        return api_response(runtime_api.servo_jog_stop())
+        return api_response(runtime_api.servo_jog_stop(request.get_json(silent=True)))
 
     @app.route("/io/digital_output", methods=["POST"])
     def set_digital_output():

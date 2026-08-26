@@ -130,21 +130,22 @@ class ServoJogCapability(JogCapability):
             self._continuous_collision_override_active = bool(disable_collision_checking)
             return 0
 
-    def stop_continuous_jog(self) -> int:
+    def stop_continuous_jog(self, *, restore_collision_checking: bool = True) -> int:
         with self._lock:
             if not self._continuous_active:
-                return 0
-            result = self._stop_servo()
-            self._continuous_active = False
+                result = True
+            else:
+                result = self._stop_servo()
+                self._continuous_active = False
             restore_ok = True
-            if self._continuous_collision_override_active:
+            if self._continuous_collision_override_active and restore_collision_checking:
                 setter = getattr(self._backend.cartesian_servo, "set_collision_checking", None)
                 restore_ok = bool(callable(setter) and setter(True))
                 if not restore_ok:
                     self._backend.node.get_logger().error(
                         "[SERVO_JOG] Collision checking restore was not confirmed after stop"
                     )
-            self._continuous_collision_override_active = False
+                self._continuous_collision_override_active = False
             return 0 if result and restore_ok else -1
 
     def _prepare_jog(

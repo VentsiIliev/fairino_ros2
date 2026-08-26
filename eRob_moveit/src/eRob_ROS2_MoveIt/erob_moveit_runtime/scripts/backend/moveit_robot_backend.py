@@ -1803,8 +1803,10 @@ class MoveItRobotBackend(IRobotBackend):
             disable_collision_checking=disable_collision_checking,
         )
 
-    def stop_servo_jog(self):
-        return self._servo_jog.stop_continuous_jog()
+    def stop_servo_jog(self, *, restore_collision_checking=True):
+        return self._servo_jog.stop_continuous_jog(
+            restore_collision_checking=restore_collision_checking
+        )
 
     def _start_planned_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc, *, frame=None, tool=0, user=0):
         drive_error = self._reject_if_drive_not_enabled("JOG")
