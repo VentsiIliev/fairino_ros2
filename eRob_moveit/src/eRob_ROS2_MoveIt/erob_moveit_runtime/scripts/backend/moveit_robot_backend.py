@@ -663,12 +663,22 @@ class MoveItRobotBackend(IRobotBackend):
                 xyz_error_mm > position_tolerance_mm
                 or max(angular_errors_deg, default=0.0) > orientation_tolerance_deg
             ):
-                raise RuntimeError(
+                error = (
                     "prepared chain start mismatch: "
                     f"xyz_error_mm={xyz_error_mm:.3f} "
                     f"max_orientation_error_deg={max(angular_errors_deg, default=0.0):.3f} "
                     f"limits=({position_tolerance_mm:.3f}mm,{orientation_tolerance_deg:.3f}deg)"
                 )
+                # This plan can never be validly executed from its captured
+                # start state. Cancel its authorization waiter before raising;
+                # otherwise the record remains in planning forever and blocks
+                # every later Servo request.
+                setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+                record["state"] = "discarding"
+                record["result"] = -1
+                record["error"] = error
+                record["authorized"].set()
+                raise RuntimeError(error)
             record["state"] = "executing"
             record["authorized"].set()
             future = record["future"]
