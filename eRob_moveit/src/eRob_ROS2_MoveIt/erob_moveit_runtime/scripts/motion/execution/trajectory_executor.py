@@ -460,6 +460,7 @@ class TrajectoryExecutor:
         self._active_trajectory_cancel_reason = reason
         self._node.get_logger().error(f'[Controller] Active trajectory cancelled: {reason}')
         self._motion.last_move_result = config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED
+        self._motion.last_motion_error = str(reason)
 
         queue_cleared = self._queue.clear()
         if queue_cleared > 0:
@@ -1716,6 +1717,10 @@ class TrajectoryExecutor:
                     self._log_unwind_diagnostics('failed_result')
                 self._log_final_tracking_error()
                 controller_error = int(getattr(result, 'error_code', -1))
+                if not self._motion.last_motion_error:
+                    self._motion.last_motion_error = (
+                        f'controller trajectory failed with error_code={controller_error}'
+                    )
                 self._node.get_logger().error(
                     f'[Controller] Mapping controller error {controller_error} to motion result '
                     f'{config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED}'

@@ -17,6 +17,10 @@ class MotionCoordinator:
         self.is_executing = False
         self.plan_generation = 0
         self.last_move_result = 0
+        # Human-readable reason for the most recent motion failure. This is
+        # deliberately separate from the numeric controller result so callers
+        # can report safety cancellations without guessing from the code.
+        self.last_motion_error = None
         self.last_submitted_task_id = None
 
     def _set_last_submitted_task_id(self, task_id):

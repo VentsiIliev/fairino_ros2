@@ -620,6 +620,9 @@ class MoveItRobotBackend(IRobotBackend):
                         execution_authorized=authorized,
                     )
                     record["result"] = int(result)
+                    motion_error = getattr(self.node, "last_motion_error", None)
+                    if result != 0 and motion_error:
+                        record["error"] = str(motion_error)
                     record["state"] = "completed" if result == 0 else "failed"
                     return result
                 except Exception as exc:
@@ -818,6 +821,7 @@ class MoveItRobotBackend(IRobotBackend):
             "plan_id": record["plan_id"],
             "state": record["state"],
             "result": record.get("result"),
+            "error": record.get("error"),
             "created_at": record["created_at"],
         }
 
@@ -839,6 +843,8 @@ class MoveItRobotBackend(IRobotBackend):
         started_at = perf_counter()
         if self.node is None or not segments:
             return -1
+        # Do not let an earlier controller cancellation leak into this motion.
+        self.node.last_motion_error = None
         from motion.move_linear_timing import begin as begin_motion_timing, clear as clear_motion_timing, \
             mark as mark_motion_timing
 
