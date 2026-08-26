@@ -679,12 +679,79 @@ class MoveItRobotBackend(IRobotBackend):
         return status
 
     def has_active_prepared_ordered_motion_chain(self):
+        # A client can disappear after prepare and before execute, leaving the
+        # planning worker blocked on its authorization event indefinitely.
+        # Expire only old, never-authorized records and only while the robot is
+        # physically idle. Executing records are never cleared here.
+        expiry_s = max(5.0, float(getattr(config, "PREPARED_CHAIN_ORPHAN_TTL_S", 30.0)))
+        now = time.time()
+        stale = []
         with self._prepared_ordered_lock:
-            return any(
-                record["state"] not in {"completed", "failed", "discarded"}
+            active = [
+                record for record in self._prepared_ordered.values()
+                if record["state"] not in {"completed", "failed", "discarded"}
                 and (record.get("future") is None or not record["future"].done())
-                for record in self._prepared_ordered.values()
+            ]
+            robot_idle = not self.node.is_motion_active() and not self.node.has_pending_motion()
+            if robot_idle:
+                stale = [
+                    record for record in active
+                    if record["state"] == "planning"
+                    and not record["authorized"].is_set()
+                    and now - float(record.get("created_at", now)) >= expiry_s
+                ]
+                if stale:
+                    # Publish cancellation before releasing authorization so a
+                    # waking worker can never enter execution in between.
+                    setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+                for record in stale:
+                    record["state"] = "discarding"
+                    record["result"] = -1
+                    record["error"] = "prepared plan expired before authorization"
+                    record["authorized"].set()
+
+        if stale:
+            for record in stale:
+                future = record.get("future")
+                if future is not None:
+                    try:
+                        future.result(timeout=1.0)
+                    except Exception:
+                        # Cancellation/failure is expected; timeout is handled
+                        # by the fail-closed active-record check below.
+                        pass
+                if future is None or future.done():
+                    with self._prepared_ordered_lock:
+                        if record["state"] == "discarding":
+                            record["state"] = "discarded"
+                self.node.get_logger().warning(
+                    "[OrderedChain] Discarded orphan prepared plan plan_id=%s age_s=%.3f",
+                    record["plan_id"],
+                    now - float(record.get("created_at", now)),
+                )
+            if not self.node.is_motion_active() and not self.node.has_pending_motion():
+                setattr(self.node, "_ordered_motion_chain_stop_requested", False)
+
+        with self._prepared_ordered_lock:
+            remaining = [
+                record for record in self._prepared_ordered.values()
+                if record["state"] not in {"completed", "failed", "discarded"}
+                and (record.get("future") is None or not record["future"].done())
+            ]
+        if remaining:
+            self.node.get_logger().warning(
+                "[OrderedChain] Active prepared plans block Servo: %s",
+                [
+                    {
+                        "plan_id": record["plan_id"],
+                        "state": record["state"],
+                        "age_s": round(now - float(record.get("created_at", now)), 3),
+                        "authorized": record["authorized"].is_set(),
+                    }
+                    for record in remaining
+                ],
             )
+        return bool(remaining)
 
     def discard_prepared_ordered_motion_chain(self, plan_id):
         with self._prepared_ordered_lock:
