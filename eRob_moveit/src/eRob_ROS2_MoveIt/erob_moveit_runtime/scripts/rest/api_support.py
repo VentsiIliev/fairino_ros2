@@ -407,6 +407,10 @@ def parse_prepare_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
     if not isinstance(raw_start, (list, tuple)) or len(raw_start) != 6:
         raise ValueError("Missing 6-value 'start_position'")
     payload["start_position"] = [float(value) for value in raw_start]
+    allow_servo = (data or {}).get("allow_servo_during_prepare", False)
+    if not isinstance(allow_servo, bool):
+        raise ValueError("Invalid 'allow_servo_during_prepare'; expected boolean")
+    payload["allow_servo_during_prepare"] = allow_servo
     payload["blocking"] = True
     return payload
 

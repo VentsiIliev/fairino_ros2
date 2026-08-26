@@ -139,7 +139,8 @@ class RuntimeGateway(ABC):
 
     @abstractmethod
     def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
-                                     trajectory_optimizer=None) -> dict:
+                                     trajectory_optimizer=None,
+                                     allow_servo_during_prepare=False) -> dict:
         raise NotImplementedError
 
     @abstractmethod

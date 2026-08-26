@@ -580,7 +580,8 @@ class MoveItRobotBackend(IRobotBackend):
         return dict(status)
 
     def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
-                                     trajectory_optimizer=None):
+                                     trajectory_optimizer=None,
+                                     allow_servo_during_prepare=False):
         if not isinstance(start_position, (list, tuple)) or len(start_position) != 6:
             raise ValueError("start_position must contain 6 values")
         servo_status = self.cartesian_servo.get_status() if self.cartesian_servo is not None else None
@@ -603,6 +604,7 @@ class MoveItRobotBackend(IRobotBackend):
                 "start_position": [float(value) for value in start_position],
                 "tool": int(tool),
                 "user": int(user),
+                "allow_servo_during_prepare": bool(allow_servo_during_prepare),
             }
             self._prepared_ordered[plan_id] = record
 
@@ -747,6 +749,11 @@ class MoveItRobotBackend(IRobotBackend):
                 record for record in self._prepared_ordered.values()
                 if record["state"] not in {"completed", "failed", "discarded"}
                 and (record.get("future") is None or not record["future"].done())
+                and not (
+                    record.get("allow_servo_during_prepare", False)
+                    and record["state"] == "planning"
+                    and not record["authorized"].is_set()
+                )
             ]
         if remaining:
             self.node.get_logger().warning(
@@ -770,10 +777,31 @@ class MoveItRobotBackend(IRobotBackend):
                 raise KeyError(f"unknown prepared plan {plan_id!r}")
             if record["state"] == "executing":
                 raise RuntimeError("cannot discard a prepared plan after execution started")
-            record["state"] = "discarded"
+            if record["state"] in {"completed", "failed", "discarded"}:
+                return self._prepared_status(record)
+            # Publish cancellation before waking the planning worker. Keep the
+            # record non-terminal until that worker has actually exited so a
+            # later Servo request cannot race an unfinished prepared chain.
             setattr(self.node, "_ordered_motion_chain_stop_requested", True)
+            record["state"] = "discarding"
+            record["result"] = -1
+            record["error"] = "prepared plan discarded before authorization"
             record["authorized"].set()
-            return self._prepared_status(record)
+            future = record.get("future")
+
+        if future is not None:
+            try:
+                future.result(timeout=1.0)
+            except Exception:
+                pass
+
+        with self._prepared_ordered_lock:
+            if future is None or future.done():
+                record["state"] = "discarded"
+            status = self._prepared_status(record)
+        if not self.node.is_motion_active() and not self.node.has_pending_motion():
+            setattr(self.node, "_ordered_motion_chain_stop_requested", False)
+        return status
 
     def get_prepared_ordered_motion_chain(self, plan_id):
         with self._prepared_ordered_lock:

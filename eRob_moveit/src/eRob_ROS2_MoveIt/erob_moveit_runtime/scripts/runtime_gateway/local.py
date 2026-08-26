@@ -318,9 +318,11 @@ class LocalRuntimeGateway(RuntimeGateway):
         )
 
     def prepare_ordered_motion_chain(self, segments, start_position, tool=0, user=0,
-                                     trajectory_optimizer=None) -> dict:
+                                     trajectory_optimizer=None,
+                                     allow_servo_during_prepare=False) -> dict:
         return self.robot.prepare_ordered_motion_chain(
-            segments, start_position, tool, user, trajectory_optimizer
+            segments, start_position, tool, user, trajectory_optimizer,
+            allow_servo_during_prepare=allow_servo_during_prepare,
         )
 
     def execute_prepared_ordered_motion_chain(self, plan_id: str) -> dict:

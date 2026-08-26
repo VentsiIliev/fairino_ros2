@@ -315,6 +315,7 @@ class RuntimeApi:
                 segments=payload["segments"], start_position=payload["start_position"],
                 tool=payload["tool"], user=payload["user"],
                 trajectory_optimizer=payload["trajectory_optimizer"],
+                allow_servo_during_prepare=payload["allow_servo_during_prepare"],
             )
             return ApiResponse({"success": True, **result}, 202)
         except (ValueError, RuntimeError) as exc:
