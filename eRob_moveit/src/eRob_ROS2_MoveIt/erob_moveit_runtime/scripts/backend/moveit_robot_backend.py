@@ -863,6 +863,10 @@ class MoveItRobotBackend(IRobotBackend):
             ordered_chain_terminal_status,
         )
 
+        # Resolve named per-segment limit profiles before any planning work.
+        # A requested profile that is missing or malformed is a hard request error.
+        config.apply_limit_profiles(segments, self.node.get_logger())
+
         try:
             from motion.scheduling.motion_adapters import (
                 OrderedMotionBatchValidationFailure,
@@ -1100,6 +1104,14 @@ class MoveItRobotBackend(IRobotBackend):
                 plan_unwind_direct_ik_trajectory=plan_unwind_direct_ik_trajectory,
             )
         )
+        raw_plan_ordered_segment_callback = plan_ordered_segment_callback
+
+        def plan_ordered_segment_callback(index, segment, *args, **kwargs):
+            planned = raw_plan_ordered_segment_callback(index, segment, *args, **kwargs)
+            if segment.get('limit_profile'):
+                planned['limit_profile'] = segment['limit_profile']
+                planned['_joint_rate_limits_rad_s'] = dict(segment.get('_joint_rate_limits_rad_s', {}))
+            return planned
 
         execution_hooks = build_ordered_execution_hook_bundle(
             node=self.node,

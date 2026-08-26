@@ -1,0 +1,6 @@
+# Optional named limits for segments that explicitly request a profile.
+# Values are joint rates in rad/s and apply only to that ordered segment.
+profiles:
+  paint_contact:
+    joint_rate_limits_rad_s:
+      Joint_6: 3.0

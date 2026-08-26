@@ -245,7 +245,9 @@ def _ordered_blend_rate_guard_enabled() -> bool:
     return bool(getattr(config, "ORDERED_BLEND_JOINT_RATE_GUARD_ENABLED", True))
 
 
-def _maybe_stretch_ordered_blend_joint_rates(joint_trajectory: Any, logger: Any) -> None:
+def _maybe_stretch_ordered_blend_joint_rates(
+    joint_trajectory: Any, logger: Any, limits_override: dict[str, float] | None = None
+) -> None:
     """Stretch a timed blended trajectory if configured joint interval rates are too high."""
 
     if not _ordered_blend_rate_guard_enabled():
@@ -256,7 +258,7 @@ def _maybe_stretch_ordered_blend_joint_rates(joint_trajectory: Any, logger: Any)
     if len(points) < 2 or not joint_names:
         return
 
-    limits = _configured_joint_rate_limits()
+    limits = dict(limits_override or _configured_joint_rate_limits())
     peak_rate = 0.0
     peak_joint = ""
     peak_segment = 0
@@ -738,10 +740,12 @@ def execute_ordered_planned_segment(
             )
             result = 0
         else:
-            if segment_type == "blended":
+            profile_limits = planned_segment.get("_joint_rate_limits_rad_s")
+            if segment_type == "blended" or profile_limits:
                 _maybe_stretch_ordered_blend_joint_rates(
                     planned_segment["trajectory"],
                     controller_hooks.logger,
+                    limits_override=profile_limits,
                 )
             timing = ordered_trajectory_timing(
                 planned_segment["trajectory"],

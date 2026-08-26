@@ -9,6 +9,7 @@ actual robot description values out of the shared runtime package.
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 from typing import Any
 
@@ -356,12 +357,56 @@ def _profile_config_yaml_path(profile: str, filename: str) -> Path | None:
         from ament_index_python.packages import get_package_share_directory
         candidate = Path(get_package_share_directory(package_name)) / 'config' / profile / filename
         return candidate if candidate.exists() else None
+
     except Exception:
         source_root = Path(__file__).resolve().parents[2]
         candidate = source_root / package_name / 'config' / profile / filename
         return candidate if candidate.exists() else None
 
 
+def resolve_limit_profile(profile_name: str) -> dict[str, float]:
+    """Load a named per-segment joint-rate profile from the active config package."""
+    name = str(profile_name or '').strip()
+    if not name:
+        return {}
+    active_profile = str(_CONFIG.get('ACTIVE_PROFILE', globals().get('ACTIVE_PROFILE', '')) or '').strip()
+    path = _profile_config_yaml_path(active_profile, 'trajectory_limits.yaml') if active_profile else None
+    if not path or not path.exists():
+        raise RuntimeError(
+            f"Requested limit_profile '{name}', but trajectory_limits.yaml is missing "
+            f"for active profile '{active_profile or '<none>'}'"
+        )
+    document = _load_yaml_file(path)
+    profiles = document.get('profiles')
+    if not isinstance(profiles, dict) or name not in profiles:
+        raise RuntimeError(f"Requested limit_profile '{name}' is not defined in {path}")
+    entry = profiles[name]
+    if not isinstance(entry, dict) or not isinstance(entry.get('joint_rate_limits_rad_s'), dict):
+        raise RuntimeError(f"Limit profile '{name}' in {path} must define joint_rate_limits_rad_s")
+    limits = {}
+    for joint, raw_limit in entry['joint_rate_limits_rad_s'].items():
+        try:
+            limit = float(raw_limit)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"Limit profile '{name}' has invalid rate for joint '{joint}'") from None
+        if limit <= 0.0 or not math.isfinite(limit):
+            raise RuntimeError(f"Limit profile '{name}' has non-positive rate for joint '{joint}'")
+        limits[str(joint)] = limit
+    if not limits:
+        raise RuntimeError(f"Limit profile '{name}' contains no joint rate limits")
+    return limits
+
+
+def apply_limit_profiles(segments, logger=None):
+    """Validate and attach requested profiles before ordered planning starts."""
+    for index, segment in enumerate(segments):
+        name = segment.get('limit_profile')
+        if not name:
+            continue
+        limits = resolve_limit_profile(name)
+        segment['_joint_rate_limits_rad_s'] = limits
+        if logger:
+            logger.info(f"[OrderedLimits] segment={index + 1} profile={name} limits={limits}")
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     with path.open('r', encoding='utf-8') as handle:
         return yaml.safe_load(handle) or {}

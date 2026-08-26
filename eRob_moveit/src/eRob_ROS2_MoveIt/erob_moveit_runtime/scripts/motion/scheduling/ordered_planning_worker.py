@@ -301,6 +301,15 @@ def _plan_blend_group(
 
     first = planned_group[0]
     last = planned_group[-1]
+    profile_limits = {}
+    profile_names = []
+    for member in planned_group:
+        member_limits = member.get("_joint_rate_limits_rad_s") or {}
+        if member.get("limit_profile"):
+            profile_names.append(str(member["limit_profile"]))
+        for joint_name, limit in member_limits.items():
+            value = float(limit)
+            profile_limits[joint_name] = min(profile_limits.get(joint_name, value), value)
     combined = {
         "type": "blended",
         "label": " -> ".join(str(member.get("label") or "") for member in planned_group),
@@ -325,6 +334,9 @@ def _plan_blend_group(
         "acc_scale": group_acc_scale,
         "logical_segment_count": len(planned_group),
     }
+    if profile_limits:
+        combined["_joint_rate_limits_rad_s"] = profile_limits
+        combined["limit_profile"] = ",".join(dict.fromkeys(profile_names))
 
     hooks.mark_motion_timing(
         hooks.node,
