@@ -31,20 +31,29 @@ def _load_joint_limits_from_config():
     if _joint_limits_cache is not None:
         return _joint_limits_cache
 
-    # Try to find the config file
-    config_paths = [
-        # Source path
-        os.path.join(os.path.dirname(__file__), '../..', '..', 'config', 'joint_limits.yaml'),
-        # Install path (via ament)
-    ]
+    # Prefer limits for the active robot profile, then fall back to the
+    # package-wide joint_limits.yaml.  Profiles are optional overlays.
+    config_paths = []
 
     # Try ament_index if available
     try:
         from ament_index_python.packages import get_package_share_directory
         pkg_dir = get_package_share_directory(os.environ.get('EROB_CONFIG_PACKAGE', 'fairino5_v6_moveit2_config'))
-        config_paths.insert(0, os.path.join(pkg_dir, 'config', 'joint_limits.yaml'))
+        active_profile = str(getattr(cfg, 'ACTIVE_PROFILE', '') or '').strip()
+        if active_profile:
+            config_paths.append(os.path.join(pkg_dir, 'config', active_profile, 'joint_limits.yaml'))
+        config_paths.append(os.path.join(pkg_dir, 'config', 'joint_limits.yaml'))
     except Exception:
         pass
+
+    # Source-tree fallback for development without an ament package index.
+    source_config = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config')
+    )
+    active_profile = str(getattr(cfg, 'ACTIVE_PROFILE', '') or '').strip()
+    if active_profile:
+        config_paths.append(os.path.join(source_config, active_profile, 'joint_limits.yaml'))
+    config_paths.append(os.path.join(source_config, 'joint_limits.yaml'))
 
     for config_path in config_paths:
         config_path = os.path.normpath(config_path)
