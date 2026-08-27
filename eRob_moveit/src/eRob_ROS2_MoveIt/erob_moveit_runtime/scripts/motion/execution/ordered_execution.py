@@ -475,7 +475,7 @@ def wait_ordered_trajectory_point_match(
 def execute_ordered_planned_sequence(
     *,
     hooks: OrderedPlannedSequenceHooks,
-    segments_count: int,
+    segments: list[dict[str, Any]],
     scheduler_bridge: Any,
     planner_future: Any,
     stop_planning: Any,
@@ -485,37 +485,75 @@ def execute_ordered_planned_sequence(
     suppress_post_success_attr: str = "_suppress_post_success_unwind",
     stopped_result: int = -14,
 ) -> int:
-    """Consume planned ordered-chain segments and execute them in order."""
+    """Consume planned ordered-chain segments and execute them in order.
+
+    Contiguous segments with the same non-empty ``readiness_group`` are released
+    only after every member of that group has been planned.  Planning still runs
+    concurrently with preceding motion, so the wait occurs before the first
+    group member rather than between members.
+    """
 
     try:
-        for expected_index in range(int(segments_count)):
+        segments_count = len(segments)
+        prefetched: dict[int, dict[str, Any]] = {}
+
+        def _wait_for_index(index: int) -> dict[str, Any]:
+            cached = prefetched.get(index)
+            if cached is not None:
+                return cached
             wait_started = perf_counter()
             hooks.mark_motion_timing(
                 hooks.node,
                 "ordered_plan_wait_start",
-                index=expected_index + 1,
+                index=index + 1,
                 timeout_s=plan_timeout_s,
             )
-            planned = scheduler_bridge.wait_for_planned(
-                expected_index,
+            planned_segment = scheduler_bridge.wait_for_planned(
+                index,
                 timeout=plan_timeout_s,
             )
+            prefetched[index] = planned_segment
             hooks.logger.info(
-                f"[TIMING] ordered_motion_chain_plan_ready index={expected_index + 1} "
+                f"[TIMING] ordered_motion_chain_plan_ready index={index + 1} "
                 f"wait_before_execute_s={perf_counter() - wait_started:.3f}"
             )
             hooks.mark_motion_timing(
                 hooks.node,
                 "ordered_plan_ready",
-                index=expected_index + 1,
-                label=planned.get("label"),
+                index=index + 1,
+                label=planned_segment.get("label"),
                 wait_before_execute_s=perf_counter() - wait_started,
-                plan_s=float(planned.get("plan_elapsed_s", 0.0) or 0.0),
+                plan_s=float(planned_segment.get("plan_elapsed_s", 0.0) or 0.0),
             )
+            return planned_segment
+
+        for expected_index in range(segments_count):
+            wait_started = perf_counter()
+            planned = _wait_for_index(expected_index)
+            readiness_group = str(segments[expected_index].get("readiness_group") or "").strip()
+            if readiness_group:
+                group_end = expected_index
+                while (
+                    group_end + 1 < segments_count
+                    and str(segments[group_end + 1].get("readiness_group") or "").strip()
+                    == readiness_group
+                ):
+                    group_end += 1
+                for required_index in range(expected_index + 1, group_end + 1):
+                    _wait_for_index(required_index)
+                hooks.mark_motion_timing(
+                    hooks.node,
+                    "ordered_readiness_group_ready",
+                    group=readiness_group,
+                    first_index=expected_index + 1,
+                    last_index=group_end + 1,
+                    wait_before_execute_s=perf_counter() - wait_started,
+                )
             preplanned_snapshot = scheduler_bridge.consume_planned(
                 expected_index,
                 current_index=expected_index + 1,
             )
+            prefetched.pop(expected_index, None)
             hooks.set_ordered_motion_chain_status(**preplanned_snapshot)
 
             if bool(getattr(hooks.node, stop_requested_attr, False)):

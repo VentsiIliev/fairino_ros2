@@ -21,6 +21,25 @@ class OrderedPipelineRunnerConfig:
     stopped_result: int
 
 
+def _validate_readiness_groups(segments: list[dict[str, Any]]) -> None:
+    """Reject a readiness group that reappears after another group/segment."""
+
+    closed: set[str] = set()
+    active = ""
+    for index, segment in enumerate(segments):
+        group = str(segment.get("readiness_group") or "").strip()
+        if group == active:
+            continue
+        if active:
+            closed.add(active)
+        if group and group in closed:
+            raise ValueError(
+                f"readiness_group {group!r} must be contiguous; "
+                f"it reappears at segment {index + 1}"
+            )
+        active = group
+
+
 def run_ordered_planning_and_execution(
     *,
     node: Any,
@@ -28,12 +47,13 @@ def run_ordered_planning_and_execution(
     planning_worker_factory: Callable[[Event], Callable[[], Any]],
     sequence_hooks: OrderedPlannedSequenceHooks,
     scheduler_bridge: Any,
-    segments_count: int,
+    segments: list[dict[str, Any]],
     config: OrderedPipelineRunnerConfig,
     execution_authorized: Event | None = None,
 ) -> int:
     """Run ordered planning in one worker while consuming planned segments."""
 
+    _validate_readiness_groups(segments)
     executor = ThreadPoolExecutor(max_workers=1)
     stop_planning = Event()
     planning_worker = planning_worker_factory(stop_planning)
@@ -52,7 +72,7 @@ def run_ordered_planning_and_execution(
             mark_motion_timing(node, "ordered_execution_authorized")
         return execute_ordered_planned_sequence(
             hooks=sequence_hooks,
-            segments_count=segments_count,
+            segments=segments,
             scheduler_bridge=scheduler_bridge,
             planner_future=planner_future,
             stop_planning=stop_planning,

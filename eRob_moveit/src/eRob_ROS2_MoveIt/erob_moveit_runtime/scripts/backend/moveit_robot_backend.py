@@ -1188,7 +1188,7 @@ class MoveItRobotBackend(IRobotBackend):
                 execute_planned_segment=_execute_planned_segment,
             ),
             scheduler_bridge=scheduler_bridge,
-            segments_count=len(segments),
+            segments=segments,
             config=OrderedPipelineRunnerConfig(
                 plan_timeout_s=plan_timeout_s,
                 previous_execution_suppress=initial_state.previous_execution_suppress,
