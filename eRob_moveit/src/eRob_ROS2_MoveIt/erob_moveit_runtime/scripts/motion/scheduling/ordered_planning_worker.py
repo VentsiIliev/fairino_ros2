@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from time import perf_counter
 from typing import Any, Callable, Sequence
 
@@ -86,6 +87,18 @@ def execute_ordered_planning_worker(
                 break
 
             segment = segments[index]
+            execution_group = str(segment.get("execution_group") or "").strip()
+            execution_policy = str(segment.get("execution_policy") or "").strip().lower()
+            if execution_group and execution_policy == "concatenate":
+                index, previous_target, previous_state = _plan_concatenated_group(
+                    hooks=hooks,
+                    segments=segments,
+                    start_index=index,
+                    previous_target=previous_target,
+                    previous_state=previous_state,
+                    worker_started=worker_started,
+                )
+                continue
             blend_r = max(
                 0.0,
                 float(segment.get("blendR", 0.0) or 0.0),
@@ -141,6 +154,157 @@ def execute_ordered_planning_worker(
         )
 
         scheduler_bridge.publish_error(exc)
+
+
+def _duration_ns(duration: Any) -> int:
+    return int(duration.sec) * 1_000_000_000 + int(duration.nanosec)
+
+
+def _set_duration_ns(duration: Any, value: int) -> None:
+    duration.sec = int(value // 1_000_000_000)
+    duration.nanosec = int(value % 1_000_000_000)
+
+
+def _concatenate_joint_trajectories(planned_group: list[dict[str, Any]]) -> Any:
+    """Join timed trajectories without trimming or changing their geometry."""
+
+    first_trajectory = planned_group[0].get("trajectory")
+    if first_trajectory is None or not getattr(first_trajectory, "points", None):
+        raise RuntimeError("First concatenation member has no trajectory points")
+    combined = deepcopy(first_trajectory)
+    joint_names = list(combined.joint_names)
+    junction_tolerance_rad = 0.02
+
+    for member in planned_group[1:]:
+        trajectory = member.get("trajectory")
+        points = list(getattr(trajectory, "points", []) or [])
+        if not points:
+            raise RuntimeError(f"Cannot concatenate empty segment {member.get('label')!r}")
+        if list(trajectory.joint_names) != joint_names:
+            raise RuntimeError("Concatenated trajectories have different joint order")
+        left_positions = list(combined.points[-1].positions)
+        right_positions = list(points[0].positions)
+        if len(left_positions) != len(right_positions):
+            raise RuntimeError("Concatenated trajectory junction has different joint dimensions")
+        max_error = max(
+            abs(float(left) - float(right))
+            for left, right in zip(left_positions, right_positions)
+        )
+        if max_error > junction_tolerance_rad:
+            raise RuntimeError(
+                f"Concatenated trajectory junction mismatch: "
+                f"{max_error:.6f}rad > {junction_tolerance_rad:.6f}rad"
+            )
+
+        offset_ns = _duration_ns(combined.points[-1].time_from_start)
+        previous_ns = offset_ns
+        # The first point is the shared boundary and is intentionally kept only
+        # from the left trajectory. Subsequent timing remains exactly relative
+        # to that boundary, so no dwell is introduced.
+        for source_point in points[1:]:
+            relative_ns = _duration_ns(source_point.time_from_start)
+            target_ns = offset_ns + relative_ns
+            if target_ns <= previous_ns:
+                raise RuntimeError(
+                    f"Concatenated segment {member.get('label')!r} has non-increasing timing"
+                )
+            point = deepcopy(source_point)
+            _set_duration_ns(point.time_from_start, target_ns)
+            combined.points.append(point)
+            previous_ns = target_ns
+    return combined
+
+
+def _plan_concatenated_group(
+    *,
+    hooks: OrderedPlanningWorkerHooks,
+    segments: Sequence[dict[str, Any]],
+    start_index: int,
+    previous_target: Sequence[float],
+    previous_state: Any,
+    worker_started: float,
+) -> tuple[int, list[float], Any]:
+    group_name = str(segments[start_index].get("execution_group") or "").strip()
+    group_end = start_index
+    while (
+        group_end + 1 < len(segments)
+        and str(segments[group_end + 1].get("execution_group") or "").strip() == group_name
+        and str(segments[group_end + 1].get("execution_policy") or "").strip().lower()
+        == "concatenate"
+    ):
+        group_end += 1
+    if group_end == start_index:
+        raise RuntimeError(
+            f"execution_group {group_name!r} requires at least two contiguous segments"
+        )
+
+    planned_group = []
+    group_target = list(previous_target)
+    group_state = previous_state
+    for group_index in range(start_index, group_end + 1):
+        planned = hooks.plan_ordered_segment(
+            group_index,
+            segments[group_index],
+            group_target,
+            group_state,
+        )
+        if bool(planned.get("noop", False)):
+            raise RuntimeError(
+                f"Cannot concatenate no-op segment {planned.get('label')!r}"
+            )
+        planned_group.append(planned)
+        group_target = list(planned["target_position"])
+        group_state = planned["final_state"]
+
+    trajectory = _concatenate_joint_trajectories(planned_group)
+    first = planned_group[0]
+    last = planned_group[-1]
+    combined = {
+        "type": "concatenated",
+        "label": " + ".join(str(member.get("label") or "") for member in planned_group),
+        "start_position": list(first["start_position"]),
+        "target_position": list(last["target_position"]),
+        "final_state": hooks.robot_state_from_trajectory_end(trajectory),
+        "trajectory": trajectory,
+        "plan_elapsed_s": sum(
+            float(member.get("plan_elapsed_s", 0.0) or 0.0)
+            for member in planned_group
+        ),
+        "optimize_elapsed_s": sum(
+            float(member.get("optimize_elapsed_s", 0.0) or 0.0)
+            for member in planned_group
+        ),
+        "protected": any(bool(member.get("protected", False)) for member in planned_group),
+        "logical_segment_count": len(planned_group),
+    }
+    hooks.mark_motion_timing(
+        hooks.node,
+        "ordered_segment_queued",
+        index=start_index + 1,
+        label=combined["label"],
+        segment_type="concatenated",
+        execution_group=group_name,
+        execution_group_size=len(planned_group),
+        duration_s=perf_counter() - worker_started,
+    )
+    hooks.publish_planned(start_index, combined)
+    for offset, member in enumerate(planned_group[1:], start=1):
+        logical_index = start_index + offset
+        hooks.publish_planned(
+            logical_index,
+            {
+                "type": "concatenate_consumed",
+                "label": str(member.get("label") or f"segment_{logical_index + 1}"),
+                "start_position": list(member.get("start_position") or []),
+                "target_position": list(member["target_position"]),
+                "final_state": combined["final_state"],
+                "trajectory": None,
+                "plan_elapsed_s": 0.0,
+                "optimize_elapsed_s": 0.0,
+                "protected": bool(member.get("protected", False)),
+            },
+        )
+    return group_end + 1, list(last["target_position"]), combined["final_state"]
 
 
 def _plan_blend_group(

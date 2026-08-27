@@ -768,7 +768,7 @@ def execute_ordered_planned_segment(
         preplanned_ready_count=preplanned_ready_count,
         mark_scheduler_executing=mark_scheduler_executing,
     )
-    if segment_type in {"linear", "ptp", "path", "blended", "linked_lin"}:
+    if segment_type in {"linear", "ptp", "path", "blended", "linked_lin", "concatenated"}:
         if bool(planned_segment.get("noop", False)):
             segment_hooks.logger.info(
                 f"[OrderedChain] Skipping no-op "
@@ -800,11 +800,11 @@ def execute_ordered_planned_segment(
                 execution_started_s=execution_started_s,
                 motion_error_result=motion_error_result,
             )
-    elif segment_type == "blend_consumed":
+    elif segment_type in {"blend_consumed", "concatenate_consumed"}:
         segment_hooks.logger.info(
             f"[OrderedChain] Segment {index}/{total} "
             f"label='{planned_segment['label']}' was executed inside the "
-            "previous blended controller trajectory"
+            "previous grouped controller trajectory"
         )
         result = 0
     elif segment_type == "unwind_joint6":

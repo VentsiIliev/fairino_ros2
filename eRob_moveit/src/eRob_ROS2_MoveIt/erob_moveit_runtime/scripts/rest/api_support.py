@@ -360,6 +360,25 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
                     f"Invalid segment {index}: readiness_group must be a safe group name"
                 )
             segment["readiness_group"] = readiness_group
+        execution_group = raw_segment.get("execution_group")
+        if execution_group is not None:
+            execution_group = str(execution_group).strip()
+            if not execution_group or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                for ch in execution_group
+            ):
+                raise ValueError(
+                    f"Invalid segment {index}: execution_group must be a safe group name"
+                )
+            segment["execution_group"] = execution_group
+        execution_policy = raw_segment.get("execution_policy")
+        if execution_policy is not None:
+            execution_policy = str(execution_policy).strip().lower()
+            if execution_policy != "concatenate":
+                raise ValueError(
+                    f"Invalid segment {index}: execution_policy must be 'concatenate'"
+                )
+            segment["execution_policy"] = execution_policy
         limit_profile = raw_segment.get("limit_profile")
         if limit_profile is not None:
             limit_profile = str(limit_profile).strip()
