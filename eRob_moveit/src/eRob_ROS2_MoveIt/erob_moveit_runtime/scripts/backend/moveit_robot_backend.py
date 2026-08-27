@@ -1616,6 +1616,18 @@ class MoveItRobotBackend(IRobotBackend):
             return -7
 
         joint_trajectory = optimized.joint_trajectory
+        from motion.execution.unwind_dynamics_guard import enforce_unwind_joint_dynamics
+        enforce_unwind_joint_dynamics(
+            joint_trajectory,
+            self.node.get_logger(),
+            joint_name=str(joint_name or getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_NAME', 'Joint_6')),
+            velocity_limit_rad_s=float(
+                getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_RATE_LIMIT_RAD_S', 1.2)
+            ),
+            acceleration_limit_rad_s2=float(
+                getattr(config, 'EXECUTOR_POST_UNWIND_JOINT_ACCEL_LIMIT_RAD_S2', 2.5)
+            ),
+        )
         generation = _begin_execution(planning_node)
         planning_node._last_cartesian_request_kind = 'unwind_direct_ik'
         planning_node._last_cartesian_request_waypoints = len(waypoints_base)

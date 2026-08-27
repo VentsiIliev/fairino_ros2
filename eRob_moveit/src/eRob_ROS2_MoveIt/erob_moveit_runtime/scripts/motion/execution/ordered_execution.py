@@ -688,6 +688,27 @@ def execute_ordered_unwind_trajectories(
     trajectories = list(planned_segment["trajectories"])
     trajectory_checks = list(planned_segment.get("trajectory_checks") or [])
     for unwind_index, joint_trajectory in enumerate(trajectories, start=1):
+        import config
+        from motion.execution.unwind_dynamics_guard import enforce_unwind_joint_dynamics
+        check = (
+            trajectory_checks[unwind_index - 1]
+            if unwind_index - 1 < len(trajectory_checks)
+            else planned_segment.get("check") or {}
+        )
+        enforce_unwind_joint_dynamics(
+            joint_trajectory,
+            hooks.logger,
+            joint_name=str(
+                check.get("joint_name")
+                or getattr(config, "EXECUTOR_POST_UNWIND_JOINT_NAME", "Joint_6")
+            ),
+            velocity_limit_rad_s=float(
+                getattr(config, "EXECUTOR_POST_UNWIND_JOINT_RATE_LIMIT_RAD_S", 1.2)
+            ),
+            acceleration_limit_rad_s2=float(
+                getattr(config, "EXECUTOR_POST_UNWIND_JOINT_ACCEL_LIMIT_RAD_S2", 2.5)
+            ),
+        )
         timing = ordered_trajectory_timing(
             joint_trajectory,
             min_timeout_s=min_timeout_s,
@@ -703,9 +724,7 @@ def execute_ordered_unwind_trajectories(
             hooks.node,
             joint_trajectory,
             preserve_explicit_wrap=True,
-            unwind_check=trajectory_checks[unwind_index - 1]
-            if unwind_index - 1 < len(trajectory_checks)
-            else planned_segment.get("check"),
+            unwind_check=check,
         )
         result = hooks.wait_execution_complete(hooks.node, timing.wait_timeout_s)
         if result != 0:
