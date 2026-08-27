@@ -349,6 +349,17 @@ def parse_execute_ordered_motion_chain_request(data: dict[str, Any] | None) -> d
         if segment_type not in {"linear", "ptp", "path", "unwind_joint6"}:
             raise ValueError(f"Invalid segment {index}: unsupported type {segment_type!r}")
         segment = {"type": segment_type, "label": str(raw_segment.get("label") or f"segment_{index + 1}")}
+        readiness_group = raw_segment.get("readiness_group")
+        if readiness_group is not None:
+            readiness_group = str(readiness_group).strip()
+            if not readiness_group or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                for ch in readiness_group
+            ):
+                raise ValueError(
+                    f"Invalid segment {index}: readiness_group must be a safe group name"
+                )
+            segment["readiness_group"] = readiness_group
         limit_profile = raw_segment.get("limit_profile")
         if limit_profile is not None:
             limit_profile = str(limit_profile).strip()
