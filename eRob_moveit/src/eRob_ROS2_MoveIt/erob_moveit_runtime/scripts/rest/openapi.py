@@ -56,6 +56,7 @@ OPENAPI_SPEC = {
         "/jog": {"post": {"tags": ["motion"], "summary": "Jog along one robot axis"}},
         "/servojog/start": {"post": {"tags": ["servo"], "summary": "Start continuous ServoJog"}},
         "/servojog/stop": {"post": {"tags": ["servo"], "summary": "Stop continuous ServoJog"}},
+        "/servojog/to-z": {"post": {"tags": ["servo"], "summary": "Run target-bounded +Z ServoJog"}},
         "/stop": {"post": {"tags": ["motion"], "summary": "Stop active motion and clear queued work"}},
         "/reachability/pose": {"post": {"tags": ["planning"], "summary": "Validate pose reachability from a start pose"}},
         "/workobject/set": {"post": {"tags": ["frames"], "summary": "Set active work object origin"}},
@@ -173,6 +174,7 @@ def _apply_openapi_details():
         "/jog": {"axis": "X", "direction": "PLUS", "step": 10, "vel": 10, "acc": 10, "frame": "user", "user": 0, "tool": 0},
         "/servojog/start": {"axis": "X", "direction": "PLUS", "linear_mm_s": 10, "angular_deg_s": 3, "frame": "user", "user": 0, "tool": 0},
         "/servojog/stop": {},
+        "/servojog/to-z": {"target_z_mm": 110.0, "fast_linear_mm_s": 350.0, "final_linear_mm_s": 50.0, "slowdown_distance_mm": 20.0, "tolerance_mm": 2.0, "maximum_distance_mm": 80.0, "timeout_s": 10.0, "poll_interval_s": 0.01, "frame": "user", "user": 1, "tool": 1},
         "/servo/cartesian/start": {
             "frame": "user",
             "user": 0,

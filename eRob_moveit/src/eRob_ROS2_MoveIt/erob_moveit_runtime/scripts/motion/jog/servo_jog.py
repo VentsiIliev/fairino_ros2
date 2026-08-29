@@ -148,6 +148,133 @@ class ServoJogCapability(JogCapability):
                 self._continuous_collision_override_active = False
             return 0 if result and restore_ok else -1
 
+    def move_z_to_target(
+        self,
+        *,
+        target_z_mm: float,
+        fast_linear_mm_s: float,
+        final_linear_mm_s: float,
+        slowdown_distance_mm: float,
+        tolerance_mm: float,
+        maximum_distance_mm: float,
+        timeout_s: float,
+        poll_interval_s: float,
+        frame: CartesianServoFrame = CartesianServoFrame.USER,
+        tool: int = 0,
+        user: int = 0,
+        disable_collision_checking: bool = False,
+    ) -> dict:
+        """Retract +Z to a hard target using an entirely local feedback loop."""
+        values = (
+            target_z_mm,
+            fast_linear_mm_s,
+            final_linear_mm_s,
+            slowdown_distance_mm,
+            tolerance_mm,
+            maximum_distance_mm,
+            timeout_s,
+            poll_interval_s,
+        )
+        if not all(math.isfinite(float(value)) for value in values):
+            return {"result": -1, "success": False, "error": "invalid_bounded_servo_config"}
+        tolerance = max(0.0, float(tolerance_mm))
+        slowdown_distance = float(slowdown_distance_mm)
+        if (
+            float(fast_linear_mm_s) <= 0.0
+            or float(final_linear_mm_s) <= 0.0
+            or slowdown_distance <= tolerance
+            or float(maximum_distance_mm) <= 0.0
+            or float(timeout_s) <= 0.0
+            or float(poll_interval_s) <= 0.0
+        ):
+            return {"result": -1, "success": False, "error": "invalid_bounded_servo_config"}
+
+        with self._lock:
+            ready = self._check_ready("SERVO_JOG_TARGET_Z")
+            if ready != 0:
+                return {"result": ready, "success": False, "error": "motion_not_ready"}
+            start_pose = self._backend.get_current_position(user_id=user)
+            if not start_pose or len(start_pose) < 3:
+                return {"result": -1, "success": False, "error": "position_unreadable"}
+            start_z = float(start_pose[2])
+            requested_distance = float(target_z_mm) - start_z
+            if requested_distance <= tolerance:
+                return {"result": -1, "success": False, "error": "target_not_above_start"}
+            if requested_distance > float(maximum_distance_mm):
+                return {"result": -1, "success": False, "error": "maximum_distance_exceeded"}
+
+            if not self._start_servo_command(
+                frame=frame,
+                tool=tool,
+                user=user,
+                linear_mm_s=(0.0, 0.0, float(fast_linear_mm_s)),
+                angular_deg_s=(0.0, 0.0, 0.0),
+                disable_collision_checking=disable_collision_checking,
+            ):
+                return {"result": -1, "success": False, "error": "servo_start_failed"}
+
+            final_phase = False
+            error = ""
+            deadline = time.monotonic() + float(timeout_s)
+            try:
+                while not error:
+                    pose = self._backend.get_current_position(user_id=user)
+                    if not pose or len(pose) < 3:
+                        error = "position_unreadable"
+                        break
+                    live_z = float(pose[2])
+                    travelled = live_z - start_z
+                    remaining = float(target_z_mm) - live_z
+                    if travelled > float(maximum_distance_mm) + tolerance:
+                        error = "maximum_distance_exceeded"
+                        break
+                    if remaining <= tolerance:
+                        break
+                    if not final_phase and remaining <= slowdown_distance:
+                        update = self._backend.cartesian_servo.update(
+                            linear_mm_s=(0.0, 0.0, float(final_linear_mm_s)),
+                            angular_deg_s=(0.0, 0.0, 0.0),
+                        )
+                        if update != CartesianServoResult.OK:
+                            error = "slowdown_update_failed"
+                            break
+                        final_phase = True
+                        self._backend.node.get_logger().info(
+                            "[SERVO_JOG_TARGET_Z] Switched to final speed: "
+                            f"live_z={live_z:.3f} target_z={target_z_mm:.3f} "
+                            f"linear_mm_s={final_linear_mm_s:.3f}"
+                        )
+                    if time.monotonic() >= deadline:
+                        error = "timeout"
+                        break
+                    time.sleep(max(0.002, min(0.02, float(poll_interval_s))))
+            finally:
+                stopped = self._stop_servo()
+                restore_ok = True
+                if disable_collision_checking:
+                    setter = getattr(self._backend.cartesian_servo, "set_collision_checking", None)
+                    restore_ok = bool(callable(setter) and setter(True))
+                if not stopped and not error:
+                    error = "servo_stop_failed"
+                if not restore_ok and not error:
+                    error = "collision_restore_failed"
+
+            final_pose = self._backend.get_current_position(user_id=user)
+            final_z = None if not final_pose or len(final_pose) < 3 else float(final_pose[2])
+            if not error and final_z is None:
+                error = "final_position_unreadable"
+            if not error and abs(final_z - float(target_z_mm)) > tolerance:
+                error = "final_position_mismatch"
+            return {
+                "result": 0 if not error else -1,
+                "success": not error,
+                "error": error or None,
+                "start_z": start_z,
+                "target_z": float(target_z_mm),
+                "final_z": final_z,
+                "final_phase": final_phase,
+            }
+
     def _prepare_jog(
         self,
         axis: RobotAxis,

@@ -22,6 +22,7 @@ from rest.api_support import (
     parse_jog_request,
     parse_move_linear_request,
     parse_servo_jog_start_request,
+    parse_servo_jog_to_z_request,
 )
 from runtime_gateway.base import RuntimeGateway
 from runtime_gateway.local import LocalRuntimeGateway
@@ -676,6 +677,20 @@ class RuntimeApi:
             return motion_error(result)
         except Exception as exc:
             logger.error(f"ServoJog stop endpoint error: {exc}")
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
+
+    def servo_jog_to_z(self, data: dict[str, Any] | None) -> ApiResponse:
+        try:
+            payload = parse_servo_jog_to_z_request(data)
+            not_ready = self._require_motion_stack_ready()
+            if not_ready is not None:
+                return not_ready
+            result = self._gateway_or_local().servo_jog_to_z(**payload)
+            return ApiResponse(result, 200 if result.get("success") else 409)
+        except ValueError as exc:
+            return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            logger.error(f"Target-bounded ServoJog endpoint error: {exc}", exc_info=True)
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
 
     def set_digital_output(self, data: dict[str, Any] | None) -> ApiResponse:

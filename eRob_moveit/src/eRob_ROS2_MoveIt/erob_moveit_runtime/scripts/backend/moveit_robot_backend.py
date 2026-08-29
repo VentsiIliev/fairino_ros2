@@ -1943,6 +1943,11 @@ class MoveItRobotBackend(IRobotBackend):
             restore_collision_checking=restore_collision_checking
         )
 
+    def servo_jog_to_z(self, **kwargs):
+        frame = kwargs.get("frame")
+        kwargs["frame"] = CartesianServoFrame.USER if frame is None else CartesianServoFrame(frame)
+        return self._servo_jog.move_z_to_target(**kwargs)
+
     def _start_planned_jog(self, axis: RobotAxis, direction: Direction, step, vel, acc, *, frame=None, tool=0, user=0):
         drive_error = self._reject_if_drive_not_enabled("JOG")
         if drive_error is not None:

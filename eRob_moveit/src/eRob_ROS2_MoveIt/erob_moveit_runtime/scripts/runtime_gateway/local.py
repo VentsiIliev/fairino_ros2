@@ -395,6 +395,9 @@ class LocalRuntimeGateway(RuntimeGateway):
             restore_collision_checking=restore_collision_checking
         )
 
+    def servo_jog_to_z(self, **kwargs) -> dict:
+        return self.robot.servo_jog_to_z(**kwargs)
+
     # --- position / kinematics queries ------------------------------------
 
     def get_current_position(self):

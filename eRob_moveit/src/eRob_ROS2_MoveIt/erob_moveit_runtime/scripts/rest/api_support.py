@@ -242,6 +242,29 @@ def parse_servo_jog_start_request(data: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def parse_servo_jog_to_z_request(data: dict[str, Any] | None) -> dict[str, Any]:
+    payload = data or {}
+    required = (
+        "target_z_mm", "fast_linear_mm_s", "final_linear_mm_s",
+        "slowdown_distance_mm", "tolerance_mm", "maximum_distance_mm",
+        "timeout_s", "poll_interval_s",
+    )
+    try:
+        values = {key: float(payload[key]) for key in required}
+        values["tool"] = int(payload.get("tool", 0))
+        values["user"] = int(payload.get("user", 0))
+    except KeyError as exc:
+        raise ValueError(f"Missing '{exc.args[0]}'") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid target-bounded ServoJog value") from exc
+    values["frame"] = str(payload.get("frame", "user")).strip().lower()
+    collision = payload.get("disable_collision_checking", False)
+    if not isinstance(collision, bool):
+        raise ValueError("Invalid 'disable_collision_checking'; expected boolean")
+    values["disable_collision_checking"] = collision
+    return values
+
+
 def parse_move_linear_request(data: dict[str, Any] | None) -> dict[str, Any]:
     payload = data or {}
     position = payload.get("position")
