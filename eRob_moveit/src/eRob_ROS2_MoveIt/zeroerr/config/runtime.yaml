@@ -64,7 +64,7 @@ ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 
 # Real ZeroErr drives can briefly transition around adjacent controller goals.
 # Require a short stable enabled window before sending the next trajectory.
-EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S: 0.05
+EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S: 0.0
 
 # Automatically request drive operation enable once EtherCAT is fully OP and
 # controller services are available. This makes /drive/status report
