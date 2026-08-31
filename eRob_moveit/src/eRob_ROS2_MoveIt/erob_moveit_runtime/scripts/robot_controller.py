@@ -38,6 +38,7 @@ from motion.execution.motion_queue import MotionQueue
 from motion.execution.motion_coordinator import MotionCoordinator
 from motion.execution.trajectory_executor import TrajectoryExecutor
 from motion.execution.trajectory_optimizer import build_trajectory_optimizer
+from motion.async_logging import flush as flush_async_logging, wrap as wrap_async_logger
 from motion.planning.planner_context import PlannerContext
 from motion.planning.planner_support_service import PlannerSupportService
 from utils.workspace_extractor import _extract_workspace_from_urdf
@@ -94,6 +95,17 @@ from config import (
 
 class RobotController(Node):
     _MANIPULATOR_CONTROLLER_NAME = 'manipulator_controller'
+
+    def get_logger(self):
+        """Route runtime INFO through the non-blocking timestamped logger."""
+        sync_logger = super().get_logger()
+        if not bool(getattr(config, 'ASYNC_INFO_LOGGING_ENABLED', True)):
+            return sync_logger
+        cached = getattr(self, '_async_info_logger', None)
+        if cached is None or cached.sync_logger is not sync_logger:
+            cached = wrap_async_logger(sync_logger)
+            self._async_info_logger = cached
+        return cached
 
     def __init__(self):
         import time
@@ -1245,6 +1257,9 @@ class RobotController(Node):
         startup_enable = getattr(self, '_startup_auto_enable_thread', None)
         if startup_enable is not None and startup_enable.is_alive():
             startup_enable.join(timeout=1.0)
+        flush_async_logging(
+            float(getattr(config, 'ASYNC_INFO_LOGGING_SHUTDOWN_FLUSH_S', 1.0))
+        )
         return super().destroy_node()
 
     def _format_drive_state_snapshot(self, label: str):

@@ -96,6 +96,11 @@ LINKED_LIN_NEAR_DUPLICATE_RAD: 0.00001
 ORDERED_BLEND_JOINT_RATE_GUARD_ENABLED: true
 ORDERED_BLEND_JOINT_RATE_LIMITS_RAD_S: {}
 
+# Keep verbose ROS INFO diagnostics without putting console/file I/O on motion,
+# planning, controller-dispatch, or optimizer callback threads.
+ASYNC_INFO_LOGGING_ENABLED: true
+ASYNC_INFO_LOGGING_SHUTDOWN_FLUSH_S: 1.0
+
 # Shared Cartesian path defaults. Profiles can override these for process-
 # specific dense paths such as paint contours.
 PATH_EEF_STEP_SCALE: 1.35
