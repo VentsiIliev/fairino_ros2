@@ -5,7 +5,7 @@ from copy import deepcopy
 import math
 import time
 import config
-from motion.async_logging import info as async_info
+from motion.async_logging import info as async_info, infof as async_infof
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -1511,19 +1511,24 @@ class TrajectoryExecutor:
             time_tolerance_sec = max(config.EXECUTOR_TIME_MIN_S, traj_duration_sec * config.EXECUTOR_TIME_MULTIPLIER)
 
             logger = self._node.get_logger()
-            async_info(
+            async_infof(
                 logger,
-                f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
-            async_info(
+                '[Controller] Trajectory duration: {:.2f}s, timeout: {:.1f}s',
+                traj_duration_sec, time_tolerance_sec)
+            async_infof(
                 logger,
-                f'[Controller] First point positions: {[round(p, 6) for p in joint_trajectory.points[0].positions]}')
-            async_info(
+                '[Controller] First point positions: {}',
+                tuple(round(float(p), 6) for p in joint_trajectory.points[0].positions))
+            async_infof(
                 logger,
-                f'[Controller] Last point positions: {[round(p, 6) for p in last_point.positions]}')
-            async_info(
+                '[Controller] Last point positions: {}',
+                tuple(round(float(p), 6) for p in last_point.positions))
+            async_infof(
                 logger,
-                f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
-            async_info(logger, f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+                '[Controller] First point time: {:.3f}s',
+                joint_trajectory.points[0].time_from_start.sec
+                + joint_trajectory.points[0].time_from_start.nanosec / 1e9)
+            async_infof(logger, '[Controller] Last point time: {:.3f}s', traj_duration_sec)
             # self._log_planned_trajectory_metrics(joint_trajectory)
             # self._log_final_trajectory_segment(joint_trajectory)
         else:
@@ -1532,11 +1537,14 @@ class TrajectoryExecutor:
         controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
         controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
 
-        async_info(
+        async_infof(
             self._node.get_logger(),
-            f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
-            f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
-            f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
+            '[Controller] Sending {} points directly to controller '
+            '(spline interpolation, path_tolerance={:.3f}rad, '
+            'goal_time_tolerance={:.1f}s)',
+            len(joint_trajectory.points),
+            float(getattr(config, 'EXECUTOR_PATH_POS_TOL_RAD', 0.35)),
+            time_tolerance_sec)
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
             mark_move_linear_timing(self._node, "controller_prepare_done", duration_s=time.perf_counter() - controller_prepare_started_at)

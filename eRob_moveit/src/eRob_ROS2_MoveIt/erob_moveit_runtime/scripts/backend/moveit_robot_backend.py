@@ -5,6 +5,7 @@ import math
 import time
 import traceback
 import config
+from motion.async_logging import infof as async_infof
 from backend.i_robot_backend import IRobotBackend
 from motion.jog.planned_jog import PlannedJogCapability
 from motion.jog.servo_jog import ServoJogCapability
@@ -1445,14 +1446,14 @@ class MoveItRobotBackend(IRobotBackend):
         min_delta = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DELTA_RAD', 0.5))
         remaining = final_target - initial_value
         if abs(remaining) < min_delta:
-            self.node.get_logger().info(
+            async_infof(
+                self.node.get_logger(),
                 '[UNWIND_J6] Rotational-path unwind skipped - no unwind needed '
-                f'({joint_name} current={initial_value:.4f}rad '
-                f'target={final_target:.4f}rad '
-                f'delta={remaining:.4f}rad '
-                f'active_user={active_user_id} axis={axis_index} '
-                f'axis_value={current_axis_deg:.3f}deg target_axis=0.000deg '
-                f'min_delta={min_delta:.4f}rad)'
+                '({} current={:.4f}rad target={:.4f}rad delta={:.4f}rad '
+                'active_user={} axis={} axis_value={:.3f}deg target_axis=0.000deg '
+                'min_delta={:.4f}rad)',
+                joint_name, initial_value, final_target, remaining,
+                active_user_id, axis_index, current_axis_deg, min_delta,
             )
             self.node.last_move_result = 0
             return 0
@@ -1463,14 +1464,16 @@ class MoveItRobotBackend(IRobotBackend):
         acc_scale = acc_percent / 100.0
         max_step_deg = max(1.0, abs(float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG', 180.0))))
         segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
-        self.node.get_logger().info(
+        async_infof(
+            self.node.get_logger(),
             '[UNWIND_J6] Executing rotational-path unwind: '
-            f'{joint_name} {initial_value:.3f} -> {final_target:.3f} rad '
-            f'delta={remaining:.3f} rad active_user={active_user_id} '
-            f'cart_axis={axis_index} axis_value={current_axis_deg:.3f}deg '
-            f'target_axis=0.000deg cart_delta={total_delta_deg:.3f}deg '
-            f'segments={segment_count} max_segment={max_step_deg:.1f}deg '
-            f'vel={vel_percent:.1f}% acc={acc_percent:.1f}%'
+            '{} {:.3f} -> {:.3f} rad delta={:.3f} rad active_user={} '
+            'cart_axis={} axis_value={:.3f}deg target_axis=0.000deg '
+            'cart_delta={:.3f}deg segments={} max_segment={:.1f}deg '
+            'vel={:.1f}% acc={:.1f}%',
+            joint_name, initial_value, final_target, remaining, active_user_id,
+            axis_index, current_axis_deg, total_delta_deg, segment_count,
+            max_step_deg, vel_percent, acc_percent,
         )
 
         for segment_index in range(1, segment_count + 1):
@@ -1496,9 +1499,12 @@ class MoveItRobotBackend(IRobotBackend):
             )
             target_pos_wobj = list(current_pos_wobj[:6])
             target_pos_wobj[axis_index] = float(target_pos_wobj[axis_index]) + segment_delta_deg
-            self.node.get_logger().info(
-                f'[UNWIND_J6] Rotational unwind segment {segment_index}/{segment_count}: '
-                f'{current_value:.3f} -> {final_target:.3f} rad, cart_delta={segment_delta_deg:.3f}deg'
+            async_infof(
+                self.node.get_logger(),
+                '[UNWIND_J6] Rotational unwind segment {}/{}: '
+                '{:.3f} -> {:.3f} rad, cart_delta={:.3f}deg',
+                segment_index, segment_count, current_value, final_target,
+                segment_delta_deg,
             )
 
             result = self._send_rotational_unwind_path(
@@ -1600,10 +1606,11 @@ class MoveItRobotBackend(IRobotBackend):
             point.positions = positions
 
         if logger is not None:
-            logger.info(
+            async_infof(
+                logger,
                 '[UNWIND_J6] Forced unwind joint branch before optimization: '
-                f'{joint_name} {start_value:.3f} -> {target_value:.3f} rad '
-                f'points={len(points)}'
+                '{} {:.3f} -> {:.3f} rad points={}',
+                joint_name, start_value, target_value, len(points),
             )
 
     def _send_rotational_unwind_path(
@@ -1740,11 +1747,12 @@ class MoveItRobotBackend(IRobotBackend):
         planning_node._last_cartesian_request_kind = 'unwind_direct_ik'
         planning_node._last_cartesian_request_waypoints = len(waypoints_base)
         planning_node._last_cartesian_request_started_at = started_at
-        self.node.get_logger().info(
-            f'[TIMING] unwind_direct_ik waypoints={len(waypoints_base)} '
-            f'points={len(getattr(joint_trajectory, "points", []) or [])} '
-            f'optimize_s={optimize_elapsed:.3f} elapsed_s={perf_counter() - started_at:.3f} '
-            f'generation={generation}'
+        async_infof(
+            self.node.get_logger(),
+            '[TIMING] unwind_direct_ik waypoints={} points={} '
+            'optimize_s={:.3f} elapsed_s={:.3f} generation={}',
+            len(waypoints_base), len(getattr(joint_trajectory, 'points', []) or []),
+            optimize_elapsed, perf_counter() - started_at, generation,
         )
         _send_trajectory_to_controller(planning_node, joint_trajectory)
         return 0
