@@ -1561,6 +1561,21 @@ class TrajectoryExecutor:
                 release_execution_lock=True,
             )
             return
+        try:
+            from motion.move_linear_timing import (
+                elapsed_since_request,
+                mark as mark_move_linear_timing,
+            )
+            request_to_send_s = elapsed_since_request(self._node)
+            mark_move_linear_timing(
+                self._node,
+                "controller_goal_dispatched",
+                request_to_controller_send_s=request_to_send_s,
+                points=len(joint_trajectory.points),
+                controller=self._controller_name,
+            )
+        except Exception:
+            pass
         self._motion.active_execute_send_future = future
         future.add_done_callback(
             lambda done_future, sequence=goal_sequence: self._on_controller_goal_response(

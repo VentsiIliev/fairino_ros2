@@ -265,8 +265,8 @@ class LocalRuntimeGateway(RuntimeGateway):
         trajectory_optimizer=None,
     ) -> int:
         try:
-            from motion.move_linear_timing import begin as begin_move_linear_timing
-            begin_move_linear_timing(self.node, source="/move/fast_lin")
+            from motion.move_linear_timing import ensure as ensure_move_linear_timing
+            ensure_move_linear_timing(self.node, source="/move/fast_lin")
         except Exception:
             pass
         return self.robot.move_fast_lin(

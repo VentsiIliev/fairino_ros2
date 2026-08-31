@@ -49,6 +49,11 @@ class PilzMoveLinStrategy(_MoveLinStrategyBase):
     """
 
     def execute(self, robot_controller) -> int:
+        try:
+            from .move_linear_timing import activate
+            activate(robot_controller, getattr(self, "request_timing", None))
+        except Exception:
+            pass
         from .planning.sequence import send_motion_sequence
         planner_context = getattr(robot_controller, "planner_context", robot_controller)
         return send_motion_sequence(

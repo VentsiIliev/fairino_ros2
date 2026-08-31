@@ -216,6 +216,11 @@ class RuntimeApi:
     def move_fast_lin(self, data: dict[str, Any] | None) -> ApiResponse:
         """Run the same LIN request through Pilz instead of CartesianPath."""
         try:
+            from motion.move_linear_timing import begin as begin_move_linear_timing
+            begin_move_linear_timing(self._node_getter(), source="/move/fast_lin")
+        except Exception:
+            pass
+        try:
             payload = parse_move_linear_request(data)
         except ValueError as exc:
             return response_error(str(exc), 400)

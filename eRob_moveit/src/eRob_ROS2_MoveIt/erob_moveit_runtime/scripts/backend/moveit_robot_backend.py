@@ -176,7 +176,7 @@ class MoveItRobotBackend(IRobotBackend):
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
             from motion.move_linear_timing import ensure as ensure_move_linear_timing, mark as mark_move_linear_timing
-            ensure_move_linear_timing(self.node, source="backend.move_liner")
+            request_timing = ensure_move_linear_timing(self.node, source="backend.move_liner")
             mark_move_linear_timing(
                 self.node,
                 "backend_received",
@@ -195,18 +195,20 @@ class MoveItRobotBackend(IRobotBackend):
             from motion.strategies import PilzMoveLinStrategy, SingleTargetStrategy
             strategy_class = PilzMoveLinStrategy if planning_strategy == "pilz_lin" else SingleTargetStrategy
             if trajectory_optimizer is not None:
-                result = self.node.execute(strategy_class(
+                strategy = strategy_class(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
                     avoid_collisions=avoid_collisions,
                     trajectory_optimizer=trajectory_optimizer,
-                ))
+                )
             else:
-                result = self.node.execute(strategy_class(
+                strategy = strategy_class(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
                     avoid_collisions=avoid_collisions,
-                ))
+                )
+            strategy.request_timing = request_timing
+            result = self.node.execute(strategy)
             self.node.get_logger().info(
                 f"[TIMING] backend_move_linear submitted blocking={bool(blocking)} "
                 f"result={result} elapsed_s={perf_counter() - started_at:.3f}"

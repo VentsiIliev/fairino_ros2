@@ -61,6 +61,7 @@ def begin(context, *, source="move_linear"):
         "source": source,
         "request_received_at": perf_counter(),
         "planning_started_at": None,
+        "marks": {},
     }
     _set_all(context, timing)
     mark(context, "request_received", source=source)
@@ -72,6 +73,20 @@ def ensure(context, *, source="move_linear"):
     if timing is None:
         return begin(context, source=source)
     return timing
+
+
+def activate(context, timing):
+    """Restore a request's timing context when a queued strategy starts."""
+    if isinstance(timing, dict):
+        _set_all(context, timing)
+
+
+def elapsed_since_request(context):
+    timing = _active(context)
+    if not isinstance(timing, dict):
+        return None
+    received_at = timing.get("request_received_at")
+    return perf_counter() - float(received_at) if received_at is not None else None
 
 
 def mark(context, stage, **fields):
@@ -92,7 +107,18 @@ def mark(context, stage, **fields):
             planning_started_at = timing.get("planning_started_at")
             if planning_started_at is not None and "plan_elapsed_s" not in fields:
                 fields["plan_elapsed_s"] = now - float(planning_started_at)
-    tag = "[ORDERED_CHAIN_TIMING]" if source == "ordered_motion_chain" else "[MOVE_LIN_TIMING]"
+        marks = timing.setdefault("marks", {})
+        previous_at = timing.get("last_mark_at")
+        if previous_at is not None and "stage_elapsed_s" not in fields:
+            fields["stage_elapsed_s"] = now - float(previous_at)
+        marks[stage] = now
+        timing["last_mark_at"] = now
+    if source == "ordered_motion_chain":
+        tag = "[ORDERED_CHAIN_TIMING]"
+    elif source == "/move/fast_lin":
+        tag = "[FAST_LIN_TIMING]"
+    else:
+        tag = "[MOVE_LIN_TIMING]"
     parts = [f"{tag} {stage}", f"request_id={request_id}"]
     if elapsed_s is not None:
         parts.append(f"elapsed_s={elapsed_s:.3f}")
