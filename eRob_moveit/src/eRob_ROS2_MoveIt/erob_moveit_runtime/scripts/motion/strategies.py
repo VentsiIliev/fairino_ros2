@@ -48,7 +48,12 @@ class PilzMoveLinStrategy(_MoveLinStrategyBase):
     compared without changing the configured default LIN strategy.
     """
 
+    def __init__(self, *args, planning_group=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.planning_group = planning_group
+
     def execute(self, robot_controller) -> int:
+        import config
         try:
             from .move_linear_timing import activate
             activate(robot_controller, getattr(self, "request_timing", None))
@@ -66,6 +71,11 @@ class PilzMoveLinStrategy(_MoveLinStrategyBase):
                 "blend_radius": 0.0,
             }],
             tool_transform=self.tool_transform,
+            planning_group=str(
+                self.planning_group
+                or getattr(config, "PLANNING_GROUP", "manipulator")
+                or "manipulator"
+            ),
         )
 
 

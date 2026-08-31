@@ -93,6 +93,7 @@ DEFAULTS = {
     'SERVO_JOG_MAX_DURATION_S': 10.0,
     'ENABLE_COLLISION_CHECKING': True,  # Global toggle for all collision avoidance
     'MOVE_LIN_STRATEGY': 'cartesian_path',
+    'FAST_LIN_PLANNING_GROUP': 'manipulator_fast',
     'CARTESIAN_MIN_FRACTION': 1,
     'CARTESIAN_STATE_VALIDITY_ENABLED': True,
     'CARTESIAN_STATE_VALIDITY_STRIDE': 1,

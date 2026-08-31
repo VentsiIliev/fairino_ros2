@@ -4,3 +4,13 @@ manipulator:
   kinematics_solver_timeout: 0.02  # 20ms - balanced timeout (was 50ms)
   solve_type: Distance  # Optimize for minimal joint motion (more consistent)
   kinematics_solver_attempts: 3  #
+
+# Used exclusively by /move/fast_lin. Pilz solves IK once per 100ms trajectory
+# sample, so return the first valid seeded solution instead of spending 20ms
+# optimizing every sample. The normal manipulator policy above is unchanged.
+manipulator_fast:
+  kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
+  kinematics_solver_search_resolution: 0.002
+  kinematics_solver_timeout: 0.005
+  solve_type: Speed
+  kinematics_solver_attempts: 1

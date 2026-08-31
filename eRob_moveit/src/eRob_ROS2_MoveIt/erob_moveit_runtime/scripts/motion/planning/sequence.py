@@ -81,9 +81,15 @@ def _pose_goal_constraints(pose: Pose) -> Constraints:
     return constraints
 
 
-def _build_motion_plan_request(rc, pose: Pose, segment: dict, start_state=None) -> MotionPlanRequest:
+def _build_motion_plan_request(
+    rc,
+    pose: Pose,
+    segment: dict,
+    start_state=None,
+    planning_group=None,
+) -> MotionPlanRequest:
     req = MotionPlanRequest()
-    req.group_name = config.PLANNING_GROUP
+    req.group_name = str(planning_group or config.PLANNING_GROUP)
     req.pipeline_id = str(getattr(config, "SEQUENCE_PLANNING_PIPELINE", "pilz_industrial_motion_planner"))
     motion_type = str(segment.get("motion_type") or "linear").strip().lower()
     req.planner_id = "PTP" if motion_type == "ptp" else "LIN"
@@ -177,7 +183,7 @@ def _sequence_response(rc, future, generation, started_at):
             executor.process_next_queued_task()
 
 
-def send_motion_sequence(rc, segments, tool_transform=None) -> int:
+def send_motion_sequence(rc, segments, tool_transform=None, planning_group=None) -> int:
     if not segments:
         rc.last_motion_error = "Pilz LIN request contains no motion segments"
         rc.get_logger().error("[Sequence] Empty motion sequence")
@@ -210,12 +216,14 @@ def send_motion_sequence(rc, segments, tool_transform=None) -> int:
             pose,
             segment,
             start_state=None if index > 0 else _robot_state_from_joint_state(start_state),
+            planning_group=planning_group,
         )
         item.blend_radius = float(segment.get("blend_radius", 0.0)) / 1000.0
         req.request.items.append(item)
 
     rc.get_logger().info(
         f"[Sequence] Planning explicit motion sequence with {len(req.request.items)} segments "
+        f"group={req.request.items[0].req.group_name} "
         f"vel_acc_blend="
         f"{[(round(float(segment.get('vel', 0.0)), 3), round(float(segment.get('acc', 0.0)), 3), round(float(segment.get('blend_radius', 0.0)), 3)) for segment in segments]}"
     )

@@ -207,6 +207,14 @@ class MoveItRobotBackend(IRobotBackend):
                     tool_transform=tool_transform,
                     avoid_collisions=avoid_collisions,
                 )
+            # Only the explicit /move/fast_lin backend path opts into the
+            # low-latency IK group. A normally configured Pilz LIN strategy
+            # continues to use config.PLANNING_GROUP.
+            if planning_strategy == "pilz_lin":
+                strategy.planning_group = str(
+                    getattr(config, "FAST_LIN_PLANNING_GROUP", "manipulator_fast")
+                    or "manipulator_fast"
+                )
             strategy.request_timing = request_timing
             result = self.node.execute(strategy)
             self.node.get_logger().info(
