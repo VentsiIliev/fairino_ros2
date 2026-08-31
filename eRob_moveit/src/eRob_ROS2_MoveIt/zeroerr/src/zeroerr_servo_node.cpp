@@ -270,8 +270,7 @@ private:
                                           servo_params_.max_expected_latency, cur_time);
         if (const auto msg = moveit_servo::composeTrajectoryMessage(servo_params_, joint_cmd_rolling_window_))
         {
-          trajectory_publisher_->publish(msg.value());
-          maybeLogTrajectoryPublish(msg.value(), cur_time);
+          publishTrajectoryIfFuture(msg.value(), cur_time, "motion");
         }
       }
       else
@@ -285,6 +284,54 @@ private:
       moveit_servo::updateSlidingWindow(current_state, joint_cmd_rolling_window_, servo_params_.max_expected_latency,
                                         cur_time);
       servo_->resetSmoothing(current_state);
+    }
+  }
+
+  bool publishTrajectoryIfFuture(const trajectory_msgs::msg::JointTrajectory& msg,
+                                 const rclcpp::Time& cur_time, const char* kind)
+  {
+    if (!trajectory_publisher_ || msg.points.empty())
+    {
+      return false;
+    }
+
+    const rclcpp::Time start_time(msg.header.stamp);
+    const rclcpp::Time end_time = start_time + rclcpp::Duration(msg.points.back().time_from_start);
+    const double future_margin = (end_time - cur_time).seconds();
+    const double required_margin = std::max(0.030, 2.0 * servo_params_.publish_period);
+    if (future_margin < required_margin)
+    {
+      RCLCPP_WARN_THROTTLE(
+          node_->get_logger(), *node_->get_clock(), 1000,
+          "Servo %s trajectory withheld: points=%zu future_margin=%.4fs required=%.4fs",
+          kind, msg.points.size(), future_margin, required_margin);
+      return false;
+    }
+
+    trajectory_publisher_->publish(msg);
+    maybeLogTrajectoryPublish(msg, cur_time);
+    return true;
+  }
+
+  void seedMeasuredHoldWindow(moveit_servo::KinematicState measured_state,
+                              const rclcpp::Time& cur_time)
+  {
+    joint_cmd_rolling_window_.clear();
+    measured_state.velocities *= 0.0;
+    measured_state.accelerations *= 0.0;
+
+    const double step_s = std::max(servo_params_.publish_period, 0.001);
+    const double horizon_s = std::max(servo_params_.max_expected_latency, 3.0 * step_s);
+    // Stop at or before max_expected_latency. The next motion sample is placed
+    // exactly at cur_time + max_expected_latency by updateSlidingWindow(), so
+    // rounding upward here would make the deque timestamps non-monotonic.
+    const std::size_t intervals = std::max<std::size_t>(
+        3, static_cast<std::size_t>(std::floor(horizon_s / step_s)));
+    for (std::size_t index = 0; index <= intervals; ++index)
+    {
+      auto hold_state = measured_state;
+      hold_state.time_stamp = cur_time + rclcpp::Duration::from_seconds(index * step_s);
+      joint_cmd_rolling_window_.push_back(std::move(hold_state));
     }
   }
 
@@ -310,13 +357,11 @@ private:
     // that have already been accepted by JointTrajectoryController.
     if (use_trajectory && trajectory_publisher_)
     {
-      moveit_servo::updateSlidingWindow(current_state, joint_cmd_rolling_window_,
-                                        servo_params_.max_expected_latency, cur_time);
+      seedMeasuredHoldWindow(current_state, cur_time);
       if (const auto hold = moveit_servo::composeTrajectoryMessage(servo_params_, joint_cmd_rolling_window_))
       {
-        trajectory_publisher_->publish(hold.value());
+        publishTrajectoryIfFuture(hold.value(), cur_time, "hold");
       }
-      joint_cmd_rolling_window_.clear();
     }
     RCLCPP_ERROR(node_->get_logger(), "Servo queue flushed and measured-position hold published: %s", reason);
   }
@@ -351,7 +396,14 @@ private:
     {
       last_commanded_state_ = servo_->getCurrentRobotState(true);
       servo_->resetSmoothing(last_commanded_state_);
-      joint_cmd_rolling_window_.clear();
+      seedMeasuredHoldWindow(last_commanded_state_, node_->now());
+      if (trajectory_publisher_)
+      {
+        if (const auto hold = moveit_servo::composeTrajectoryMessage(servo_params_, joint_cmd_rolling_window_))
+        {
+          publishTrajectoryIfFuture(hold.value(), node_->now(), "resume hold");
+        }
+      }
       // Collision policy is selected explicitly through set_collision_checking
       // while paused, before this resume call. Do not silently enable it here:
       // contact pickup must never pass through a collision-enabled window
