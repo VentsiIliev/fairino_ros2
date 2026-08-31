@@ -40,6 +40,14 @@ class CartesianMoveLinStrategy(_MoveLinStrategyBase):
 
 
 class PilzMoveLinStrategy(_MoveLinStrategyBase):
+    """Plan a LIN motion through MoveIt's Pilz sequence action.
+
+    Unlike :class:`CartesianMoveLinStrategy`, this path never calls
+    ``/compute_cartesian_path``.  It is also exposed directly by the
+    ``/move/fast_lin`` diagnostic endpoint so its planning latency can be
+    compared without changing the configured default LIN strategy.
+    """
+
     def execute(self, robot_controller) -> int:
         from .planning.sequence import send_motion_sequence
         planner_context = getattr(robot_controller, "planner_context", robot_controller)

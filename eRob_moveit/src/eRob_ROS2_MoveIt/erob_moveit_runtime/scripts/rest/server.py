@@ -381,6 +381,10 @@ def start_rest_server(
     def move_linear():
         return api_response(runtime_api.move_linear(request.json))
 
+    @app.route("/move/fast_lin", methods=["POST"])
+    def move_fast_lin():
+        return api_response(runtime_api.move_fast_lin(request.json))
+
 
     @app.route("/move/ptp", methods=["POST"])
     def move_ptp():

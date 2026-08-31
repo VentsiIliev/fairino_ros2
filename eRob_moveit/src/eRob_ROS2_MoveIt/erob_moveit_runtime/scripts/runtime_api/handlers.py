@@ -170,6 +170,28 @@ class RuntimeApi:
         )
         return self._motion_result(result)
 
+    def move_fast_lin(self, data: dict[str, Any] | None) -> ApiResponse:
+        """Run the same LIN request through Pilz instead of CartesianPath."""
+        try:
+            payload = parse_move_linear_request(data)
+        except ValueError as exc:
+            return response_error(str(exc), 400)
+        not_ready = self._require_motion_stack_ready()
+        if not_ready is not None:
+            return not_ready
+
+        logger.info("Received move/fast_lin request with data %s", data)
+        result = self._gateway_or_local().move_fast_lin(
+            payload["position"],
+            tool=payload["tool"],
+            user=payload["user"],
+            vel=payload["vel"],
+            acc=payload["acc"],
+            blocking=payload["blocking"],
+            trajectory_optimizer=payload["trajectory_optimizer"],
+        )
+        return self._motion_result(result)
+
     def move_ptp(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
             payload = parse_move_linear_request(data)

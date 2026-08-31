@@ -41,6 +41,12 @@ Success response fields:
 - `queue_position` when queued
 - `task_id`
 
+### `POST /move/fast_lin`
+Submit the same payload as `/move/linear`, but force the Pilz industrial `LIN`
+planner through MoveIt's motion-sequence service. This diagnostic endpoint does
+not call `compute_cartesian_path`; `/move/linear` remains unchanged so planning
+latency can be compared directly. Pilz collision checking remains enabled.
+
 ### `POST /execute/path`
 Execute a Cartesian path defined by XYZ or XYZ+orientation waypoints.
 

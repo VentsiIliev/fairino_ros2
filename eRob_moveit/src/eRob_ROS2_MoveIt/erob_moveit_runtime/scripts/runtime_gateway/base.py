@@ -89,6 +89,20 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def move_fast_lin(
+        self,
+        position: list[float],
+        tool: int = 0,
+        user: int = 0,
+        vel: float = 30,
+        acc: float = 30,
+        blocking: bool = True,
+        trajectory_optimizer: str | None = None,
+    ) -> int:
+        """Plan a linear move without compute_cartesian_path."""
+        raise NotImplementedError
+
+    @abstractmethod
     def move_ptp(
         self,
         position: list[float],

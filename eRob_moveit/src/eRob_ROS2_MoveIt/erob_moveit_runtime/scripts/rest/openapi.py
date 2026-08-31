@@ -23,6 +23,7 @@ OPENAPI_SPEC = {
         "/position/flange": {"get": {"tags": ["state"], "summary": "Current flange position"}},
         "/velocity/current": {"get": {"tags": ["state"], "summary": "Current TCP velocity"}},
         "/move/linear": {"post": {"tags": ["motion"], "summary": "Queue or execute a linear move"}},
+        "/move/fast_lin": {"post": {"tags": ["motion"], "summary": "Test a Pilz LIN move without compute_cartesian_path"}},
         "/move/ptp": {"post": {"tags": ["motion"], "summary": "Queue or execute a point-to-point move"}},
         "/execute/path": {"post": {"tags": ["motion"], "summary": "Execute a waypoint path"}},
         "/execute/sequence": {"post": {"tags": ["motion"], "summary": "Execute mixed motion segments"}},
@@ -129,6 +130,15 @@ def _apply_openapi_details():
 
     post_examples = {
         "/move/linear": {
+            "position": [300, 0, 300, 180, 0, 0],
+            "tool": 0,
+            "user": 0,
+            "vel": 20,
+            "acc": 20,
+            "blocking": False,
+            "trajectory_optimizer": "RUCKIG",
+        },
+        "/move/fast_lin": {
             "position": [300, 0, 300, 180, 0, 0],
             "tool": 0,
             "user": 0,

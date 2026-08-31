@@ -159,7 +159,7 @@ class MoveItRobotBackend(IRobotBackend):
             return config.MOTION_ERROR_DRIVE_NOT_ENABLED
         return None
 
-    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None, allow_collision_recovery=False):
+    def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None, allow_collision_recovery=False, planning_strategy="configured"):
         started_at = perf_counter()
         if len(position) != 6:
             return -1
@@ -190,16 +190,17 @@ class MoveItRobotBackend(IRobotBackend):
             acc_scale = max(0.0, min(1.0, acc / 100.0))
             avoid_collisions = not bool(allow_collision_recovery)
             x, y, z, rx, ry, rz = position_base
-            from motion.strategies import SingleTargetStrategy
+            from motion.strategies import PilzMoveLinStrategy, SingleTargetStrategy
+            strategy_class = PilzMoveLinStrategy if planning_strategy == "pilz_lin" else SingleTargetStrategy
             if trajectory_optimizer is not None:
-                result = self.node.execute(SingleTargetStrategy(
+                result = self.node.execute(strategy_class(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
                     avoid_collisions=avoid_collisions,
                     trajectory_optimizer=trajectory_optimizer,
                 ))
             else:
-                result = self.node.execute(SingleTargetStrategy(
+                result = self.node.execute(strategy_class(
                     x, y, z, rx, ry, rz, vel_scale, acc_scale,
                     tool_transform=tool_transform,
                     avoid_collisions=avoid_collisions,
@@ -241,6 +242,20 @@ class MoveItRobotBackend(IRobotBackend):
         except Exception as e:
             print(f"move_liner error: {e}")
             return -1
+
+    def move_fast_lin(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
+        """Execute LIN planning through Pilz, bypassing compute_cartesian_path."""
+        return self.move_liner(
+            position,
+            tool=tool,
+            user=user,
+            vel=vel,
+            acc=acc,
+            blendR=blendR,
+            blocking=blocking,
+            trajectory_optimizer=trajectory_optimizer,
+            planning_strategy="pilz_lin",
+        )
 
     def move_ptp(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None):
         started_at = perf_counter()

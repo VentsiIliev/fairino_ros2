@@ -190,7 +190,7 @@ class ServoJogCapability(JogCapability):
             return {"result": -1, "success": False, "error": "invalid_bounded_servo_config"}
 
         with self._lock:
-            ready = self._check_ready("SERVO_JOG_TARGET_Z")
+            ready = self._check_ready("SERVO_JOG_TARGET_Z", allow_prepared_chain=True)
             if ready != 0:
                 return {"result": ready, "success": False, "error": "motion_not_ready"}
             start_pose = self._backend.get_current_position(user_id=user)
@@ -300,7 +300,7 @@ class ServoJogCapability(JogCapability):
         )
         return axis_val, dir_val, linear_mm_s, angular_deg_s, duration_s
 
-    def _check_ready(self, label: str) -> int:
+    def _check_ready(self, label: str, *, allow_prepared_chain: bool = False) -> int:
         backend = self._backend
         node = backend.node
         if node is None or backend.cartesian_servo is None:
@@ -318,7 +318,7 @@ class ServoJogCapability(JogCapability):
             node.get_logger().info(f"[{label}] Busy or queued motion pending - ignoring")
             return -1
         has_prepared_chain = getattr(backend, "has_active_prepared_ordered_motion_chain", None)
-        if callable(has_prepared_chain) and has_prepared_chain():
+        if not allow_prepared_chain and callable(has_prepared_chain) and has_prepared_chain():
             node.get_logger().error(
                 f"[{label}] Rejected: an ordered motion chain is prepared or executing"
             )

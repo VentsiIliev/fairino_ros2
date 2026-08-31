@@ -249,6 +249,31 @@ class LocalRuntimeGateway(RuntimeGateway):
             allow_collision_recovery=allow_collision_recovery,
         )
 
+    def move_fast_lin(
+        self,
+        position,
+        tool=0,
+        user=0,
+        vel=30,
+        acc=30,
+        blocking=True,
+        trajectory_optimizer=None,
+    ) -> int:
+        try:
+            from motion.move_linear_timing import begin as begin_move_linear_timing
+            begin_move_linear_timing(self.node, source="/move/fast_lin")
+        except Exception:
+            pass
+        return self.robot.move_fast_lin(
+            position,
+            tool=tool,
+            user=user,
+            vel=vel,
+            acc=acc,
+            blocking=blocking,
+            trajectory_optimizer=trajectory_optimizer,
+        )
+
     def move_ptp(
         self,
         position,
