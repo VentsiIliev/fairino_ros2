@@ -85,7 +85,7 @@ class MoveItCartesianServo(CartesianServo):
         servo_pause_service: str = "/servo_node/pause_servo",
         servo_collision_checking_service: str = "/servo_node/set_collision_checking",
         servo_switch_command_type_service: str = "/servo_node/switch_command_type",
-        publish_rate_hz: float = 100.0,
+        publish_rate_hz: float = 50.0,
         service_timeout_s: float = 2.0,
         tf_timeout_s: float = 0.05,
     ) -> None:
@@ -318,6 +318,12 @@ class MoveItCartesianServo(CartesianServo):
         with self._command_lock:
             self._session_generation += 1
 
+        # Establish a known-safe baseline for every new session. This also
+        # recovers safely if the backend was restarted while the external
+        # Servo node remained alive and unpaused.
+        if not self._set_servo_paused(True, force=True):
+            return self._fail_start("failed to establish initial paused state")
+
         # --------------------------------------------------------
         # 1. Activate requested software tool/TCP
         # --------------------------------------------------------
@@ -401,16 +407,11 @@ class MoveItCartesianServo(CartesianServo):
             )
 
         if not self._set_servo_paused(False):
-            logger.warning(
-                "[MOVEIT_CARTESIAN_SERVO] "
-                "MoveIt Servo resume was not confirmed during start; "
-                "continuing command stream and retrying resume in background"
-            )
-            self._servo_paused = False
-            self._set_servo_paused_background(
-                False,
-                reason="start resume retry",
-            )
+            # Never start a command stream when Servo's state is unknown.  A
+            # background resume can race with stop() or a subsequent planned
+            # trajectory and leave Servo active outside its session.
+            self._set_servo_paused(True, force=True)
+            return self._fail_start("failed to confirm MoveIt Servo resume")
 
         # --------------------------------------------------------
         # 6. Publish immediate zero
@@ -563,7 +564,7 @@ class MoveItCartesianServo(CartesianServo):
             2. immediately publish zero
             3. stop high-rate publisher
             4. clear session state
-            5. pause MoveIt Servo in the background
+            5. pause MoveIt Servo and wait for confirmation
         """
 
         zero_command = self._zero_command()
@@ -580,7 +581,6 @@ class MoveItCartesianServo(CartesianServo):
             self._latest_command = zero_command
             self._applied_command = zero_command
             self._last_slew_update_s = time.monotonic()
-            stop_generation = self._session_generation
 
         # --------------------------------------------------------
         # 2. Immediately publish zero
@@ -630,87 +630,24 @@ class MoveItCartesianServo(CartesianServo):
             self._workobject_transform = np.eye(4)
 
         # --------------------------------------------------------
-        # 5. Pause MoveIt Servo asynchronously. The Servo node stops its
-        # collision monitor as part of pausing and that can take long enough to
-        # trip UI HTTP timeouts, so the stop endpoint must not wait for it.
+        # 5. Do not report the session stopped until the Servo node confirms
+        # that it is paused. This prevents planned motion or another session
+        # from starting while the previous Servo loop is still active.
         # --------------------------------------------------------
 
-        threading.Thread(
-            target=self._pause_servo_after_stop,
-            args=(stop_generation,),
-            daemon=True,
-        ).start()
+        pause_ok = self._set_servo_paused(True, force=True)
+        if not pause_ok:
+            logger.error(
+                "[MOVEIT_CARTESIAN_SERVO] STOP failed: "
+                "MoveIt Servo pause was not confirmed"
+            )
+            return False
 
         logger.info(
             "[MOVEIT_CARTESIAN_SERVO] STOPPED"
         )
 
         return True
-
-    def _pause_servo_after_stop(self, generation: int) -> None:
-        """
-        Finish Servo pause after a public stop response has been returned.
-        """
-
-        with self._command_lock:
-            if generation != self._session_generation:
-                logger.debug(
-                    "[MOVEIT_CARTESIAN_SERVO] "
-                    "Skipping stale background pause generation=%d current=%d",
-                    generation,
-                    self._session_generation,
-                )
-                return
-
-        pause_ok = self._set_servo_paused(True)
-
-        with self._command_lock:
-            stale_after_pause = generation != self._session_generation
-            active_after_pause = self._command_frame_id is not None
-
-        if stale_after_pause and active_after_pause:
-            logger.warning(
-                "[MOVEIT_CARTESIAN_SERVO] "
-                "Background pause completed after a newer session started; "
-                "resuming Servo generation=%d current=%d",
-                generation,
-                self._session_generation,
-            )
-            self._set_servo_paused(False)
-            return
-
-        if not pause_ok:
-            logger.warning(
-                "[MOVEIT_CARTESIAN_SERVO] "
-                "Failed to confirm MoveIt Servo pause during background stop; "
-                "command publisher is stopped and zero command was sent"
-            )
-            self._servo_paused = True
-
-    def _set_servo_paused_background(
-        self,
-        paused: bool,
-        *,
-        reason: str,
-    ) -> None:
-        threading.Thread(
-            target=self._set_servo_paused_worker,
-            args=(bool(paused), str(reason)),
-            daemon=True,
-        ).start()
-
-    def _set_servo_paused_worker(
-        self,
-        paused: bool,
-        reason: str,
-    ) -> None:
-        if not self._set_servo_paused(paused, force=True):
-            logger.warning(
-                "[MOVEIT_CARTESIAN_SERVO] "
-                "Background pause_servo failed paused=%s reason=%s",
-                paused,
-                reason,
-            )
 
     # ============================================================
     # MoveIt Servo pause/resume and collision checking
