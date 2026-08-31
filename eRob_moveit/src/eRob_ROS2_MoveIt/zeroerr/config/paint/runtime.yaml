@@ -86,7 +86,7 @@ MOTION_PASSAGES:
 CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
 CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
 CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05
-CARTESIAN_SERVO_PUBLISH_RATE_HZ: 50.0
+CARTESIAN_SERVO_PUBLISH_RATE_HZ: 100.0
 # Prevent a zero-to-full-speed Cartesian step from producing a Joint_4 current
 # spike at the beginning of the contact-approach Servo motion.
 CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2: 400.0
