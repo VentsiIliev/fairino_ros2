@@ -1422,8 +1422,26 @@ class MoveItRobotBackend(IRobotBackend):
             self.node.get_logger().error('[UNWIND_J6] Latest joint state unavailable')
             return -1
 
+        active_user_id = int(self.active_workobject_user_id)
+        current_pos_wobj = self.get_current_position(user_id=active_user_id)
+        if current_pos_wobj is None or len(current_pos_wobj) < 6:
+            self.node.get_logger().error('[UNWIND_J6] Current active-tool/workobject pose unavailable')
+            return -1
+
         initial_value = float(current_positions[joint_index])
-        final_target = self.node.trajectory_executor._canonical_angle(initial_value)
+        sign = float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN', 1.0))
+        if abs(sign) < 1e-9:
+            sign = 1.0
+        target_range = abs(float(
+            getattr(config, 'EXECUTOR_POST_UNWIND_TARGET_RANGE_RAD', math.pi)
+        ))
+        current_axis_deg = float(current_pos_wobj[axis_index])
+        final_target, total_delta_deg = self._resolve_unwind_to_zero_axis(
+            initial_value,
+            current_axis_deg,
+            sign,
+            target_range,
+        )
         min_delta = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DELTA_RAD', 0.5))
         remaining = final_target - initial_value
         if abs(remaining) < min_delta:
@@ -1432,6 +1450,8 @@ class MoveItRobotBackend(IRobotBackend):
                 f'({joint_name} current={initial_value:.4f}rad '
                 f'target={final_target:.4f}rad '
                 f'delta={remaining:.4f}rad '
+                f'active_user={active_user_id} axis={axis_index} '
+                f'axis_value={current_axis_deg:.3f}deg target_axis=0.000deg '
                 f'min_delta={min_delta:.4f}rad)'
             )
             self.node.last_move_result = 0
@@ -1441,16 +1461,14 @@ class MoveItRobotBackend(IRobotBackend):
         acc_percent = self.node.trajectory_executor._clamp_percentage(acc)
         vel_scale = vel_percent / 100.0
         acc_scale = acc_percent / 100.0
-        sign = float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN', 1.0))
-        if abs(sign) < 1e-9:
-            sign = 1.0
         max_step_deg = max(1.0, abs(float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG', 180.0))))
-        total_delta_deg = math.degrees(remaining) * sign
         segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
         self.node.get_logger().info(
             '[UNWIND_J6] Executing rotational-path unwind: '
             f'{joint_name} {initial_value:.3f} -> {final_target:.3f} rad '
-            f'delta={remaining:.3f} rad cart_axis={axis_index} cart_delta={total_delta_deg:.3f}deg '
+            f'delta={remaining:.3f} rad active_user={active_user_id} '
+            f'cart_axis={axis_index} axis_value={current_axis_deg:.3f}deg '
+            f'target_axis=0.000deg cart_delta={total_delta_deg:.3f}deg '
             f'segments={segment_count} max_segment={max_step_deg:.1f}deg '
             f'vel={vel_percent:.1f}% acc={acc_percent:.1f}%'
         )
@@ -1513,6 +1531,35 @@ class MoveItRobotBackend(IRobotBackend):
         if self.node.trajectory_executor._verify_explicit_unwind_complete(check):
             return 0
         return -6
+
+    @staticmethod
+    def _resolve_unwind_to_zero_axis(current_joint, current_axis_deg, sign, target_range_rad):
+        """Resolve the physical rotation that returns the active-frame axis to zero.
+
+        Euler angles only expose a principal value, so an RZ reading of 0 degrees
+        can mean either the canonical cable branch or one or more completed turns.
+        The live Joint_6 value disambiguates those cases.  Select the equivalent
+        RZ-to-zero rotation whose resulting Joint_6 lies on the configured
+        canonical branch.
+        """
+        current_joint = float(current_joint)
+        current_axis_deg = float(current_axis_deg)
+        sign = float(sign)
+        target_range_rad = abs(float(target_range_rad))
+        candidates = []
+        for turns in range(-4, 5):
+            cart_delta_deg = -current_axis_deg + 360.0 * turns
+            joint_target = current_joint + math.radians(cart_delta_deg) / sign
+            if abs(joint_target) <= target_range_rad + 1e-9:
+                candidates.append((abs(cart_delta_deg), abs(joint_target), joint_target, cart_delta_deg))
+        if not candidates:
+            raise RuntimeError(
+                '[UNWIND_J6] Cannot resolve an RZ=0 canonical branch: '
+                f'joint={current_joint:.4f}rad axis={current_axis_deg:.3f}deg '
+                f'target_range={target_range_rad:.4f}rad'
+            )
+        _, _, joint_target, cart_delta_deg = min(candidates)
+        return float(joint_target), float(cart_delta_deg)
 
     def _wait_for_motion_idle_result(self, timeout_s, label):
         deadline = time.time() + float(timeout_s)

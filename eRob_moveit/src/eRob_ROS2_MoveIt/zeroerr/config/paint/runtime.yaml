@@ -123,6 +123,9 @@ FOLLOW_PATH_DENSIFY_MAX_ORIENTATION_DEG: 2.0
 # Joint_6 unwind uses rotational direct IK to avoid MoveIt Cartesian planning.
 EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
 EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: -1.0
+# RZ is considered restored only on its zero-degree active-tool/workobject
+# branch. Keep a small deadband for live-pose noise, not a partial-turn skip.
+EXECUTOR_POST_UNWIND_MIN_DELTA_RAD: 0.02
 # Keep a full cable-relief turn in one controller goal so Joint_6 does not
 # decelerate to a stop halfway through the unwind.
 EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 360.0
