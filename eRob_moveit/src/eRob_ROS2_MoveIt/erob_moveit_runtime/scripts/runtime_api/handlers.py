@@ -133,6 +133,49 @@ class RuntimeApi:
             }, 200)
         return motion_error(result)
 
+    def _fast_lin_result(self, result: int, *, blocking: bool) -> ApiResponse:
+        gateway = self._gateway_or_local()
+        task_id = gateway.last_submitted_task_id()
+        if result < 0:
+            detail = gateway.last_motion_error()
+            outcome_unknown = bool(detail and "eventual outcome is unknown" in detail)
+            return motion_error(
+                result,
+                queued=False,
+                task_id=task_id,
+                accepted=outcome_unknown,
+                final=not outcome_unknown,
+                **({"detail": detail} if detail else {}),
+            )
+        if blocking:
+            return ApiResponse({
+                "result": 0,
+                "success": True,
+                "queued": False,
+                "task_id": task_id,
+                "accepted": True,
+                "final": True,
+                "message": "Fast LIN planning and trajectory execution completed successfully",
+            }, 200)
+
+        queued = result > 0
+        body = {
+            "result": result,
+            "success": True,
+            "queued": queued,
+            "task_id": task_id,
+            "accepted": True,
+            "final": False,
+            "message": (
+                "Fast LIN request queued; planning and execution have not completed"
+                if queued else
+                "Fast LIN request accepted; planning and execution have not completed"
+            ),
+        }
+        if queued:
+            body["queue_position"] = result
+        return ApiResponse(body, 202)
+
     def _require_motion_stack_ready(self) -> ApiResponse | None:
         gateway = self._gateway_or_local()
         if not gateway.is_runtime_initialized():
@@ -190,7 +233,7 @@ class RuntimeApi:
             blocking=payload["blocking"],
             trajectory_optimizer=payload["trajectory_optimizer"],
         )
-        return self._motion_result(result)
+        return self._fast_lin_result(result, blocking=bool(payload["blocking"]))
 
     def move_ptp(self, data: dict[str, Any] | None) -> ApiResponse:
         try:

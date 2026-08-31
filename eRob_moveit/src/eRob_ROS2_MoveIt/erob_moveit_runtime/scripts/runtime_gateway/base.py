@@ -53,6 +53,11 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def last_motion_error(self) -> str | None:
+        """Detailed reason for the most recent terminal motion failure."""
+        raise NotImplementedError
+
+    @abstractmethod
     def state_snapshot(self) -> dict:
         """Combined state snapshot (position, velocity, status, safety walls)."""
         raise NotImplementedError

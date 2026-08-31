@@ -134,6 +134,11 @@ class LocalRuntimeGateway(RuntimeGateway):
         node = getattr(self.robot, "node", self.node)
         return getattr(node, "last_submitted_task_id", None)
 
+    def last_motion_error(self) -> str | None:
+        node = getattr(self.robot, "node", self.node)
+        error = getattr(node, "last_motion_error", None)
+        return str(error) if error else None
+
     def state_snapshot(self) -> dict:
         robot = self.robot
         node = self.node

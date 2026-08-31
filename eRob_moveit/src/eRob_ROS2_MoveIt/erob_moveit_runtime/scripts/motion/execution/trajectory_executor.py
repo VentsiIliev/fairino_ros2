@@ -1365,6 +1365,18 @@ class TrajectoryExecutor:
             self._queue.mark_current_complete(result)
         return result
 
+    def _fail_current_before_controller_goal(self, result, reason, *, release_execution_lock=False):
+        """Finish the current task when controller submission cannot complete."""
+        self._node.get_logger().error(f"[Controller] {reason}")
+        self._motion.last_move_result = int(result)
+        self._motion.last_motion_error = str(reason)
+        with self._motion.lock:
+            self._motion.is_executing = False
+        if release_execution_lock and self._motion.execution_lock.locked():
+            self._motion.execution_lock.release()
+        self._queue.mark_current_complete(int(result))
+        self.process_next_queued_task()
+
     def send_trajectory_to_controller(
         self,
         joint_trajectory,
@@ -1383,9 +1395,10 @@ class TrajectoryExecutor:
         if not self._ensure_drive_enabled_before_trajectory(
             suppress_drive_disable_cancel=suppress_drive_disable_cancel,
         ):
-            self._motion.last_move_result = config.MOTION_ERROR_DRIVE_NOT_ENABLED
-            with self._motion.lock:
-                self._motion.is_executing = False
+            self._fail_current_before_controller_goal(
+                config.MOTION_ERROR_DRIVE_NOT_ENABLED,
+                "Drive operation became disabled before trajectory submission",
+            )
             return
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
@@ -1394,19 +1407,17 @@ class TrajectoryExecutor:
             pass
 
         if not self._motion.execution_lock.acquire(blocking=False):
-            self._node.get_logger().warning('[Controller] Trajectory already executing, ignoring')
-            self._motion.last_move_result = -1
+            self._fail_current_before_controller_goal(
+                -1, "Another trajectory is already executing; controller submission rejected")
             return
 
         controller_server_wait_started_at = time.perf_counter()
         if not self._controller_client.wait_for_server(timeout_sec=1.0):
-            self._node.get_logger().error(
-                f'[Controller] {self._controller_name} not available'
+            self._fail_current_before_controller_goal(
+                -2,
+                f"Trajectory controller '{self._controller_name}' is unavailable",
+                release_execution_lock=True,
             )
-            self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
             return
         try:
             from motion.move_linear_timing import mark as mark_move_linear_timing
@@ -1415,11 +1426,10 @@ class TrajectoryExecutor:
             pass
 
         if len(joint_trajectory.points) == 0:
-            self._node.get_logger().error('[Controller] ✗ Empty trajectory - aborting')
-            self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
+            self._fail_current_before_controller_goal(
+                -6, "Planner returned an empty trajectory",
+                release_execution_lock=True,
+            )
             return
 
         has_valid_timestamps = any(
@@ -1427,11 +1437,10 @@ class TrajectoryExecutor:
             for pt in joint_trajectory.points
         )
         if not has_valid_timestamps:
-            self._node.get_logger().error('[Controller] ✗ Trajectory has NO timestamps - aborting')
-            self._motion.last_move_result = -1
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
+            self._fail_current_before_controller_goal(
+                -7, "Planned trajectory contains no valid timestamps",
+                release_execution_lock=True,
+            )
             return
 
         trajectory_mutation_started_at = time.perf_counter()
@@ -1542,7 +1551,16 @@ class TrajectoryExecutor:
         except Exception:
             pass
         controller_goal.trajectory.header.stamp = self._node.get_clock().now().to_msg()
-        future = self._controller_client.send_goal_async(controller_goal)
+        try:
+            future = self._controller_client.send_goal_async(controller_goal)
+        except Exception as exc:
+            self._active_goal_sequence = None
+            self._fail_current_before_controller_goal(
+                config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED,
+                f"Failed to submit trajectory to controller '{self._controller_name}': {exc}",
+                release_execution_lock=True,
+            )
+            return
         self._motion.active_execute_send_future = future
         future.add_done_callback(
             lambda done_future, sequence=goal_sequence: self._on_controller_goal_response(
@@ -1583,17 +1601,16 @@ class TrajectoryExecutor:
                     clear_move_linear_timing(self._node)
                 except Exception:
                     pass
-                self._node.get_logger().error(
-                    f'[Controller] Trajectory execution rejected by {self._controller_name}'
-                )
                 self._motion.active_controller_goal = None
                 self._active_goal_sequence = None
                 self._active_goal_started_monotonic = None
                 self._active_goal_is_stop = False
                 self._active_unwind_check = None
-                with self._motion.lock:
-                    self._motion.is_executing = False
-                self._motion.execution_lock.release()
+                self._fail_current_before_controller_goal(
+                    config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED,
+                    f"Trajectory execution was rejected by controller '{self._controller_name}'",
+                    release_execution_lock=True,
+                )
                 return
 
             try:
@@ -1630,14 +1647,15 @@ class TrajectoryExecutor:
                 )
             )
         except Exception as e:
-            self._node.get_logger().error(f'[Controller] Goal response error: {e}')
             self._active_goal_sequence = None
             self._active_goal_started_monotonic = None
             self._active_goal_is_stop = False
             self._active_unwind_check = None
-            with self._motion.lock:
-                self._motion.is_executing = False
-            self._motion.execution_lock.release()
+            self._fail_current_before_controller_goal(
+                config.MOTION_ERROR_CONTROLLER_EXECUTION_FAILED,
+                f"Controller goal response failed: {e}",
+                release_execution_lock=True,
+            )
 
     def _on_controller_goal_result(self, future, goal_sequence=None):
         cancelled_or_stale = False
@@ -1729,6 +1747,7 @@ class TrajectoryExecutor:
         except Exception as e:
             self._node.get_logger().error(f'[Controller] Result error: {e}')
             self._motion.last_move_result = -1
+            self._motion.last_motion_error = f"Controller result could not be read: {e}"
         finally:
             cancelled_by_monitor = self._active_trajectory_cancel_reason is not None
             completed_stop_goal = bool(self._active_goal_is_stop)

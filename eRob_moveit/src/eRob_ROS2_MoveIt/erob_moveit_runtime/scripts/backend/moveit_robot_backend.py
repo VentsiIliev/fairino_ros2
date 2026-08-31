@@ -161,6 +161,8 @@ class MoveItRobotBackend(IRobotBackend):
 
     def move_liner(self, position, tool=0, user=0, vel=30, acc=30, blendR=0, blocking=True, trajectory_optimizer=None, allow_collision_recovery=False, planning_strategy="configured"):
         started_at = perf_counter()
+        if self.node is not None:
+            self.node.last_motion_error = None
         if len(position) != 6:
             return -1
         drive_error = self._reject_if_drive_not_enabled("MOVE_LINER")
@@ -215,12 +217,46 @@ class MoveItRobotBackend(IRobotBackend):
                     if task_id is not None:
                         waited = self.node.motion_queue.wait_for_task(task_id, config.BLOCKING_MOVE_TIMEOUT_S)
                         if waited is None:
+                            motion_label = "fast LIN" if planning_strategy == "pilz_lin" else "linear motion"
+                            self.node.last_motion_error = (
+                                f"{motion_label} task #{task_id} did not finish within "
+                                f"{config.BLOCKING_MOVE_TIMEOUT_S}s; its eventual outcome is unknown")
                             self.node.get_logger().error(
                                 f"[MOVE_LINER] Timed out waiting for queued move task #{task_id} to complete")
                             return -1
                         return waited
                 self.node.get_logger().info(f"[MOVE_LINER] execute() returned {result}")
                 return result
+
+            # Pilz sequence planning is asynchronous.  Waiting only on
+            # ``is_executing`` leaves a race at the planning/execution boundary
+            # and can report submission success (0) before the sequence callback
+            # records a planning failure.  The motion queue owns the lifecycle
+            # of both the immediate and queued task, so use its terminal result
+            # as the blocking response source.
+            if blocking and planning_strategy == "pilz_lin":
+                task_id = getattr(self.node, 'last_submitted_task_id', None)
+                if task_id is None:
+                    self.node.get_logger().error(
+                        "[FAST_LIN] Missing task ID while waiting for Pilz result")
+                    return -1
+                wait_started_at = perf_counter()
+                waited = self.node.motion_queue.wait_for_task(
+                    task_id, config.BLOCKING_MOVE_TIMEOUT_S)
+                if waited is None:
+                    self.node.last_motion_error = (
+                        f"fast LIN task #{task_id} did not finish within "
+                        f"{config.BLOCKING_MOVE_TIMEOUT_S}s; its eventual outcome is unknown")
+                    self.node.get_logger().error(
+                        f"[FAST_LIN] Timed out waiting for task #{task_id} after "
+                        f"{config.BLOCKING_MOVE_TIMEOUT_S}s")
+                    return -1
+                self.node.get_logger().info(
+                    f"[TIMING] backend_fast_lin blocking_wait "
+                    f"elapsed_s={perf_counter() - wait_started_at:.3f} "
+                    f"total_elapsed_s={perf_counter() - started_at:.3f} "
+                    f"result={waited}")
+                return waited
 
             if blocking:
                 import time

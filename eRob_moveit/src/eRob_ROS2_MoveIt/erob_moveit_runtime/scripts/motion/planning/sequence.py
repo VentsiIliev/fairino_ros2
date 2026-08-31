@@ -13,6 +13,7 @@ from moveit_msgs.msg import (
     MotionSequenceItem,
     OrientationConstraint,
     PositionConstraint,
+    MoveItErrorCodes,
 )
 from moveit_msgs.srv import GetMotionSequence
 from shape_msgs.msg import SolidPrimitive
@@ -21,6 +22,18 @@ from trajectory_msgs.msg import JointTrajectory
 import config
 from motion.planning.planner_utils import _begin_execution, _is_stale, _set_result, _to_pose_list
 from motion.execution.trajectory_executor import _send_trajectory_to_controller
+
+
+_MOVEIT_ERROR_NAMES = {
+    int(value): name.lower().replace("_", " ")
+    for name in dir(MoveItErrorCodes)
+    if name.isupper() and isinstance((value := getattr(MoveItErrorCodes, name)), int)
+}
+
+
+def _moveit_error_message(error_code: int) -> str:
+    reason = _MOVEIT_ERROR_NAMES.get(error_code, "unknown MoveIt error")
+    return f"Pilz LIN planning failed: {reason} (MoveIt error_code={error_code})"
 
 
 def _duration_to_sec(duration_msg):
@@ -135,28 +148,46 @@ def _sequence_response(rc, future, generation, started_at):
         except Exception:
             pass
         if error_code != 1:
-            rc.get_logger().error(f"[Sequence] MoveIt sequence planning failed: error_code={error_code}")
+            message = _moveit_error_message(error_code)
+            rc.last_motion_error = message
+            rc.get_logger().error(f"[Sequence] {message}")
             _set_result(rc, -6)
+            executor = getattr(rc, "trajectory_executor", None)
+            if executor is not None:
+                executor.process_next_queued_task()
             return
         joint_trajectory = _combine_joint_trajectories(planned)
         if joint_trajectory is None:
-            rc.get_logger().error("[Sequence] Failed to combine planned sequence trajectories")
+            message = "Pilz LIN planning returned no usable joint trajectory"
+            rc.last_motion_error = message
+            rc.get_logger().error(f"[Sequence] {message}")
             _set_result(rc, -6)
+            executor = getattr(rc, "trajectory_executor", None)
+            if executor is not None:
+                executor.process_next_queued_task()
             return
         _send_trajectory_to_controller(rc, joint_trajectory)
     except Exception as exc:
-        rc.get_logger().error(f"[Sequence] Service call failed: {exc}")
+        message = f"Pilz LIN planning service call failed: {exc}"
+        rc.last_motion_error = message
+        rc.get_logger().error(f"[Sequence] {message}")
         _set_result(rc, -2)
+        executor = getattr(rc, "trajectory_executor", None)
+        if executor is not None:
+            executor.process_next_queued_task()
 
 
 def send_motion_sequence(rc, segments, tool_transform=None) -> int:
     if not segments:
+        rc.last_motion_error = "Pilz LIN request contains no motion segments"
         rc.get_logger().error("[Sequence] Empty motion sequence")
         return -1
     if not rc.wait_for_motion_sequence_service(timeout_sec=1.0):
+        rc.last_motion_error = "MoveIt motion-sequence service is unavailable"
         rc.get_logger().error("[Sequence] GetMotionSequence service not available")
         return -2
     if not rc.is_motion_stack_ready():
+        rc.last_motion_error = f"Motion stack is not ready: {rc.get_motion_stack_fault_reason()}"
         rc.get_logger().error(f"[Sequence] Motion stack not ready: {rc.get_motion_stack_fault_reason()}")
         return config.MOTION_ERROR_HARDWARE_NOT_READY
 
