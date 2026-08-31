@@ -123,11 +123,16 @@ FOLLOW_PATH_DENSIFY_MAX_ORIENTATION_DEG: 2.0
 # Joint_6 unwind uses rotational direct IK to avoid MoveIt Cartesian planning.
 EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
 EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: -1.0
-EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 180.0
+# Keep a full cable-relief turn in one controller goal so Joint_6 does not
+# decelerate to a stop halfway through the unwind.
+EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 360.0
 EXECUTOR_POST_UNWIND_USE_DIRECT_IK: true
 EXECUTOR_POST_UNWIND_DIRECT_IK_FALLBACK_CARTESIAN: true
 EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG: 4.0
-EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER: ''
+# TOTG is deterministic here and avoids the Ruckig fallback observed on the
+# forced full-turn Joint_6 branch. The unwind dynamics guard still enforces
+# the configured Joint_6 velocity and acceleration limits afterwards.
+EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER: 'TOTG'
 
 TOOL_REGISTRY:
   TOOL_0:
