@@ -75,6 +75,8 @@ def generate_launch_description():
         "zeroerr",
         package_path,
         use_fake_hardware=use_fake_hardware,
+        planning_pipelines=["pilz_industrial_motion_planner", "ompl", "stomp"],
+        default_planning_pipeline="pilz_industrial_motion_planner",
     )
 
     demo_ld = LaunchDescription()
