@@ -122,6 +122,12 @@ class MoveItCartesianServo(CartesianServo):
         self._tool_transform = np.eye(4)
         self._workobject_transform = np.eye(4)
         self._latest_command: CartesianServoCommand | None = None
+        self._applied_command: CartesianServoCommand | None = None
+        self._last_slew_update_s: float | None = None
+        self._linear_accel_limit_mm_s2 = max(
+            0.0,
+            float(getattr(config, "CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2", 0.0)),
+        )
 
         self._publish_timer = None
         self._servo_paused: bool | None = None
@@ -189,6 +195,10 @@ class MoveItCartesianServo(CartesianServo):
             self._publish_rate_hz,
             self._service_timeout_s,
             self._tf_timeout_s,
+        )
+        logger.info(
+            "[MOVEIT_CARTESIAN_SERVO] linear slew limit=%.1f mm/s^2",
+            self._linear_accel_limit_mm_s2,
         )
 
     def _set_twist_command_type(self) -> bool:
@@ -361,6 +371,8 @@ class MoveItCartesianServo(CartesianServo):
             self._tool_transform = tool_transform
             self._workobject_transform = workobject_transform
             self._latest_command = zero_command
+            self._applied_command = zero_command
+            self._last_slew_update_s = time.monotonic()
 
         # --------------------------------------------------------
         # 4. Select Cartesian Twist command mode
@@ -566,6 +578,8 @@ class MoveItCartesianServo(CartesianServo):
             tool_transform = np.array(self._tool_transform, dtype=float, copy=True)
             workobject_transform = np.array(self._workobject_transform, dtype=float, copy=True)
             self._latest_command = zero_command
+            self._applied_command = zero_command
+            self._last_slew_update_s = time.monotonic()
             stop_generation = self._session_generation
 
         # --------------------------------------------------------
@@ -608,6 +622,8 @@ class MoveItCartesianServo(CartesianServo):
 
         with self._command_lock:
             self._latest_command = None
+            self._applied_command = None
+            self._last_slew_update_s = None
             self._command_frame_id = None
             self._command_frame = None
             self._tool_transform = np.eye(4)
@@ -971,11 +987,12 @@ class MoveItCartesianServo(CartesianServo):
         """
 
         with self._command_lock:
-            command = self._latest_command
+            target_command = self._latest_command
             frame_id = self._command_frame_id
             command_frame = self._command_frame
             tool_transform = np.array(self._tool_transform, dtype=float, copy=True)
             workobject_transform = np.array(self._workobject_transform, dtype=float, copy=True)
+            command = self._slew_command_locked(target_command, time.monotonic())
 
         if command is None or not frame_id:
             return
@@ -993,6 +1010,56 @@ class MoveItCartesianServo(CartesianServo):
                 "[MOVEIT_CARTESIAN_SERVO] "
                 "command publish failed"
             )
+
+    def _slew_command_locked(
+        self,
+        target: CartesianServoCommand | None,
+        now_s: float,
+    ) -> CartesianServoCommand | None:
+        """Advance the applied linear velocity toward the requested velocity.
+
+        Caller holds ``_command_lock``. Angular velocity is intentionally left
+        unchanged; this first safeguard targets the recurrent Z-descent drive
+        overcurrent without altering rotational Servo behavior.
+        """
+        if target is None:
+            self._applied_command = None
+            self._last_slew_update_s = None
+            return None
+
+        if self._applied_command is None:
+            self._applied_command = self._zero_command()
+            self._last_slew_update_s = float(now_s)
+
+        if self._linear_accel_limit_mm_s2 <= 0.0:
+            self._applied_command = target
+            self._last_slew_update_s = float(now_s)
+            return target
+
+        previous = np.asarray(self._applied_command.linear_mm_s, dtype=float)
+        requested = np.asarray(target.linear_mm_s, dtype=float)
+        delta = requested - previous
+        delta_norm = float(np.linalg.norm(delta))
+        previous_time = self._last_slew_update_s
+        elapsed_s = self._publish_period_s if previous_time is None else max(
+            0.0,
+            float(now_s) - float(previous_time),
+        )
+        # Do not turn a scheduling stall into one large velocity step.
+        elapsed_s = min(elapsed_s, 2.0 * self._publish_period_s)
+        max_delta = self._linear_accel_limit_mm_s2 * elapsed_s
+        if delta_norm > max_delta > 0.0:
+            applied_linear = previous + delta * (max_delta / delta_norm)
+        else:
+            applied_linear = requested
+
+        applied = CartesianServoCommand(
+            linear_mm_s=tuple(float(value) for value in applied_linear),
+            angular_deg_s=tuple(float(value) for value in target.angular_deg_s),
+        )
+        self._applied_command = applied
+        self._last_slew_update_s = float(now_s)
+        return applied
 
     def _publish_command(
         self,
