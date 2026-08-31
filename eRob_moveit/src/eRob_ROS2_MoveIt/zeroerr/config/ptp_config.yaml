@@ -2,8 +2,10 @@
 
 PTP_IK_TIMEOUT_S: 0.01
 
-# Current seed + nearby J2/J3/J4/J5 seeds.
-PTP_IK_ATTEMPTS: 9
+# Test mode: use only the current-state seed. Candidate bounds, collision,
+# endpoint and orientation validation remain active; alternative IK branch
+# exploration is intentionally disabled for this latency/predictability test.
+PTP_IK_ATTEMPTS: 1
 
 # Candidate cost.
 #
