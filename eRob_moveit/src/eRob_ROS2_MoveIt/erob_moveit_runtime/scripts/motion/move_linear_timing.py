@@ -6,6 +6,8 @@ from __future__ import annotations
 import itertools
 from time import perf_counter
 
+from motion.async_logging import info as async_info
+
 _ATTR = "_move_linear_timing"
 _COUNTER = itertools.count(1)
 
@@ -131,7 +133,7 @@ def mark(context, stage, **fields):
             parts.append(f"{key}={value}")
     log = _logger(context)
     if log is not None:
-        log.info(" ".join(parts))
+        async_info(log, " ".join(parts))
 
 
 def clear(context, *, force=False):

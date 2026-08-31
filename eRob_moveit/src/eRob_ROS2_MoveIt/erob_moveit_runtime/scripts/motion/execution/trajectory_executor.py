@@ -5,6 +5,7 @@ from copy import deepcopy
 import math
 import time
 import config
+from motion.async_logging import info as async_info
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -896,7 +897,8 @@ class TrajectoryExecutor:
 
         for offset, inserted_point in enumerate(ramp_points_to_insert, start=1):
             joint_trajectory.points.insert(offset, inserted_point)
-        self._node.get_logger().info(
+        async_info(
+            self._node.get_logger(),
             f'[Controller] Inserted start ramp ({insert_count} points over {effective_hold_s:.3f}s) '
             'to soften motion onset'
         )
@@ -1508,15 +1510,20 @@ class TrajectoryExecutor:
             traj_duration_sec = last_point.time_from_start.sec + last_point.time_from_start.nanosec / 1e9
             time_tolerance_sec = max(config.EXECUTOR_TIME_MIN_S, traj_duration_sec * config.EXECUTOR_TIME_MULTIPLIER)
 
-            self._node.get_logger().info(
+            logger = self._node.get_logger()
+            async_info(
+                logger,
                 f'[Controller] Trajectory duration: {traj_duration_sec:.2f}s, timeout: {time_tolerance_sec:.1f}s')
-            self._node.get_logger().info(
+            async_info(
+                logger,
                 f'[Controller] First point positions: {[round(p, 6) for p in joint_trajectory.points[0].positions]}')
-            self._node.get_logger().info(
+            async_info(
+                logger,
                 f'[Controller] Last point positions: {[round(p, 6) for p in last_point.positions]}')
-            self._node.get_logger().info(
+            async_info(
+                logger,
                 f'[Controller] First point time: {joint_trajectory.points[0].time_from_start.sec + joint_trajectory.points[0].time_from_start.nanosec / 1e9:.3f}s')
-            self._node.get_logger().info(f'[Controller] Last point time: {traj_duration_sec:.3f}s')
+            async_info(logger, f'[Controller] Last point time: {traj_duration_sec:.3f}s')
             # self._log_planned_trajectory_metrics(joint_trajectory)
             # self._log_final_trajectory_segment(joint_trajectory)
         else:
@@ -1525,7 +1532,8 @@ class TrajectoryExecutor:
         controller_goal.goal_time_tolerance.sec = int(time_tolerance_sec)
         controller_goal.goal_time_tolerance.nanosec = int((time_tolerance_sec % 1.0) * 1e9)
 
-        self._node.get_logger().info(
+        async_info(
+            self._node.get_logger(),
             f'[Controller] Sending {len(joint_trajectory.points)} points directly to controller '
             f'(spline interpolation, path_tolerance={float(getattr(config, "EXECUTOR_PATH_POS_TOL_RAD", 0.35)):.3f}rad, '
             f'goal_time_tolerance={time_tolerance_sec:.1f}s)')
