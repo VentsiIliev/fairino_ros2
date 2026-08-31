@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <thread>
 
 #if __has_include(<realtime_tools/realtime_helpers.hpp>)
@@ -308,6 +309,11 @@ private:
       return false;
     }
 
+    if (log_next_motion_ && std::string(kind) == "motion")
+    {
+      logMotionHandoff(msg, cur_time);
+      log_next_motion_ = false;
+    }
     trajectory_publisher_->publish(msg);
     maybeLogTrajectoryPublish(msg, cur_time);
     return true;
@@ -395,6 +401,12 @@ private:
     else
     {
       last_commanded_state_ = servo_->getCurrentRobotState(true);
+      log_next_motion_ = true;
+      RCLCPP_INFO(node_->get_logger(),
+                  "[SERVO_START_DIAG] resume measured_positions=%s measured_velocities=%s status=%d",
+                  formatVector(last_commanded_state_.positions).c_str(),
+                  formatVector(last_commanded_state_.velocities).c_str(),
+                  static_cast<int>(servo_->getStatus()));
       servo_->resetSmoothing(last_commanded_state_);
       seedMeasuredHoldWindow(last_commanded_state_, node_->now());
       if (trajectory_publisher_)
@@ -410,6 +422,50 @@ private:
       // between measured-state rebase and its first retract command.
       response->message = "Servoing enabled";
     }
+  }
+
+  template <typename VectorType>
+  std::string formatVector(const VectorType& values) const
+  {
+    std::ostringstream stream;
+    stream.setf(std::ios::fixed);
+    stream.precision(6);
+    stream << '[';
+    for (std::size_t index = 0; index < static_cast<std::size_t>(values.size()); ++index)
+    {
+      if (index > 0)
+      {
+        stream << ',';
+      }
+      stream << values[index];
+    }
+    stream << ']';
+    return stream.str();
+  }
+
+  void logMotionHandoff(const trajectory_msgs::msg::JointTrajectory& msg, const rclcpp::Time& cur_time) const
+  {
+    const auto& first = msg.points.front();
+    const auto& last = msg.points.back();
+    std::vector<double> first_delta;
+    const std::size_t count = std::min<std::size_t>(first.positions.size(), last_commanded_state_.positions.size());
+    first_delta.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+      first_delta.push_back(first.positions[index] - last_commanded_state_.positions[index]);
+    }
+    const double stamp_offset = (rclcpp::Time(msg.header.stamp) - cur_time).seconds();
+    const double duration = rclcpp::Duration(last.time_from_start).seconds();
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "[SERVO_START_DIAG] first_motion points=%zu stamp_offset_s=%.6f duration_s=%.6f "
+        "measured_positions=%s first_positions=%s first_minus_measured=%s first_velocities=%s "
+        "last_positions=%s last_velocities=%s status=%d",
+        msg.points.size(), stamp_offset, duration,
+        formatVector(last_commanded_state_.positions).c_str(), formatVector(first.positions).c_str(),
+        formatVector(first_delta).c_str(), formatVector(first.velocities).c_str(),
+        formatVector(last.positions).c_str(), formatVector(last.velocities).c_str(),
+        static_cast<int>(servo_->getStatus()));
   }
 
   void setCollisionChecking(const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
@@ -639,6 +695,7 @@ private:
   std::mutex lock_;
   std::mutex command_lock_;
   bool collision_halt_latched_{ false };
+  bool log_next_motion_{ false };
   std::deque<moveit_servo::KinematicState> joint_cmd_rolling_window_;
 };
 }  // namespace

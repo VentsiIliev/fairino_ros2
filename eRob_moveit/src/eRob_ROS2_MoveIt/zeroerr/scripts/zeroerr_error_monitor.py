@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 import rclpy
+from control_msgs.msg import DynamicJointState
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from ethercat_msgs.srv import GetSdo
 
 
@@ -89,12 +91,55 @@ class ZeroErrErrorMonitor(Node):
         self._last_states: Dict[int, SlaveFaultState] = {}
         self._last_fault_signature: Dict[int, Tuple[int, int]] = {}
         self._zero_state_logged = False
+        self._latest_pdo: Dict[str, Dict[str, float]] = {}
+        self._latest_pdo_time_sec: Optional[float] = None
+        self._last_pdo_error_codes: Dict[str, int] = {}
+
+        self.create_subscription(
+            DynamicJointState,
+            "/dynamic_joint_states",
+            self._on_dynamic_joint_states,
+            qos_profile_sensor_data,
+        )
 
         self.create_timer(period, self._poll_once)
         self.get_logger().info(
             f"[ZeroErrErrorMonitor] Watching 0x603F/0x1001/0x1003 for {self._slave_count} slaves "
-            f"via ethercat_manager/get_sdo"
+            f"via ethercat_manager/get_sdo; caching /dynamic_joint_states for fault snapshots"
         )
+
+    def _on_dynamic_joint_states(self, msg: DynamicJointState) -> None:
+        self._latest_pdo_time_sec = self.get_clock().now().nanoseconds * 1e-9
+        changed_errors = []
+        for index, joint_name in enumerate(msg.joint_names):
+            if index >= len(msg.interface_values):
+                continue
+            values = msg.interface_values[index]
+            self._latest_pdo[joint_name] = {
+                name: value for name, value in zip(values.interface_names, values.values)
+            }
+            error_code = int(self._latest_pdo[joint_name].get("error_code", 0))
+            previous = self._last_pdo_error_codes.get(joint_name)
+            if previous is not None and error_code != previous:
+                changed_errors.append((joint_name, previous, error_code))
+            self._last_pdo_error_codes[joint_name] = error_code
+
+        if changed_errors:
+            transitions = " ".join(
+                f"{joint}:0x{previous:04X}->0x{current:04X}"
+                for joint, previous, current in changed_errors
+            )
+            snapshots = " | ".join(
+                self._format_joint_pdo(joint_name) for joint_name in msg.joint_names
+            )
+            if any(current != 0 for _, _, current in changed_errors):
+                self.get_logger().error(
+                    f"[DRIVE_PDO_FAULT_EDGE] transitions={transitions} snapshot={snapshots}"
+                )
+            else:
+                self.get_logger().info(
+                    f"[DRIVE_PDO_FAULT_EDGE] transitions={transitions} snapshot={snapshots}"
+                )
 
     def _poll_once(self) -> None:
         if self._disabled_due_to_abi_mismatch:
@@ -316,6 +361,7 @@ class ZeroErrErrorMonitor(Node):
         register_text = self._translate_error_register(current.error_register)
         history_text = self._translate_history(current.history_count, current.latest_history)
         position_text = self._translate_position_snapshot(current)
+        pdo_text = self._format_pdo_snapshot(slave_position)
         has_active_fault = current.error_code != 0
         has_error_bits = current.error_register != 0
 
@@ -329,6 +375,7 @@ class ZeroErrErrorMonitor(Node):
                 self.get_logger().info(
                     f"{prefix}: fault cleared, error_code=0x0000 ({error_text}), "
                     f"error_register=0x00 ({register_text}), {history_text}{position_text}"
+                    f"{pdo_text}"
                 )
             return
 
@@ -336,13 +383,45 @@ class ZeroErrErrorMonitor(Node):
             self.get_logger().warning(
                 f"{prefix}: no active drive error, but error_register=0x{current.error_register:02X} "
                 f"({register_text}), {history_text}{position_text}"
+                f"{pdo_text}"
             )
             return
 
         self.get_logger().error(
             f"{prefix}: error_code=0x{current.error_code:04X} ({error_text}), "
             f"error_register=0x{current.error_register:02X} ({register_text}), {history_text}{position_text}"
+            f"{pdo_text}"
         )
+
+    def _format_pdo_snapshot(self, slave_position: int) -> str:
+        joint_name = f"Joint_{slave_position + 1}"
+        state = self._latest_pdo.get(joint_name)
+        if state is None:
+            return ", pdo_snapshot=unavailable"
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        age_sec = (
+            now_sec - self._latest_pdo_time_sec
+            if self._latest_pdo_time_sec is not None
+            else float("nan")
+        )
+        return f", pdo_snapshot_age_s={age_sec:.3f} " + self._format_joint_pdo(joint_name)
+
+    def _format_joint_pdo(self, joint_name: str) -> str:
+        state = self._latest_pdo.get(joint_name)
+        if state is None:
+            return f"{joint_name}:unavailable"
+        fields = []
+        for name in ("position", "velocity", "effort", "statusword", "error_code", "mode_display"):
+            value = state.get(name)
+            if value is None:
+                continue
+            if name in ("statusword", "error_code"):
+                fields.append(f"{name}=0x{int(value):04X}")
+            elif name == "mode_display":
+                fields.append(f"{name}={int(value)}")
+            else:
+                fields.append(f"{name}={value:.6f}")
+        return f"{joint_name}:" + " ".join(fields)
 
     def _translate_error_code(self, code: int) -> str:
         if code in DRIVE_ERROR_CODES:
