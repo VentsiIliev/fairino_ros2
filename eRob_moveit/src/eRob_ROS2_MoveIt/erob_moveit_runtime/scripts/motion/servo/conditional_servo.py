@@ -283,7 +283,15 @@ class ConditionalServoSupervisor:
             if time.monotonic_ns() >= op["deadline_monotonic_ns"]:
                 self._trigger_stop("timeout", "operation timeout")
                 continue
-            last_sensor_ns = op.get("sensor_last_received_monotonic_ns") or op["armed_monotonic_ns"]
+            # Servo startup may block while the runtime prepares/resumes MoveIt
+            # Servo. The producer cannot publish an event until start() returns,
+            # so its freshness window begins when motion actually starts rather
+            # than when the operation first enters the arming state.
+            last_sensor_ns = (
+                op.get("sensor_last_received_monotonic_ns")
+                or op.get("started_monotonic_ns")
+                or op["armed_monotonic_ns"]
+            )
             if time.monotonic_ns() - last_sensor_ns >= int(op["sensor_stale_timeout_s"] * 1_000_000_000):
                 self._trigger_stop("sensor_fault", "sensor stream stale")
                 continue

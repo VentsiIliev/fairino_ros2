@@ -35,7 +35,7 @@ class FakeRobot:
         return list(self.pose)
 
 
-def request(supervisor):
+def request(supervisor, *, sensor_stale_timeout_s=0.5):
     return supervisor.start(
         servo={
             "axis": Value("Z", 3),
@@ -62,7 +62,7 @@ def request(supervisor):
             "user": 1,
         },
         timeout_s=1.0,
-        sensor_stale_timeout_s=0.5,
+        sensor_stale_timeout_s=sensor_stale_timeout_s,
     )
 
 
@@ -107,6 +107,31 @@ def test_sensor_event_without_state_is_rejected():
 
     assert not supervisor.accept_sensor_event({
         "sensor": "servo_condition", "stream_id": "stream-a", "sequence": 1,
+    })
+    assert robot.stopped == 0
+
+
+def test_sensor_stale_window_starts_after_slow_servo_start_returns():
+    class SlowStartRobot(FakeRobot):
+        def start_servo_jog(self, **kwargs):
+            time.sleep(0.15)
+            return super().start_servo_jog(**kwargs)
+
+    robot = SlowStartRobot()
+    supervisor = ConditionalServoSupervisor(
+        lambda: robot,
+        logger=logging.getLogger("test"),
+        monitor_rate_hz=100,
+    )
+    supervisor.set_sensor_connected(True)
+
+    started = request(supervisor, sensor_stale_timeout_s=0.1)
+    assert started["state"] == "moving"
+    assert supervisor.accept_sensor_event({
+        "sensor": "servo_condition",
+        "state": "inactive",
+        "stream_id": "stream-a",
+        "sequence": 1,
     })
     assert robot.stopped == 0
 
