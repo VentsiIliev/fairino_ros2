@@ -209,12 +209,18 @@ class CartesianPublisherBase(Node):
             maxlen=_CART_HISTORY)
 
         # ── Subscriptions ─────────────────────────────────────────────────────
-        self.create_subscription(
-            JointState,
-            '/joint_states',
-            self._joint_callback,
-            10,
-        )
+        self._joint_state_subscription = None
+        if self._joint_derivative_processing_enabled:
+            self._joint_state_subscription = self.create_subscription(
+                JointState,
+                '/joint_states',
+                self._joint_callback,
+                10,
+            )
+        else:
+            self.get_logger().info(
+                '[StatePublisher] Joint-state subscription disabled; '
+                'all derivative outputs are disabled')
 
         self.declare_parameter('publish_hz', _DEFAULT_PUBLISH_HZ)
         publish_hz = float(self.get_parameter('publish_hz').value)
