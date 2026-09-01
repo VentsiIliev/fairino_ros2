@@ -21,6 +21,8 @@ from runtime_api.handlers import RuntimeApi
 from runtime_gateway.local import LocalRuntimeGateway
 from runtime_websockets.execution_server import start_execution_websocket_server
 from runtime_websockets.state_server import start_state_websocket_server
+from runtime_websockets.sensor_server import start_sensor_websocket_server
+from motion.servo.conditional_servo import ConditionalServoSupervisor
 from rest.openapi import OPENAPI_SPEC, SWAGGER_HTML
 import config
 
@@ -85,6 +87,12 @@ def _configured_tcp_servers(host: str, port: int) -> list[tuple[str, str, int]]:
             "execution WebSocket",
             str(getattr(config, "REST_WS_EXECUTION_HOST", host) or host or "0.0.0.0"),
             int(getattr(config, "REST_WS_EXECUTION_PORT", int(port) + 2)),
+        ))
+    if bool(getattr(config, "REST_WS_SENSOR_ENABLED", True)):
+        servers.append((
+            "sensor WebSocket",
+            str(getattr(config, "REST_WS_SENSOR_HOST", host) or host or "0.0.0.0"),
+            int(getattr(config, "REST_WS_SENSOR_PORT", int(port) + 3)),
         ))
     return servers
 
@@ -365,6 +373,11 @@ def start_rest_server(
     def openapi_json():
         return jsonify(OPENAPI_SPEC)
 
+    conditional_servo = ConditionalServoSupervisor(
+        lambda: robot,
+        logger=logger,
+        monitor_rate_hz=50.0,
+    )
     runtime_api = RuntimeApi(
         robot_getter=lambda: robot,
         node_getter=lambda: node,
@@ -372,6 +385,7 @@ def start_rest_server(
         runtime_state_snapshot_getter=gateway.runtime_state_snapshot,
         port=port,
         gateway=gateway,
+        conditional_servo=conditional_servo,
     )
 
     def api_response(response):
@@ -560,6 +574,18 @@ def start_rest_server(
         payload["_ros_http_route_enter_ns"] = time.monotonic_ns()
         return api_response(runtime_api.servo_jog_stop(payload))
 
+    @app.route("/servojog/until-condition/start", methods=["POST"])
+    def conditional_servo_start():
+        return api_response(runtime_api.conditional_servo_start(request.get_json(silent=True)))
+
+    @app.route("/servojog/until-condition/status", methods=["GET"])
+    def conditional_servo_status():
+        return api_response(runtime_api.conditional_servo_status())
+
+    @app.route("/servojog/until-condition/cancel", methods=["POST"])
+    def conditional_servo_cancel():
+        return api_response(runtime_api.conditional_servo_cancel())
+
     @app.route("/servojog/to-z", methods=["POST"])
     def servo_jog_to_z():
         return api_response(runtime_api.servo_jog_to_z(request.get_json(silent=True)))
@@ -613,6 +639,13 @@ def start_rest_server(
         fallback_port=port,
         robot_getter=lambda: robot,
         node_getter=lambda: node,
+        conditional_servo=conditional_servo,
+    )
+    start_sensor_websocket_server(
+        supervisor=conditional_servo,
+        config=config,
+        fallback_host=host,
+        fallback_port=port,
     )
     logger.info("=" * 60)
 

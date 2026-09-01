@@ -894,6 +894,10 @@ class RobotController(Node):
 
         self.runtime_adapter.on_joint_state(self, msg)
 
+        conditional_servo = getattr(self, "conditional_servo_supervisor", None)
+        if conditional_servo is not None:
+            conditional_servo.observe_joint_state(msg.position, msg.velocity)
+
         with self.lock:
             if len(msg.position) < 6:
                 return

@@ -34,7 +34,7 @@ def _to_jsonable(value):
     return value
 
 
-def execution_payload(robot: IRobotBackend | None, node: RobotController | None, sequence: int) -> dict:
+def execution_payload(robot: IRobotBackend | None, node: RobotController | None, sequence: int, conditional_servo=None) -> dict:
     payload = {
         "type": "execution_status",
         "sequence": int(sequence),
@@ -82,6 +82,8 @@ def execution_payload(robot: IRobotBackend | None, node: RobotController | None,
             "unavailable_fields": [],
             "status": status,
         })
+        if conditional_servo is not None:
+            payload["status"]["conditional_servo"] = conditional_servo.snapshot()
         return payload
     except Exception as exc:
         payload.update({
@@ -105,6 +107,7 @@ def start_execution_websocket_server(
     fallback_port: int,
     robot_getter: Callable[[], IRobotBackend | None] | None = None,
     node_getter: Callable[[], RobotController | None] | None = None,
+    conditional_servo=None,
 ):
     if not bool(getattr(config, "REST_WS_EXECUTION_ENABLED", True)):
         logger.info("Execution WebSocket disabled by REST_WS_EXECUTION_ENABLED")
@@ -145,7 +148,7 @@ def start_execution_websocket_server(
                 sequence = next(sequence_counter)
                 current_robot = robot_getter() if robot_getter is not None else robot
                 current_node = node_getter() if node_getter is not None else node
-                payload = execution_payload(current_robot, current_node, sequence)
+                payload = execution_payload(current_robot, current_node, sequence, conditional_servo)
                 await connection.send(json.dumps(payload, separators=(",", ":")))
                 await asyncio.sleep(ws_period_s)
         except ConnectionClosed:

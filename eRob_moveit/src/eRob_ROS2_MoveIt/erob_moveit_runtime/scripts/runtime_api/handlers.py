@@ -96,6 +96,7 @@ class RuntimeApi:
         *,
         port: int,
         gateway=None,
+        conditional_servo=None,
     ):
         self._robot_getter = robot_getter
         self._node_getter = node_getter
@@ -103,6 +104,7 @@ class RuntimeApi:
         self._runtime_state_snapshot_getter = runtime_state_snapshot_getter
         self._gateway = gateway
         self._port = int(port)
+        self._conditional_servo = conditional_servo
 
     def _gateway_or_local(self) -> RuntimeGateway:
         if self._gateway is not None:
@@ -775,6 +777,56 @@ class RuntimeApi:
         except Exception as exc:
             logger.error(f"ServoJog stop endpoint error: {exc}")
             return ApiResponse({"result": -1, "success": False, "error": str(exc)}, 500)
+
+    def conditional_servo_start(self, data: dict[str, Any] | None) -> ApiResponse:
+        if self._conditional_servo is None:
+            return response_error("conditional Servo supervisor unavailable", 503, result=-1)
+        try:
+            request = dict(data or {})
+            servo_payload = parse_servo_jog_start_request(request.get("servo"))
+            not_ready = self._require_motion_stack_ready()
+            if not_ready is not None:
+                return not_ready
+            node = self._node_getter()
+            if node is not None:
+                node.conditional_servo_supervisor = self._conditional_servo
+            servo = {
+                "axis": servo_payload["axis"],
+                "direction": servo_payload["direction"],
+                "vel": servo_payload["vel"],
+                "acc": servo_payload["acc"],
+                "frame": servo_payload["frame"],
+                "tool": servo_payload["tool"],
+                "user": servo_payload["user"],
+                "linear_mm_s": servo_payload["linear_mm_s"],
+                "angular_deg_s": servo_payload["angular_deg_s"],
+                "disable_collision_checking": servo_payload["disable_collision_checking"],
+            }
+            snapshot = self._conditional_servo.start(
+                servo=servo,
+                condition=dict(request.get("condition") or {}),
+                boundary=request.get("boundary"),
+                timeout_s=request.get("timeout_s", 10.0),
+                sensor_stale_timeout_s=request.get("sensor_stale_timeout_s", 0.5),
+                restore_collision_checking=bool(request.get("restore_collision_checking", True)),
+            )
+            success = snapshot.get("state") not in {"start_failed", "stop_failed"}
+            return ApiResponse({"result": 0 if success else -1, "success": success, "conditional_servo": snapshot}, 200 if success else 409)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            return response_error(str(exc), 409 if isinstance(exc, RuntimeError) else 400, result=-1)
+        except Exception as exc:
+            logger.exception("Conditional Servo start endpoint failed")
+            return response_error(str(exc), 500, result=-1)
+
+    def conditional_servo_status(self) -> ApiResponse:
+        if self._conditional_servo is None:
+            return response_error("conditional Servo supervisor unavailable", 503)
+        return ApiResponse({"success": True, "conditional_servo": self._conditional_servo.snapshot()})
+
+    def conditional_servo_cancel(self) -> ApiResponse:
+        if self._conditional_servo is None:
+            return response_error("conditional Servo supervisor unavailable", 503)
+        return ApiResponse({"success": True, "conditional_servo": self._conditional_servo.cancel()})
 
     def servo_jog_to_z(self, data: dict[str, Any] | None) -> ApiResponse:
         try:
