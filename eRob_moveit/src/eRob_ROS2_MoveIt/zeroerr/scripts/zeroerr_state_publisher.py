@@ -21,12 +21,51 @@ from typing import Optional
 import rclpy
 from erob_state_publisher.base import CartesianPublisherBase
 from geometry_msgs.msg import PoseStamped
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.event_handler import SubscriptionEventCallbacks
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+from tf2_msgs.msg import TFMessage
 import tf2_ros
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
 
 _BASE_FRAME = 'base_link'
 _DEFAULT_SOURCE_FRAME = 'ee_link'
+
+
+class _QuietTransformListener(tf2_ros.TransformListener):
+    """TF listener without unused default middleware event callbacks."""
+
+    def __init__(self, buffer: tf2_ros.Buffer, node: Node) -> None:
+        self.buffer = buffer
+        self.node = node
+        self.group = ReentrantCallbackGroup()
+        event_callbacks = SubscriptionEventCallbacks(use_default_callbacks=False)
+        self.tf_sub = node.create_subscription(
+            TFMessage,
+            '/tf',
+            self.callback,
+            QoSProfile(
+                depth=100,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+            ),
+            callback_group=self.group,
+            event_callbacks=event_callbacks,
+        )
+        self.tf_static_sub = node.create_subscription(
+            TFMessage,
+            '/tf_static',
+            self.static_callback,
+            QoSProfile(
+                depth=100,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                history=HistoryPolicy.KEEP_LAST,
+            ),
+            callback_group=self.group,
+            event_callbacks=event_callbacks,
+        )
 
 
 class ZeroErrStatePublisher(CartesianPublisherBase):
@@ -41,7 +80,7 @@ class ZeroErrStatePublisher(CartesianPublisherBase):
         )
 
         self._tf_buffer = tf2_ros.Buffer()
-        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
+        self._tf_listener = _QuietTransformListener(self._tf_buffer, self)
         self._tf_warn_logged = False
 
         self.get_logger().info(
