@@ -23,6 +23,7 @@ class TrajectoryExecutor:
         self._goal_sequence = 0
         self._active_goal_sequence = None
         self._active_goal_is_stop = False
+        self._active_stop_preserves_queue = False
         self._active_unwind_check = None
         self._unwind_diag_timers = []
         self._active_drive_monitor_timer = None
@@ -706,7 +707,7 @@ class TrajectoryExecutor:
             f'held_positions={[round(hold_joint_positions[index], 6) for index in hold_joint_indices]}'
         )
 
-    def send_path_stop_trajectory(self):
+    def send_path_stop_trajectory(self, *, preserve_future_work=False):
         stop_trajectory, detail = self._build_path_stop_trajectory()
         if stop_trajectory is None:
             self._node.get_logger().warning(
@@ -763,6 +764,7 @@ class TrajectoryExecutor:
         self._active_drive_cancel_suppressed = True
         self._active_goal_sequence = goal_sequence
         self._active_goal_is_stop = True
+        self._active_stop_preserves_queue = bool(preserve_future_work)
         self._active_goal_started_monotonic = time.monotonic()
         self._cancel_unwind_diagnostic_timers()
         self._cancel_active_drive_monitor()
@@ -1782,12 +1784,14 @@ class TrajectoryExecutor:
         finally:
             cancelled_by_monitor = self._active_trajectory_cancel_reason is not None
             completed_stop_goal = bool(self._active_goal_is_stop)
+            stop_preserved_queue = bool(self._active_stop_preserves_queue)
             self._cancel_unwind_diagnostic_timers()
             self._cancel_active_drive_monitor()
             self._motion.active_controller_goal = None
             self._active_goal_sequence = None
             self._active_goal_started_monotonic = None
             self._active_goal_is_stop = False
+            self._active_stop_preserves_queue = False
             self._active_unwind_check = None
             cancel_reason = self._active_trajectory_cancel_reason
             self._active_trajectory_cancel_reason = None
@@ -1805,11 +1809,16 @@ class TrajectoryExecutor:
                     self._motion.is_executing = False
                 self._queue.mark_current_complete(self._motion.last_move_result)
                 if completed_stop_goal:
-                    queue_cleared = self._queue.clear()
-                    self._node.get_logger().warning(
-                        '[STOP] Motion queue drain suppressed after path stop completion'
-                        + (f'; cleared={queue_cleared}' if queue_cleared > 0 else '')
-                    )
+                    if stop_preserved_queue:
+                        self._node.get_logger().info(
+                            '[CONTROLLED_STOP] Path stop completed; future work preserved'
+                        )
+                    else:
+                        queue_cleared = self._queue.clear()
+                        self._node.get_logger().warning(
+                            '[STOP] Motion queue drain suppressed after path stop completion'
+                            + (f'; cleared={queue_cleared}' if queue_cleared > 0 else '')
+                        )
                 elif cancelled_by_monitor:
                     queue_cleared = self._queue.clear()
                     self._node.get_logger().error(

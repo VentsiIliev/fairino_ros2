@@ -500,6 +500,10 @@ def start_rest_server(
     def stop_motion():
         return api_response(runtime_api.stop_motion())
 
+    @app.route("/motion/controlled-stop", methods=["POST"])
+    def controlled_stop():
+        return api_response(runtime_api.controlled_stop(request.json))
+
     @app.route("/workobject/set", methods=["POST"])
     def set_workobject():
         return api_response(runtime_api.set_workobject(request.json))

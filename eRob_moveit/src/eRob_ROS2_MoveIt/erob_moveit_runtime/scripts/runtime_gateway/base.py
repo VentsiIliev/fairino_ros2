@@ -80,6 +80,11 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def controlled_stop(self, expected_task_id) -> dict:
+        """Stop the expected active task while preserving future work."""
+        raise NotImplementedError
+
+    @abstractmethod
     def move_linear(
         self,
         position: list[float],

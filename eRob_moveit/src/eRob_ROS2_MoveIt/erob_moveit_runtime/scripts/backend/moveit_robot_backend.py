@@ -2311,6 +2311,15 @@ class MoveItRobotBackend(IRobotBackend):
             self.node.get_logger().warning(f"[SERVO_JOG] stop during stop_motion failed: {exc}")
         return self.node.stop_motion()
 
+    def controlled_stop(self, expected_task_id):
+        """Controlled task stop that preserves prepared and queued future work."""
+        if self.node is None:
+            return {
+                "state": "ERROR", "result": -2, "success": False,
+                "stopped": False, "error": "robot node not available",
+            }
+        return self.node.controlled_stop(expected_task_id)
+
     def resetAllErrors(self):
         """
         Resets all current error states on the robot.

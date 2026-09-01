@@ -626,6 +626,14 @@ class RuntimeApi:
     def stop_motion(self) -> ApiResponse:
         return ApiResponse(self._gateway_or_local().stop_motion())
 
+    def controlled_stop(self, data: dict[str, Any] | None) -> ApiResponse:
+        payload = data or {}
+        task_id = payload.get("expected_task_id")
+        if task_id is None:
+            return response_error("expected_task_id is required", 400)
+        result = self._gateway_or_local().controlled_stop(task_id)
+        return ApiResponse(result, 200 if result.get("success") else 409)
+
     def set_workobject(self, data: dict[str, Any] | None) -> ApiResponse:
         payload = data or {}
         origin = payload.get("origin")

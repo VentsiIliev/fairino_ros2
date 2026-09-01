@@ -227,6 +227,15 @@ class LocalRuntimeGateway(RuntimeGateway):
             **({"error": stop_result["error"]} if stop_result.get("error") else {}),
         }
 
+    def controlled_stop(self, expected_task_id) -> dict:
+        result = self.robot.controlled_stop(expected_task_id)
+        if isinstance(result, dict):
+            return result
+        return {
+            "state": "ERROR", "result": -2, "success": False,
+            "stopped": False, "error": "invalid controlled stop response",
+        }
+
     def move_linear(
         self,
         position,

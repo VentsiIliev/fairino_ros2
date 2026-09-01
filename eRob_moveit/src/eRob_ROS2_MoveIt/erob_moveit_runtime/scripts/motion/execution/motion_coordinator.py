@@ -188,6 +188,45 @@ class MotionCoordinator:
             'queue_cleared': queue_cleared,
         }
 
+    def controlled_stop(self, expected_task_id):
+        """Stop only the expected active task and preserve future work."""
+        status = self._motion_queue.get_status()
+        current_task_id = status.get('current_task_id')
+        if expected_task_id is None or str(current_task_id) != str(expected_task_id):
+            return {
+                'state': 'TASK_MISMATCH', 'result': -3, 'success': False,
+                'stopped': False, 'expected_task_id': expected_task_id,
+                'current_task_id': current_task_id,
+                'error': 'active task does not match expected_task_id',
+            }
+        if self.active_controller_goal is None:
+            return {
+                'state': 'NO_CONTROLLER_GOAL', 'result': -1, 'success': False,
+                'stopped': False, 'expected_task_id': expected_task_id,
+                'current_task_id': current_task_id,
+                'error': 'active task has no cancellable controller goal',
+            }
+        sender = getattr(
+            getattr(self._node, 'trajectory_executor', None),
+            'send_path_stop_trajectory',
+            None,
+        )
+        if not callable(sender) or not sender(preserve_future_work=True):
+            return {
+                'state': 'STOP_TRAJECTORY_FAILED', 'result': -2, 'success': False,
+                'stopped': False, 'expected_task_id': expected_task_id,
+                'current_task_id': current_task_id,
+                'error': 'controlled path stop trajectory could not be submitted',
+            }
+        self._node.get_logger().warning(
+            f'[CONTROLLED_STOP] Stopping task #{current_task_id}; preserving future work'
+        )
+        return {
+            'state': 'STOPPING', 'result': 0, 'success': True,
+            'stopped': True, 'expected_task_id': expected_task_id,
+            'current_task_id': current_task_id, 'future_work_preserved': True,
+        }
+
     def is_motion_active(self):
         return any([
             self.active_controller_goal is not None,
