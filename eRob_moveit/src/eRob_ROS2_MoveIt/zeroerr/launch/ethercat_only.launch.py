@@ -115,14 +115,6 @@ def generate_launch_description():
         parameters=helper_parameters,
     )
 
-    linked_lin_helper_node = Node(
-        package="erob_moveit_runtime",
-        executable="linked_lin_helper",
-        name="linked_lin_helper",
-        output="screen",
-        parameters=helper_parameters,
-    )
-
     trajectory_state_validator_node = Node(
         package="erob_moveit_runtime",
         executable="trajectory_state_validator",
@@ -148,7 +140,6 @@ def generate_launch_description():
         ipp_helper_node,
         ruckig_helper_node,
         contour_ik_helper_node,
-        linked_lin_helper_node,
         trajectory_state_validator_node,
         wait_for_op_process,
     ])

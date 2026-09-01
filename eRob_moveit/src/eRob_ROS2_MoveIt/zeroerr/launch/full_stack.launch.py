@@ -392,20 +392,6 @@ def generate_launch_description():
         ],
     )
 
-    linked_lin_helper_node = Node(
-        package="erob_moveit_runtime",
-        executable="linked_lin_helper",
-        # name="linked_lin_helper",
-        output="screen",
-        prefix=planner_prefix,
-        parameters=[
-            moveit_config.robot_description,
-            moveit_config.robot_description_semantic,
-            moveit_config.robot_description_kinematics,
-            moveit_config.joint_limits,
-        ],
-    )
-
     trajectory_state_validator_node = Node(
         package="erob_moveit_runtime",
         executable="trajectory_state_validator",
@@ -486,7 +472,6 @@ def generate_launch_description():
         ruckig_helper_node,
         contour_ik_helper_node,
         ptp_helper_node,
-        linked_lin_helper_node,
         trajectory_state_validator_node,
     ]
     demo_ld.add_action(_after_success(moveit_ready, "MoveIt readiness check", helper_nodes))
@@ -500,7 +485,6 @@ def generate_launch_description():
             "--service", "/apply_ruckig",
             "--service", "/compute_contour_ik",
             "--service", "/compute_ptp",
-            "--service", "/compute_linked_lin",
             "--service", "/validate_trajectory_states",
         ],
         output="screen",
