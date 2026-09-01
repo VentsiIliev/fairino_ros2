@@ -8,6 +8,7 @@ from std_msgs.msg import Float64MultiArray
 from utils.transformation_utils import TransformationUtils
 import time
 import config
+from status.servo_stop_timing import observe_joint_velocity
 
 
 class RobotMonitor:
@@ -197,6 +198,7 @@ class RobotMonitor:
             joint_vel = np.array(msg.data[:6])
             self.latest_data['velocities'] = joint_vel
             self.latest_data['vel_magnitude'] = np.linalg.norm(joint_vel)
+            observe_joint_velocity(joint_vel)
 
     def _joint_acceleration_callback(self, msg: Float64MultiArray):
 

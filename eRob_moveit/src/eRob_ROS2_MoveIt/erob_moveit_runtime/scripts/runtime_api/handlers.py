@@ -26,6 +26,7 @@ from rest.api_support import (
 )
 from runtime_gateway.base import RuntimeGateway
 from runtime_gateway.local import LocalRuntimeGateway
+from status.servo_stop_timing import register_stop
 
 
 logger = logging.getLogger("erob_moveit_runtime_api")
@@ -733,17 +734,43 @@ class RuntimeApi:
     def servo_jog_stop(self, data: dict[str, Any] | None = None) -> ApiResponse:
         try:
             payload = data or {}
+            handler_enter_ns = time.monotonic_ns()
+            trace_id = str(payload.get("timing_trace_id") or f"servo-stop-{handler_enter_ns}")
+            route_enter_ns = payload.get("_ros_http_route_enter_ns")
+            if not isinstance(route_enter_ns, int):
+                route_enter_ns = handler_enter_ns
+            timing = {
+                "ros_http_route_enter_ns": route_enter_ns,
+                "ros_handler_enter_ns": handler_enter_ns,
+            }
             restore_collision_checking = payload.get("restore_collision_checking", True)
             if not isinstance(restore_collision_checking, bool):
                 return ApiResponse(
                     {"result": -1, "success": False, "error": "Invalid 'restore_collision_checking'; expected boolean"},
                     400,
                 )
+            register_stop(trace_id, timing)
+            timing["backend_stop_call_ns"] = time.monotonic_ns()
             result = self._gateway_or_local().servo_jog_stop(
                 restore_collision_checking=restore_collision_checking
             )
+            timing["backend_stop_return_ns"] = time.monotonic_ns()
+            logger.info(
+                "[SERVO_STOP_TIMING] trace_id=%s event=stop_handler_complete "
+                "monotonic_ns=%d since_ros_receive_ms=%.3f details=%s",
+                trace_id,
+                timing["backend_stop_return_ns"],
+                (timing["backend_stop_return_ns"] - route_enter_ns) / 1_000_000.0,
+                timing,
+            )
             if result == 0:
-                return ApiResponse({"result": result, "success": True, "state": "stopped"})
+                return ApiResponse({
+                    "result": result,
+                    "success": True,
+                    "state": "stopped",
+                    "timing_trace_id": trace_id,
+                    "timing": timing,
+                })
             return motion_error(result)
         except Exception as exc:
             logger.error(f"ServoJog stop endpoint error: {exc}")

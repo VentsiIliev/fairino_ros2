@@ -554,7 +554,11 @@ def start_rest_server(
 
     @app.route("/servojog/stop", methods=["POST"])
     def servo_jog_stop():
-        return api_response(runtime_api.servo_jog_stop(request.get_json(silent=True)))
+        payload = request.get_json(silent=True) or {}
+        # Capture receipt at the transport boundary. The reserved field is
+        # passed only to the timing instrumentation and does not affect motion.
+        payload["_ros_http_route_enter_ns"] = time.monotonic_ns()
+        return api_response(runtime_api.servo_jog_stop(payload))
 
     @app.route("/servojog/to-z", methods=["POST"])
     def servo_jog_to_z():
