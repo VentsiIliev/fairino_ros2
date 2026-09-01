@@ -171,8 +171,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[MOVE_LINER] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[MOVE_LINER] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
@@ -313,8 +312,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[MOVE_PTP] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[MOVE_PTP] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
@@ -395,8 +393,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[EXECUTE_PATH] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[EXECUTE_PATH] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
@@ -575,8 +572,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[EXECUTE_SEQUENCE] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[EXECUTE_SEQUENCE] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
         try:
@@ -802,9 +798,9 @@ class MoveItRobotBackend(IRobotBackend):
                         if record["state"] == "discarding":
                             record["state"] = "discarded"
                 self.node.get_logger().warning(
-                    "[OrderedChain] Discarded orphan prepared plan plan_id=%s age_s=%.3f",
-                    record["plan_id"],
-                    now - float(record.get("created_at", now)),
+                    "[OrderedChain] Discarded orphan prepared plan "
+                    f"plan_id={record['plan_id']} "
+                    f"age_s={now - float(record.get('created_at', now)):.3f}"
                 )
             if not self.node.is_motion_active() and not self.node.has_pending_motion():
                 setattr(self.node, "_ordered_motion_chain_stop_requested", False)
@@ -821,17 +817,17 @@ class MoveItRobotBackend(IRobotBackend):
                 )
             ]
         if remaining:
+            remaining_summary = [
+                {
+                    "plan_id": record["plan_id"],
+                    "state": record["state"],
+                    "age_s": round(now - float(record.get("created_at", now)), 3),
+                    "authorized": record["authorized"].is_set(),
+                }
+                for record in remaining
+            ]
             self.node.get_logger().warning(
-                "[OrderedChain] Active prepared plans block Servo: %s",
-                [
-                    {
-                        "plan_id": record["plan_id"],
-                        "state": record["state"],
-                        "age_s": round(now - float(record.get("created_at", now)), 3),
-                        "authorized": record["authorized"].is_set(),
-                    }
-                    for record in remaining
-                ],
+                f"[OrderedChain] Active prepared plans block Servo: {remaining_summary}"
             )
         return bool(remaining)
 
@@ -984,8 +980,8 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if self.node is not None and not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[EXECUTE_ORDERED_MOTION_CHAIN] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                "[EXECUTE_ORDERED_MOTION_CHAIN] Rejected: "
+                f"{self.node.get_hardware_fault_reason()}"
             )
             self._set_ordered_motion_chain_status(
                 **ordered_chain_terminal_status(
@@ -1283,8 +1279,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[UNWIND_J6] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[UNWIND_J6] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
@@ -1334,8 +1329,7 @@ class MoveItRobotBackend(IRobotBackend):
             return drive_error
         if not self.node.is_hardware_ready_for_motion():
             self.node.get_logger().error(
-                "[JOINT_JOG] Rejected: %s",
-                self.node.get_hardware_fault_reason(),
+                f"[JOINT_JOG] Rejected: {self.node.get_hardware_fault_reason()}"
             )
             return config.MOTION_ERROR_HARDWARE_NOT_READY
 
