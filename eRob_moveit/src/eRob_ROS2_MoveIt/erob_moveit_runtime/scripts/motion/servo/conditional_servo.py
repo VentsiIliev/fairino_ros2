@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from copy import deepcopy
+from enum import Enum
 
 
 TERMINAL_STATES = {
@@ -242,7 +243,25 @@ class ConditionalServoSupervisor:
                 return {"active": False, "state": "idle", "sensor_connected": self._sensor_connected}
             result = deepcopy(self._operation)
         result["active"] = result["state"] not in TERMINAL_STATES
-        return result
+        return self._json_safe(result)
+
+    @classmethod
+    def _json_safe(cls, value):
+        """Return lifecycle data safe for both Flask and WebSocket JSON."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Enum):
+            return value.name
+        if isinstance(value, dict):
+            return {str(key): cls._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._json_safe(item) for item in value]
+        # Test doubles and ROS-adjacent enum-like types may expose name/value
+        # without deriving from enum.Enum.
+        name = getattr(value, "name", None)
+        if isinstance(name, str):
+            return name
+        return str(value)
 
     def _monitor_loop(self) -> None:
         while True:

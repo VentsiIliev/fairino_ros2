@@ -1,4 +1,5 @@
 import logging
+import json
 import sys
 import time
 from pathlib import Path
@@ -71,6 +72,9 @@ def test_fresh_transition_stops_then_waits_for_stationary_samples():
     supervisor.set_sensor_connected(True)
     started = request(supervisor)
     assert started["state"] == "moving"
+    assert started["servo"]["axis"] == "Z"
+    assert started["servo"]["direction"] == "MINUS"
+    json.dumps(started)
 
     assert supervisor.accept_sensor_event({
         "sensor": "servo_condition", "state": "inactive",
