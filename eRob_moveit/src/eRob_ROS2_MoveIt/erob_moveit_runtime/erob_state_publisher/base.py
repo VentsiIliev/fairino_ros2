@@ -31,6 +31,7 @@ from typing import Optional
 
 import numpy as np
 import rclpy
+from rclpy.event_handler import PublisherEventCallbacks, SubscriptionEventCallbacks
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import JointState
@@ -210,7 +211,12 @@ class CartesianPublisherBase(Node):
 
         # ── Subscriptions ─────────────────────────────────────────────────────
         self.create_subscription(
-            JointState, '/joint_states', self._joint_callback, 10)
+            JointState,
+            '/joint_states',
+            self._joint_callback,
+            10,
+            event_callbacks=SubscriptionEventCallbacks(use_default_callbacks=False),
+        )
 
         self.declare_parameter('publish_hz', _DEFAULT_PUBLISH_HZ)
         publish_hz = float(self.get_parameter('publish_hz').value)
@@ -252,7 +258,12 @@ class CartesianPublisherBase(Node):
         if not bool(self.get_parameter(parameter_name).value):
             self.get_logger().info(f'[StatePublisher] Disabled topic {topic}')
             return None
-        return self.create_publisher(msg_type, topic, 10)
+        return self.create_publisher(
+            msg_type,
+            topic,
+            10,
+            event_callbacks=PublisherEventCallbacks(use_default_callbacks=False),
+        )
 
     def _publish_array_if_subscribed(self, publisher, data: np.ndarray) -> None:
         if publisher is not None:
