@@ -1017,8 +1017,10 @@ class RobotController(Node):
     def stop_motion(self):
         return self._motion.stop_motion()
 
-    def controlled_stop(self, expected_task_id):
-        return self._motion.controlled_stop(expected_task_id)
+    def controlled_stop(self, expected_task_id, *, stop_duration_s=None):
+        return self._motion.controlled_stop(
+            expected_task_id, stop_duration_s=stop_duration_s
+        )
 
     def set_drive_operation_enabled(self, enabled: bool) -> dict:
         if self._fake_hardware:

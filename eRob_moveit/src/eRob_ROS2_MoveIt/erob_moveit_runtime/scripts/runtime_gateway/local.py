@@ -227,8 +227,10 @@ class LocalRuntimeGateway(RuntimeGateway):
             **({"error": stop_result["error"]} if stop_result.get("error") else {}),
         }
 
-    def controlled_stop(self, expected_task_id) -> dict:
-        result = self.robot.controlled_stop(expected_task_id)
+    def controlled_stop(self, expected_task_id, *, stop_duration_s=None) -> dict:
+        result = self.robot.controlled_stop(
+            expected_task_id, stop_duration_s=stop_duration_s
+        )
         if isinstance(result, dict):
             return result
         return {

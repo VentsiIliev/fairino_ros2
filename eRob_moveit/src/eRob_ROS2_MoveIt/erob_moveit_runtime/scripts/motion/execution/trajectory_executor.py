@@ -599,7 +599,7 @@ class TrajectoryExecutor:
         )
         return False
 
-    def _build_path_stop_trajectory(self):
+    def _build_path_stop_trajectory(self, *, stop_duration_s=None):
         if not bool(getattr(config, 'EXECUTOR_PATH_STOP_ENABLED', True)):
             return None, 'disabled'
 
@@ -620,9 +620,14 @@ class TrajectoryExecutor:
             return None, 'measured joint state unavailable'
 
         elapsed_s = max(0.0, time.monotonic() - started_at)
+        configured_duration_s = (
+            getattr(config, 'EXECUTOR_PATH_STOP_DURATION_S', 0.30)
+            if stop_duration_s is None
+            else stop_duration_s
+        )
         duration_s = max(
             0.05,
-            float(getattr(config, 'EXECUTOR_PATH_STOP_DURATION_S', 0.30)),
+            float(configured_duration_s),
         )
         sample_period_s = max(
             0.01,
@@ -707,8 +712,10 @@ class TrajectoryExecutor:
             f'held_positions={[round(hold_joint_positions[index], 6) for index in hold_joint_indices]}'
         )
 
-    def send_path_stop_trajectory(self, *, preserve_future_work=False):
-        stop_trajectory, detail = self._build_path_stop_trajectory()
+    def send_path_stop_trajectory(self, *, preserve_future_work=False, stop_duration_s=None):
+        stop_trajectory, detail = self._build_path_stop_trajectory(
+            stop_duration_s=stop_duration_s
+        )
         if stop_trajectory is None:
             self._node.get_logger().warning(
                 f'[STOP] Path stop trajectory unavailable: {detail}'

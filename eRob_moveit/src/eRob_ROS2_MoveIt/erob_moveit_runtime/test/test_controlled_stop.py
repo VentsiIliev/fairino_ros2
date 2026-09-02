@@ -17,8 +17,8 @@ class FakeTrajectoryExecutor:
     def __init__(self):
         self.calls = []
 
-    def send_path_stop_trajectory(self, *, preserve_future_work=False):
-        self.calls.append(bool(preserve_future_work))
+    def send_path_stop_trajectory(self, *, preserve_future_work=False, stop_duration_s=None):
+        self.calls.append((bool(preserve_future_work), stop_duration_s))
         return True
 
 
@@ -61,5 +61,16 @@ def test_controlled_stop_preserves_future_work_for_expected_task():
 
     assert result["success"] is True
     assert result["future_work_preserved"] is True
-    assert node.trajectory_executor.calls == [True]
+    assert node.trajectory_executor.calls == [(True, None)]
     assert coordinator.plan_generation == original_generation
+
+
+def test_controlled_stop_passes_request_duration_to_trajectory_executor():
+    node = FakeNode()
+    coordinator = MotionCoordinator(node, FakeQueue(current_task_id=12))
+    coordinator.active_controller_goal = object()
+
+    result = coordinator.controlled_stop(expected_task_id=12, stop_duration_s=0.20)
+
+    assert result["success"] is True
+    assert node.trajectory_executor.calls == [(True, 0.20)]

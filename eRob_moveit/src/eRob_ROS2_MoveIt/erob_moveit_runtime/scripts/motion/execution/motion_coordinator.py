@@ -188,7 +188,7 @@ class MotionCoordinator:
             'queue_cleared': queue_cleared,
         }
 
-    def controlled_stop(self, expected_task_id):
+    def controlled_stop(self, expected_task_id, *, stop_duration_s=None):
         """Stop only the expected active task and preserve future work."""
         status = self._motion_queue.get_status()
         current_task_id = status.get('current_task_id')
@@ -211,7 +211,10 @@ class MotionCoordinator:
             'send_path_stop_trajectory',
             None,
         )
-        if not callable(sender) or not sender(preserve_future_work=True):
+        if not callable(sender) or not sender(
+            preserve_future_work=True,
+            stop_duration_s=stop_duration_s,
+        ):
             return {
                 'state': 'STOP_TRAJECTORY_FAILED', 'result': -2, 'success': False,
                 'stopped': False, 'expected_task_id': expected_task_id,

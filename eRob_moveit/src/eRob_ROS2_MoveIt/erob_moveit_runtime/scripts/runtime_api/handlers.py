@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import logging
 import time
 import traceback
@@ -631,7 +632,17 @@ class RuntimeApi:
         task_id = payload.get("expected_task_id")
         if task_id is None:
             return response_error("expected_task_id is required", 400)
-        result = self._gateway_or_local().controlled_stop(task_id)
+        stop_duration_s = payload.get("stop_duration_s")
+        if stop_duration_s is not None:
+            try:
+                stop_duration_s = float(stop_duration_s)
+            except (TypeError, ValueError):
+                return response_error("stop_duration_s must be a number", 400)
+            if not math.isfinite(stop_duration_s) or not 0.05 <= stop_duration_s <= 2.0:
+                return response_error("stop_duration_s must be between 0.05 and 2.0 seconds", 400)
+        result = self._gateway_or_local().controlled_stop(
+            task_id, stop_duration_s=stop_duration_s
+        )
         return ApiResponse(result, 200 if result.get("success") else 409)
 
     def set_workobject(self, data: dict[str, Any] | None) -> ApiResponse:
