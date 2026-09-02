@@ -708,10 +708,11 @@ class MoveItRobotBackend(IRobotBackend):
             if current_position is None or len(current_position) < 6:
                 raise RuntimeError("cannot verify prepared chain start position")
             expected = record["start_position"]
-            xyz_error_mm = math.sqrt(sum(
-                (float(current_position[index]) - float(expected[index])) ** 2
+            xyz_delta_mm = [
+                float(current_position[index]) - float(expected[index])
                 for index in range(3)
-            ))
+            ]
+            xyz_error_mm = math.sqrt(sum(delta * delta for delta in xyz_delta_mm))
             angular_errors_deg = [
                 abs((float(current_position[index]) - float(expected[index]) + 180.0) % 360.0 - 180.0)
                 for index in range(3, 6)
@@ -729,6 +730,9 @@ class MoveItRobotBackend(IRobotBackend):
                 error = (
                     "prepared chain start mismatch: "
                     f"xyz_error_mm={xyz_error_mm:.3f} "
+                    f"dx_mm={xyz_delta_mm[0]:+.3f} "
+                    f"dy_mm={xyz_delta_mm[1]:+.3f} "
+                    f"dz_mm={xyz_delta_mm[2]:+.3f} "
                     f"max_orientation_error_deg={max(angular_errors_deg, default=0.0):.3f} "
                     f"limits=({position_tolerance_mm:.3f}mm,{orientation_tolerance_deg:.3f}deg)"
                 )
