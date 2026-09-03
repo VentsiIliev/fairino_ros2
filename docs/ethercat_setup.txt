@@ -1,0 +1,869 @@
+# EtherCAT Master Setup Guide
+
+## System configuration
+
+This guide is written for the following machine:
+
+```text
+Operating system: Ubuntu Linux with PREEMPT_RT kernel
+EtherCAT master: IgH/EtherLab
+Installation path: /usr/local/etherlab
+Ethernet interface: enp1s0
+Ethernet MAC: e4:3a:6e:38:e8:f8
+Linux Ethernet driver: r8169
+EtherCAT driver: generic
+Internet connection: wlp2s0 Wi-Fi
+```
+
+The Ethernet interface `enp1s0` will be dedicated exclusively to EtherCAT. It must not have a normal IPv4 address, gateway or NetworkManager connection.
+
+---
+
+## 1. Connect the EtherCAT network
+
+Connect the devices in this order:
+
+```text
+Computer enp1s0
+    │
+    └── EtherCAT cable
+            │
+            └── EtherCAT IN port of first slave
+                    │
+                    └── EtherCAT OUT → next slave
+```
+
+Power on all EtherCAT slaves.
+
+Do not connect the PC through a normal Ethernet switch unless the switch is explicitly designed for the required EtherCAT topology.
+
+---
+
+## 2. Confirm the correct Ethernet interface
+
+List the network interfaces:
+
+```bash
+ip -br link
+```
+
+For this computer, the EtherCAT interface must be:
+
+```text
+enp1s0    e4:3a:6e:38:e8:f8
+```
+
+Set a shell variable:
+
+```bash
+INTERFACE=enp1s0
+```
+
+Check the MAC address:
+
+```bash
+cat /sys/class/net/$INTERFACE/address
+```
+
+Expected result:
+
+```text
+e4:3a:6e:38:e8:f8
+```
+
+Check the Linux Ethernet driver:
+
+```bash
+sudo ethtool -i $INTERFACE
+```
+
+Expected:
+
+```text
+driver: r8169
+```
+
+Check the physical connection:
+
+```bash
+sudo ethtool $INTERFACE | grep -E 'Speed|Duplex|Link detected'
+```
+
+Expected:
+
+```text
+Speed: 100Mb/s
+Duplex: Full
+Link detected: yes
+```
+
+EtherCAT uses 100 Mbit/s full-duplex Ethernet at the physical layer, so this result is correct.
+
+If the result is:
+
+```text
+Link detected: no
+```
+
+check:
+
+* slave power;
+* Ethernet cable;
+* connection to the slave’s `IN` port;
+* slave status LEDs;
+* whether the connected device is actually an EtherCAT slave.
+
+---
+
+## 3. Prevent NetworkManager from using the EtherCAT interface
+
+The EtherCAT interface must not be used as a normal network connection.
+
+### Temporary configuration
+
+Disconnect it from NetworkManager:
+
+```bash
+sudo nmcli device disconnect enp1s0
+sudo nmcli device set enp1s0 managed no
+```
+
+Remove all IP addresses:
+
+```bash
+sudo ip addr flush dev enp1s0
+```
+
+Confirm:
+
+```bash
+ip -br addr show enp1s0
+```
+
+Expected:
+
+```text
+enp1s0    UP
+```
+
+There should be no address such as:
+
+```text
+192.168.x.x/24
+```
+
+### Persistent configuration
+
+Create a permanent NetworkManager configuration:
+
+```bash
+sudo mkdir -p /etc/NetworkManager/conf.d
+```
+
+```bash
+sudo tee /etc/NetworkManager/conf.d/99-ethercat-enp1s0.conf >/dev/null <<'EOF'
+[device-enp1s0-unmanage]
+match-device=interface-name:enp1s0
+managed=0
+EOF
+```
+
+Reload NetworkManager:
+
+```bash
+sudo systemctl reload NetworkManager
+```
+
+NetworkManager documents `managed=0` in a matching device section as the persistent method for leaving a dedicated interface unmanaged. The direct `nmcli device set ... managed no` command is normally temporary until reboot.
+
+Confirm:
+
+```bash
+nmcli device status
+```
+
+The result should show `enp1s0` as unmanaged:
+
+```text
+DEVICE   TYPE      STATE
+enp1s0   ethernet  unmanaged
+```
+
+Wi-Fi should remain connected:
+
+```text
+wlp2s0   wifi      connected
+```
+
+Check that the default Internet route uses Wi-Fi:
+
+```bash
+ip route
+```
+
+Expected:
+
+```text
+default via ... dev wlp2s0
+```
+
+There should be no default route through `enp1s0`.
+
+---
+
+## 4. Locate the active EtherCAT configuration
+
+Check the service executable:
+
+```bash
+systemctl show ethercat.service -p ExecStart --no-pager
+```
+
+For this installation, the service uses:
+
+```text
+/usr/local/etherlab/sbin/ethercatctl
+```
+
+The corresponding systemd configuration file is:
+
+```text
+/usr/local/etherlab/etc/ethercat.conf
+```
+
+This installation also contains other files:
+
+```text
+/etc/sysconfig/ethercat
+/usr/local/etherlab/etc/sysconfig/ethercat
+```
+
+Those files belong to init-script-style configurations. For this systemd installation, edit only:
+
+```text
+/usr/local/etherlab/etc/ethercat.conf
+```
+
+EtherLab’s installation layout places the systemd configuration in the installation prefix’s `etc/ethercat.conf`, while init-script configurations use `etc/sysconfig/ethercat`.
+
+---
+
+## 5. Back up the EtherCAT configuration
+
+Before editing it:
+
+```bash
+sudo cp \
+    /usr/local/etherlab/etc/ethercat.conf \
+    /usr/local/etherlab/etc/ethercat.conf.backup
+```
+
+The backup can later be restored with:
+
+```bash
+sudo cp \
+    /usr/local/etherlab/etc/ethercat.conf.backup \
+    /usr/local/etherlab/etc/ethercat.conf
+```
+
+---
+
+## 6. Configure the EtherCAT master
+
+Open the active configuration:
+
+```bash
+sudo nano /usr/local/etherlab/etc/ethercat.conf
+```
+
+Set these values:
+
+```bash
+MASTER0_DEVICE="e4:3a:6e:38:e8:f8"
+DEVICE_MODULES="generic"
+UPDOWN_INTERFACES="enp1s0"
+```
+
+Save with:
+
+```text
+Ctrl+O
+Enter
+Ctrl+X
+```
+
+### Meaning of the settings
+
+```bash
+MASTER0_DEVICE="e4:3a:6e:38:e8:f8"
+```
+
+Associates EtherCAT master 0 with the exact Ethernet adapter.
+
+The EtherLab configuration also accepts an interface name such as `enp1s0`, but using the MAC address prevents problems if Linux changes the interface name. The official configuration supports both MAC addresses and interface names.
+
+```bash
+DEVICE_MODULES="generic"
+```
+
+Loads `ec_generic`, which works through the existing Linux `r8169` driver. The generic EtherCAT driver is independent of the specific native EtherCAT NIC driver and kernel-driver combination.
+
+```bash
+UPDOWN_INTERFACES="enp1s0"
+```
+
+Makes `ethercatctl` bring `enp1s0` up when the EtherCAT service starts and bring it down when the service stops. EtherLab specifically recommends this setting when using the generic driver because its Linux network interface must be up before EtherCAT frames can be exchanged.
+
+Check the final values:
+
+```bash
+sudo grep -E \
+'^(MASTER0_DEVICE|DEVICE_MODULES|UPDOWN_INTERFACES)=' \
+/usr/local/etherlab/etc/ethercat.conf
+```
+
+Expected:
+
+```text
+MASTER0_DEVICE="e4:3a:6e:38:e8:f8"
+DEVICE_MODULES="generic"
+UPDOWN_INTERFACES="enp1s0"
+```
+
+---
+
+## 7. Configure systemd startup ordering
+
+Create a systemd override directory:
+
+```bash
+sudo mkdir -p /etc/systemd/system/ethercat.service.d
+```
+
+Create an override:
+
+```bash
+sudo tee \
+/etc/systemd/system/ethercat.service.d/50-dependencies.conf \
+>/dev/null <<'EOF'
+[Unit]
+Requires=network.target
+After=network.target
+EOF
+```
+
+Reload systemd:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+The official EtherLab service template recommends starting after `network.target` when the generic Ethernet driver is used.
+
+Inspect the combined service configuration:
+
+```bash
+systemctl cat ethercat.service
+```
+
+Near the bottom, the override should appear:
+
+```text
+# /etc/systemd/system/ethercat.service.d/50-dependencies.conf
+
+[Unit]
+Requires=network.target
+After=network.target
+```
+
+---
+
+## 8. Start and enable the EtherCAT service
+
+Restart the service:
+
+```bash
+sudo systemctl restart ethercat.service
+```
+
+Enable automatic startup:
+
+```bash
+sudo systemctl enable ethercat.service
+```
+
+Check the service:
+
+```bash
+sudo systemctl status ethercat.service --no-pager -l
+```
+
+Expected status:
+
+```text
+Active: active (exited)
+```
+
+`active (exited)` is normal because `ethercatctl` loads the kernel modules and then exits while the modules remain loaded.
+
+---
+
+## 9. Verify the EtherCAT kernel modules
+
+Run:
+
+```bash
+lsmod | grep -E 'ec_master|ec_generic'
+```
+
+Expected:
+
+```text
+ec_generic
+ec_master
+```
+
+Check the EtherCAT character device:
+
+```bash
+ls -l /dev/EtherCAT*
+```
+
+Expected:
+
+```text
+/dev/EtherCAT0
+```
+
+If `/dev/EtherCAT0` is missing, inspect the service and kernel logs:
+
+```bash
+sudo journalctl -u ethercat.service -b --no-pager
+```
+
+```bash
+sudo dmesg -T | grep -Ei 'ethercat|ec_master|ec_generic'
+```
+
+---
+
+## 10. Check whether the NIC is attached
+
+Run:
+
+```bash
+sudo ethercat master -v
+```
+
+Look for:
+
+```text
+Master0
+  Ethernet devices:
+    Main: e4:3a:6e:38:e8:f8 (attached)
+      Link: UP
+```
+
+The important results are:
+
+```text
+(attached)
+Link: UP
+```
+
+An unsuccessful configuration may show:
+
+```text
+Main: e4:3a:6e:38:e8:f8 (waiting...)
+Link: DOWN
+```
+
+In that case, verify:
+
+```bash
+ip link show enp1s0
+sudo ethtool enp1s0
+lsmod | grep -E 'ec_master|ec_generic'
+```
+
+---
+
+## 11. Detect the EtherCAT slaves
+
+Run:
+
+```bash
+sudo ethercat slaves
+```
+
+Example successful result:
+
+```text
+0  0:0  PREOP  +  Servo drive
+```
+
+For multiple devices:
+
+```text
+0  0:0  PREOP  +  First slave
+1  0:1  PREOP  +  Second slave
+2  0:2  PREOP  +  Third slave
+```
+
+Display detailed information:
+
+```bash
+sudo ethercat slaves -v
+```
+
+Display PDO configuration:
+
+```bash
+sudo ethercat pdos
+```
+
+Display available SDO objects:
+
+```bash
+sudo ethercat sdos
+```
+
+Generate an XML description of the detected network:
+
+```bash
+sudo ethercat xml > ~/ethercat_network.xml
+```
+
+Do not manually force drives into `OP` before the ROS 2 hardware driver, PDO mappings and safety configuration are ready.
+
+---
+
+## 12. Start the ROS 2 EtherCAT application
+
+Before launching ROS 2, verify:
+
+```bash
+sudo systemctl is-active ethercat.service
+sudo ethercat master
+sudo ethercat slaves
+```
+
+Then start the ROS 2 project using its normal launch command.
+
+After ROS 2 starts, inspect the network again:
+
+```bash
+sudo ethercat master
+sudo ethercat slaves
+```
+
+Operational slaves will normally report:
+
+```text
+OP
+```
+
+If slaves remain in `PREOP` or `SAFEOP`, inspect the ROS 2 hardware-driver logs for:
+
+* incorrect vendor or product ID;
+* incorrect PDO mapping;
+* distributed-clock configuration errors;
+* watchdog errors;
+* invalid synchronization period;
+* missing slave configuration;
+* working-counter errors.
+
+---
+
+## 13. Test startup after reboot
+
+Reboot:
+
+```bash
+sudo reboot
+```
+
+After logging in, run:
+
+```bash
+nmcli device status
+```
+
+Expected:
+
+```text
+enp1s0   ethernet   unmanaged
+wlp2s0   wifi       connected
+```
+
+Check that `enp1s0` has no IP address:
+
+```bash
+ip -br addr show enp1s0
+```
+
+Check the service:
+
+```bash
+sudo systemctl status ethercat.service --no-pager
+```
+
+Check the master:
+
+```bash
+sudo ethercat master
+```
+
+Check the slaves:
+
+```bash
+sudo ethercat slaves
+```
+
+The setup is persistent when:
+
+```text
+enp1s0 is unmanaged
+enp1s0 has no IP address
+ethercat.service is active
+ec_master and ec_generic are loaded
+the master reports the NIC as attached
+the EtherCAT link is UP
+the expected slaves are detected
+```
+
+---
+
+# Diagnostic command block
+
+Use this block whenever the EtherCAT network does not start:
+
+```bash
+echo "===== INTERFACE ====="
+ip -br link show enp1s0
+ip -br addr show enp1s0
+
+echo
+echo "===== NETWORKMANAGER ====="
+nmcli device status
+
+echo
+echo "===== ROUTES ====="
+ip route
+
+echo
+echo "===== MAC ADDRESS ====="
+cat /sys/class/net/enp1s0/address
+
+echo
+echo "===== LINUX DRIVER ====="
+sudo ethtool -i enp1s0
+
+echo
+echo "===== PHYSICAL LINK ====="
+sudo ethtool enp1s0 | grep -E 'Speed|Duplex|Link detected'
+
+echo
+echo "===== ACTIVE CONFIGURATION ====="
+sudo grep -E \
+'^(MASTER0_DEVICE|DEVICE_MODULES|UPDOWN_INTERFACES)=' \
+/usr/local/etherlab/etc/ethercat.conf
+
+echo
+echo "===== KERNEL MODULES ====="
+lsmod | grep -E 'ec_master|ec_generic'
+
+echo
+echo "===== DEVICE NODE ====="
+ls -l /dev/EtherCAT* 2>/dev/null
+
+echo
+echo "===== SERVICE ====="
+sudo systemctl status ethercat.service --no-pager -l
+
+echo
+echo "===== MASTER ====="
+sudo ethercat master -v
+
+echo
+echo "===== SLAVES ====="
+sudo ethercat slaves -v
+
+echo
+echo "===== SERVICE LOG ====="
+sudo journalctl -u ethercat.service -b --no-pager | tail -100
+
+echo
+echo "===== KERNEL LOG ====="
+sudo dmesg -T | grep -Ei \
+'ethercat|ec_master|ec_generic|enp1s0|r8169' | tail -100
+```
+
+---
+
+# Common problems
+
+## Master reports `waiting for device(s)`
+
+Check that the configuration contains the correct MAC:
+
+```bash
+grep MASTER0_DEVICE /usr/local/etherlab/etc/ethercat.conf
+```
+
+Expected:
+
+```text
+MASTER0_DEVICE="e4:3a:6e:38:e8:f8"
+```
+
+Check that the generic module is loaded:
+
+```bash
+lsmod | grep ec_generic
+```
+
+Restart:
+
+```bash
+sudo systemctl restart ethercat.service
+```
+
+---
+
+## Interface receives an IP address after reboot
+
+Check:
+
+```bash
+nmcli device status
+```
+
+Verify the persistent unmanaged file:
+
+```bash
+cat /etc/NetworkManager/conf.d/99-ethercat-enp1s0.conf
+```
+
+It must contain:
+
+```ini
+[device-enp1s0-unmanage]
+match-device=interface-name:enp1s0
+managed=0
+```
+
+Restart NetworkManager and EtherCAT:
+
+```bash
+sudo systemctl restart NetworkManager
+sudo systemctl restart ethercat.service
+```
+
+---
+
+## Link is up, but no slaves are detected
+
+Check:
+
+```bash
+sudo ethercat master -v
+```
+
+If transmitted frames increase but received frames remain zero, inspect:
+
+* slave power;
+* cable;
+* slave `IN` and `OUT` ports;
+* first slave configuration;
+* EtherCAT status LEDs;
+* whether the device supports EtherCAT rather than ordinary Ethernet.
+
+Try a direct connection:
+
+```text
+PC enp1s0 → first slave IN
+```
+
+Remove switches and other network equipment while diagnosing.
+
+---
+
+## `/dev/EtherCAT0` does not exist
+
+Run:
+
+```bash
+sudo systemctl restart ethercat.service
+sudo journalctl -u ethercat.service -b --no-pager
+sudo dmesg -T | grep -Ei 'ethercat|ec_master|ec_generic'
+```
+
+Confirm:
+
+```bash
+lsmod | grep ec_master
+```
+
+---
+
+## Permission denied without `sudo`
+
+For initial testing, use:
+
+```bash
+sudo ethercat master
+sudo ethercat slaves
+```
+
+The ROS 2 process may require an EtherCAT udev rule or membership in the group assigned to `/dev/EtherCAT0`.
+
+Check:
+
+```bash
+ls -l /dev/EtherCAT0
+```
+
+Do not make the device globally writable with mode `0777`.
+
+---
+
+# Final configuration summary
+
+Active EtherCAT configuration:
+
+```bash
+# /usr/local/etherlab/etc/ethercat.conf
+
+MASTER0_DEVICE="e4:3a:6e:38:e8:f8"
+DEVICE_MODULES="generic"
+UPDOWN_INTERFACES="enp1s0"
+```
+
+Persistent NetworkManager configuration:
+
+```ini
+# /etc/NetworkManager/conf.d/99-ethercat-enp1s0.conf
+
+[device-enp1s0-unmanage]
+match-device=interface-name:enp1s0
+managed=0
+```
+
+Systemd override:
+
+```ini
+# /etc/systemd/system/ethercat.service.d/50-dependencies.conf
+
+[Unit]
+Requires=network.target
+After=network.target
+```
+
+Normal verification commands:
+
+```bash
+sudo systemctl status ethercat.service --no-pager
+sudo ethercat master
+sudo ethercat slaves
+```
