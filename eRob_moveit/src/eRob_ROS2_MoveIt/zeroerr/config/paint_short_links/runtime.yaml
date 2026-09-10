@@ -1,0 +1,157 @@
+URDF_PATH: urdfs/erob_arm_short_links.with_mounting_stl.urdf
+SRDF_PATH: eRobo3.srdf
+CARTESIAN_SOURCE_LINK: ee_link
+COLLISION_TIP_LINK: tool0
+DEFAULT_WORKOBJECT:
+- 0
+- 0
+- 0
+- 0
+- 0
+- 72
+WORKOBJECT_REGISTRY:
+  WOBJ_0:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  WOBJ_1:
+  - -280.642435642
+  - -59.2869787188
+  - 0.0616797868058
+  - 0
+  - 0
+  - 72.1797016725
+WORKOBJECT_ID_MAP:
+  0: WOBJ_0
+  1: WOBJ_1
+DEFAULT_WORKOBJECT_ID: 0
+
+
+# Painting: keep MoveIt collision checks enabled for planned paint motion.
+ENABLE_COLLISION_CHECKING: true
+
+# Dynamic MoveIt collision body for the selected paint tool. The platform
+# switches to TOOL_1 at startup; this attaches a cylinder at that active tool
+# origin so collision checks include the physical pointer/sprayer.
+ACTIVE_TOOL_COLLISION_ENABLED: false
+ACTIVE_TOOL_COLLISION_ID: active_paint_tool
+ACTIVE_TOOL_COLLISION_LINK: ee_link
+ACTIVE_TOOL_COLLISION_RADIUS_M: 0.0325
+ACTIVE_TOOL_COLLISION_LENGTH_M: 0.17
+ACTIVE_TOOL_COLLISION_ORIGIN:
+- 0
+- 0
+- -85
+- 0
+- 0
+- 0
+ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM: true
+ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
+- Link_5
+- ee_link
+- tool0
+- tcp
+- Link_6
+
+# Disabled because mounting_surface now has a 12-box URDF collision model that
+# preserves its openings. The legacy world box obscures that model in RViz and
+# incorrectly treats the opening as solid.
+MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED: false
+MOUNTING_SURFACE_COLLISION_OBJECT_ID: mounting_surface_collision
+MOUNTING_SURFACE_COLLISION_OBJECT_FRAME: mounting_surface
+MOUNTING_SURFACE_COLLISION_BOX_M:
+- 0.115
+- 0.190
+- 0.1475
+MOUNTING_SURFACE_COLLISION_ORIGIN:
+- 100.0
+- 576.45
+- 158.0
+- 0.0
+- 0.0
+- 0.0
+
+# Generic guarded passage. Its collision lid is present by default and may be
+# removed only for an authorized passage LIN descent/retract.
+MOTION_PASSAGES: []
+
+CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
+CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
+CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05
+CARTESIAN_SERVO_PUBLISH_RATE_HZ: 50.0
+# Prevent a zero-to-full-speed Cartesian step from producing a Joint_4 current
+# spike at the beginning of the contact-approach Servo motion.
+CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2: 400.0
+
+# Keep background state publishing light on 4-core real-hardware controllers.
+# Paint only needs the current Cartesian pose for operator/status display; the
+# profile state-publisher config disables derivative topics separately.
+STATE_PUBLISH_RATE_HZ: 10.0
+JOINT_STATE_INPUT_RATE_HZ: 20.0
+JOINT_DERIVATIVE_PUBLISH_RATE_HZ: 10.0
+
+SERVO_JOG_LINEAR_SPEED_AT_100_PERCENT_MM_S: 100.0
+SERVO_JOG_ANGULAR_SPEED_AT_100_PERCENT_DEG_S: 30.0
+SERVO_JOG_DEFAULT_LINEAR_MM_S: 10.0
+SERVO_JOG_DEFAULT_ANGULAR_DEG_S: 3.0
+SERVO_JOG_MAX_DURATION_S: 10.0
+
+# Dense paint contours use direct IK plus TOTG timing. Ruckig can introduce
+# implausible local timing gaps on these long wrapped Joint_6 paths.
+PATH_TRAJECTORY_OPTIMIZER: TOTG
+
+# Cartesian fallback tuning for dense paint paths. Larger EEF steps and waypoint
+# simplification reduce MoveIt fallback planning time; direct IK remains the
+# preferred path when available.
+PATH_EEF_STEP_SCALE: 3.0
+PATH_EEF_STEP_MIN_M: 0.012
+PATH_EEF_STEP_MAX_M: 0.050
+PATH_WAYPOINT_SIMPLIFY_ENABLED: false
+PATH_WAYPOINT_SIMPLIFY_MAX_TRANSLATION_MM: 30.0
+PATH_WAYPOINT_SIMPLIFY_MAX_ORIENTATION_DEG: 1.0
+FOLLOW_PATH_CARTESIAN_TIMEOUT_S: 30.0
+FOLLOW_PATH_CARTESIAN_FALLBACK_ENABLED: false
+FOLLOW_PATH_DENSIFY_MAX_TRANSLATION_MM: 1.0
+FOLLOW_PATH_DENSIFY_MAX_ORIENTATION_DEG: 2.0
+
+# Paint unwind is intentional because the hose/camera cable can wrap around
+# Joint_6 unwind uses rotational direct IK to avoid MoveIt Cartesian planning.
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: -1.0
+# RZ is considered restored only on its zero-degree active-tool/workobject
+# branch. Keep a small deadband for live-pose noise, not a partial-turn skip.
+EXECUTOR_POST_UNWIND_MIN_DELTA_RAD: 0.02
+# Keep a full cable-relief turn in one controller goal so Joint_6 does not
+# decelerate to a stop halfway through the unwind.
+EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 360.0
+EXECUTOR_POST_UNWIND_USE_DIRECT_IK: true
+EXECUTOR_POST_UNWIND_DIRECT_IK_FALLBACK_CARTESIAN: true
+EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG: 4.0
+# TOTG is deterministic here and avoids the Ruckig fallback observed on the
+# forced full-turn Joint_6 branch. The unwind dynamics guard still enforces
+# the configured Joint_6 velocity and acceleration limits afterwards.
+EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER: 'TOTG'
+
+TOOL_REGISTRY:
+  TOOL_0:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  TOOL_1:
+  - 0.0059329690067
+  - 0.273760275194
+  - 168.550614477
+  - 0
+  - 0
+  - 0
+TOOL_ID_MAP:
+  0: TOOL_0
+  1: TOOL_1
+# Use Pilz CommandPlanner LIN for single-target /move/linear requests.
+MOVE_LIN_STRATEGY: cartesian_path
