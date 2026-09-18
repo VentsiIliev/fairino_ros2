@@ -26,6 +26,9 @@ joint_state_broadcaster:
       - position
       - velocity
       - effort
+      - following_error_actual
+      - torque_sensor
+      - motor_actual_current
       - statusword
       - error_code
       - mode_display

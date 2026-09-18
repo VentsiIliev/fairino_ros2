@@ -108,4 +108,3 @@ def plan_ordered_path_segment(
         "acc_scale": params.acceleration_scale,
         "optimization_deferred": False,
     }
-

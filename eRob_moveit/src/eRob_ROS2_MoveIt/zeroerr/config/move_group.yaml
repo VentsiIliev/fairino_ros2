@@ -13,7 +13,7 @@ move_group:
     planning_scene_monitor.publish_robot_description_semantic: true
     planning_scene_monitor.publish_planning_scene_hz: 10.0
 
-    robot_description_planning.default_robot_padding: 0.01
+    robot_description_planning.default_robot_padding: 0.010
     robot_description_planning.default_robot_scale: 1.0
 
     # Trajectory execution parameters
@@ -77,4 +77,3 @@ move_group:
         default_planner_request_adapters/FixStartStateBounds
         default_planner_request_adapters/FixStartStateCollision
         default_planner_request_adapters/FixStartStatePathConstraints
-

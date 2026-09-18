@@ -1365,12 +1365,7 @@ class MoveItRobotBackend(IRobotBackend):
         target_positions[joint_index] += delta_rad
 
         vel_percent = self.node.trajectory_executor._clamp_percentage(vel)
-        rate_limits = dict(getattr(config, "SINGLE_TARGET_JOINT_RATE_LIMITS_RAD_S", {}) or {})
-        max_rate = float(rate_limits.get(joint_name, rate_limits.get(joint_name.lower(), 1.2)) or 1.2)
-        max_rate = max(0.05, max_rate * max(0.01, vel_percent / 100.0))
-        duration_s = max(0.2, abs(delta_rad) / max_rate)
-        sec = int(duration_s)
-        nanosec = int((duration_s - sec) * 1_000_000_000)
+        acc_percent = self.node.trajectory_executor._clamp_percentage(acc)
 
         traj = JointTrajectory()
         traj.joint_names = joint_names
@@ -1386,15 +1381,47 @@ class MoveItRobotBackend(IRobotBackend):
         end_pt.positions = target_positions
         end_pt.velocities = [0.0] * len(joint_names)
         end_pt.accelerations = [0.0] * len(joint_names)
-        end_pt.time_from_start = Duration(sec=sec, nanosec=nanosec)
+        end_pt.time_from_start = Duration(sec=1, nanosec=0)
         traj.points = [start_pt, end_pt]
+
+        try:
+            from moveit_msgs.msg import RobotTrajectory
+            from motion.planning.segment_planning import _optimize_sync
+
+            robot_trajectory = RobotTrajectory()
+            robot_trajectory.joint_trajectory = traj
+            planning_node = getattr(self.node, "planner_context", self.node)
+            optimized, optimize_elapsed = _optimize_sync(
+                planning_node,
+                robot_trajectory,
+                max(0.01, vel_percent / 100.0),
+                max(0.01, acc_percent / 100.0),
+            )
+            traj = optimized.joint_trajectory
+        except Exception as exc:
+            self.node.get_logger().error(
+                f"[JOINT_JOG] Joint-limit time parameterization failed: {exc}"
+            )
+            return -1
+
+        duration = traj.points[-1].time_from_start
+        duration_s = float(duration.sec) + float(duration.nanosec) * 1e-9
 
         self.node.get_logger().info(
             f"[JOINT_JOG] {joint_name} {start_positions[joint_index]:.6f} -> "
             f"{target_positions[joint_index]:.6f} rad step={float(step):.3f}deg "
-            f"direction={int(direction_value):+d} vel={vel_percent:.1f}% duration={duration_s:.3f}s"
+            f"direction={int(direction_value):+d} vel={vel_percent:.1f}% "
+            f"acc={acc_percent:.1f}% duration={duration_s:.3f}s "
+            f"points={len(traj.points)} optimize_s={optimize_elapsed:.3f}"
         )
-        self.node.trajectory_executor.send_trajectory_to_controller(traj)
+        preserve_j6_full_turn = (
+            joint_name == "Joint_6"
+            and math.isclose(abs(float(step)), 360.0, rel_tol=0.0, abs_tol=1e-6)
+        )
+        self.node.trajectory_executor.send_trajectory_to_controller(
+            traj,
+            preserve_explicit_wrap=preserve_j6_full_turn,
+        )
 
         if blocking:
             return self._wait_for_motion_idle_result(
@@ -1460,6 +1487,9 @@ class MoveItRobotBackend(IRobotBackend):
         acc_percent = self.node.trajectory_executor._clamp_percentage(acc)
         vel_scale = vel_percent / 100.0
         acc_scale = acc_percent / 100.0
+        verify_tolerance = max(0.0, float(
+            getattr(config, 'EXECUTOR_POST_UNWIND_VERIFY_TOL_RAD', 0.12)
+        ))
         max_step_deg = max(1.0, abs(float(getattr(config, 'EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG', 180.0))))
         segment_count = max(1, int(math.ceil(abs(total_delta_deg) / max_step_deg)))
         async_infof(
@@ -1525,6 +1555,29 @@ class MoveItRobotBackend(IRobotBackend):
             )
             if result != 0:
                 return result
+
+            completed_positions = (
+                self.node.trajectory_executor
+                ._get_latest_joint_state_in_trajectory_order(joint_names)
+            )
+            if completed_positions is None:
+                self.node.get_logger().error(
+                    '[UNWIND_J6] Latest joint state unavailable after unwind segment'
+                )
+                return -1
+            completed_value = float(completed_positions[joint_index])
+            completed_error = final_target - completed_value
+            if abs(completed_error) <= verify_tolerance:
+                async_infof(
+                    self.node.get_logger(),
+                    '[UNWIND_J6] Unwind complete after segment {}/{}: '
+                    '{} actual={:.4f}rad target={:.4f}rad error={:.4f}rad '
+                    'verify_tolerance={:.4f}rad; skipping remaining segments',
+                    segment_index, segment_count, joint_name, completed_value,
+                    final_target, completed_error, verify_tolerance,
+                )
+                self.node.last_move_result = 0
+                return 0
 
         check = {
             'joint_names': joint_names,

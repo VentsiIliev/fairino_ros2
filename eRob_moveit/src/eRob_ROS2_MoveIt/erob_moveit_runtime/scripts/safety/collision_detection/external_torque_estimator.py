@@ -171,6 +171,11 @@ class MomentumObserverEstimator:
     def rate(self) -> np.ndarray:
         return self._rate.copy()
 
+    @property
+    def ready(self) -> bool:
+        """False while the stationary model-mismatch bias is being learned."""
+        return self._warmup_done
+
     def update(
         self,
         measured: np.ndarray,
@@ -180,7 +185,9 @@ class MomentumObserverEstimator:
     ):
         mass_matrix = self._model.compute_mass_matrix(positions)
         momentum = mass_matrix @ velocities
-        bias_torque = self._model.compute_bias_torque(positions, velocities)
+        # Chen et al. (2018), Eq. (7): this auxiliary term allows the
+        # generalized-momentum observer to avoid measured acceleration.
+        auxiliary_torque = self._model.compute_observer_auxiliary(positions, velocities)
         now = time.monotonic()
 
         measured_corrected = measured - self._static_bias
@@ -189,11 +196,25 @@ class MomentumObserverEstimator:
             if self._warmup_start is None:
                 self._warmup_start = now
             if np.all(np.abs(velocities) < self._warmup_vel_threshold):
-                self._warmup_samples.append(measured_corrected.copy())
+                # Learn only drive/friction/model bias, preserving the
+                # pose-dependent gravity predicted by the rigid-body model.
+                self._warmup_samples.append(
+                    (measured_corrected - auxiliary_torque).copy()
+                )
             if (now - self._warmup_start) >= self._warmup_sec:
                 if len(self._warmup_samples) >= 20:
                     self._warmup_offset = np.mean(self._warmup_samples, axis=0)
                 self._warmup_done = True
+                self._last_momentum = None
+                self._last_timestamp = None
+            else:
+                # A residual before bias initialization is meaningless and can
+                # create startup false positives. Keep the public output zero.
+                self.expected_torque_history.append(auxiliary_torque.copy())
+                self.external_torque_history.append(self._filtered.copy())
+                self._last_momentum = momentum.copy()
+                self._last_timestamp = now
+                return
 
         measured_final = measured_corrected - self._warmup_offset
 
@@ -203,13 +224,13 @@ class MomentumObserverEstimator:
         else:
             effective_dt = max(now - self._last_timestamp, 1e-6)
             self._momentum_integral += (
-                measured_final - bias_torque - self._observer_residual
+                measured_final - auxiliary_torque - self._observer_residual
             ) * effective_dt
             self._observer_residual = self._observer_gain * (
                 self._momentum_integral - momentum
             )
 
-        tau_expected = bias_torque
+        tau_expected = auxiliary_torque + self._warmup_offset + self._static_bias
         tau_external = self._observer_residual.copy()
 
         self.expected_torque_history.append(tau_expected.copy())
@@ -234,3 +255,11 @@ class MomentumObserverEstimator:
         self._momentum_integral = np.zeros(n)
         self._last_momentum = None
         self._last_timestamp = None
+
+    def restart_warmup(self):
+        """Discard initialization collected before drives were operational."""
+        self.reset()
+        self._warmup_samples = []
+        self._warmup_offset = np.zeros(self._model.num_joints)
+        self._warmup_done = self._warmup_sec <= 0.0
+        self._warmup_start = None

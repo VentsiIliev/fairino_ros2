@@ -42,7 +42,7 @@ def enforce_unwind_joint_dynamics(
         raise ValueError("Unwind velocity and acceleration limits must be positive")
 
     joint_index = joint_names.index(joint_name)
-    interval_velocities: list[float] = []
+    interval_velocities: list[tuple[float, float]] = []
     peak_velocity = 0.0
     peak_acceleration = 0.0
     for previous, current in zip(points, points[1:]):
@@ -53,28 +53,41 @@ def enforce_unwind_joint_dynamics(
             float(current.positions[joint_index])
             - float(previous.positions[joint_index])
         ) / dt
-        interval_velocities.append(velocity)
+        interval_velocities.append((velocity, dt))
         peak_velocity = max(peak_velocity, abs(velocity))
 
-    for previous_velocity, current_velocity, left, right in zip(
-        interval_velocities,
-        interval_velocities[1:],
-        points[1:],
-        points[2:],
-    ):
-        dt = _seconds(right.time_from_start) - _seconds(left.time_from_start)
-        if dt > 1e-9:
+    # Prefer derivatives emitted by the time parameterizer.  A secant velocity
+    # belongs at the midpoint of its interval, not at the interval endpoint;
+    # differencing it over only the following interval can hugely overestimate
+    # acceleration when TOTG produces uneven sample spacing.
+    has_point_velocities = all(
+        joint_index < len(list(getattr(point, "velocities", []) or []))
+        for point in points
+    )
+    has_point_accelerations = all(
+        joint_index < len(list(getattr(point, "accelerations", []) or []))
+        for point in points
+    )
+
+    if not has_point_accelerations:
+        for (previous_velocity, previous_dt), (current_velocity, current_dt) in zip(
+            interval_velocities,
+            interval_velocities[1:],
+        ):
+            midpoint_dt = 0.5 * (previous_dt + current_dt)
+            if midpoint_dt <= 1e-9:
+                continue
             peak_acceleration = max(
                 peak_acceleration,
-                abs(current_velocity - previous_velocity) / dt,
+                abs(current_velocity - previous_velocity) / midpoint_dt,
             )
 
     for point in points:
         velocities = list(getattr(point, "velocities", []) or [])
         accelerations = list(getattr(point, "accelerations", []) or [])
-        if joint_index < len(velocities):
+        if has_point_velocities:
             peak_velocity = max(peak_velocity, abs(float(velocities[joint_index])))
-        if joint_index < len(accelerations):
+        if has_point_accelerations:
             peak_acceleration = max(
                 peak_acceleration,
                 abs(float(accelerations[joint_index])),

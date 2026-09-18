@@ -31,6 +31,13 @@ def _continue_on_success(event, context, *, label, actions):
     """Return follow-up actions only when the process that triggered us succeeded."""
     if event.returncode == 0:
         return actions
+    if event.returncode < 0:
+        return [
+            LogInfo(msg=(
+                f"[ZEROERR] {label} terminated by signal "
+                f"{-event.returncode}; dependent startup canceled"
+            ))
+        ]
     return [
         LogInfo(msg=f"[ZEROERR] {label} failed (exit {event.returncode}); dependent startup stopped")
     ]
@@ -53,6 +60,15 @@ def _after_success(target, label, actions, condition=None):
 
 def generate_launch_description():
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
+    enable_sensorless_collision_monitor = LaunchConfiguration(
+        "enable_sensorless_collision_monitor"
+    )
+    enable_sensorless_collision_gui = LaunchConfiguration(
+        "enable_sensorless_collision_gui"
+    )
+    enable_collision_calibration_runner = LaunchConfiguration(
+        "enable_collision_calibration_runner"
+    )
     use_fake_hardware_value = os.environ.get("ZEROERR_USE_FAKE_HARDWARE", "").strip().lower()
     default_fake_hardware = (
         "true"
@@ -78,6 +94,17 @@ def generate_launch_description():
         planning_pipelines=["pilz_industrial_motion_planner", "ompl", "stomp"],
         default_planning_pipeline="pilz_industrial_motion_planner",
     )
+    collision_padding_m = float(runtime_value(
+        package_path, "MOVEIT_COLLISION_PADDING_M", 0.010))
+    collision_scale = float(runtime_value(
+        package_path, "MOVEIT_COLLISION_SCALE", 1.0))
+    # PlanningSceneMonitor constructs these names by appending `_planning` to
+    # the robot-description parameter name.  Keep them flattened so launch_ros
+    # cannot treat robot_description_planning as a nested parameter value.
+    collision_geometry_parameters = {
+        "robot_description_planning.default_robot_padding": collision_padding_m,
+        "robot_description_planning.default_robot_scale": collision_scale,
+    }
 
     demo_ld = LaunchDescription()
 
@@ -104,6 +131,41 @@ def generate_launch_description():
             "use_rviz",
             default_value="true",
             description="Start RViz",
+        )
+    )
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "enable_sensorless_collision_monitor",
+            default_value=str(
+                bool(runtime_value(
+                    package_path,
+                    "ENABLE_SENSORLESS_COLLISION_MONITOR",
+                    False,
+                ))
+            ).lower(),
+            description="Start the passive sensorless joint-torque collision monitor",
+        )
+    )
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "enable_sensorless_collision_gui",
+            default_value=str(bool(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_GUI_ENABLED",
+                False,
+            ))).lower(),
+            description="Show the read-only sensorless collision status GUI",
+        )
+    )
+    demo_ld.add_action(
+        DeclareLaunchArgument(
+            "enable_collision_calibration_runner",
+            default_value=str(bool(runtime_value(
+                package_path,
+                "COLLISION_CALIBRATION_RUNNER_ENABLED",
+                False,
+            ))).lower(),
+            description="Start the idle-by-default MoveIt-validated calibration runner",
         )
     )
 
@@ -141,6 +203,7 @@ def generate_launch_description():
         parameters=[
             moveit_config.to_dict(),
             move_group_configuration,
+            collision_geometry_parameters,
         ],
         additional_env={"DISPLAY": os.environ.get("DISPLAY", "")},
     )
@@ -179,6 +242,7 @@ def generate_launch_description():
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
+            collision_geometry_parameters,
         ],
     )
 
@@ -327,6 +391,135 @@ def generate_launch_description():
         }],
     )
 
+    sensorless_collision_monitor = Node(
+        package="zeroerr",
+        executable="zeroerr_collision_monitor.py",
+        output="screen",
+        emulate_tty=True,
+        prefix=low_priority_non_rt_prefix,
+        condition=IfCondition(PythonExpression([
+            "'", enable_sensorless_collision_monitor,
+            "' == 'true' and '", use_fake_hardware, "' != 'true'",
+        ])),
+        parameters=[{
+            "slave_count": 6,
+            "poll_period_sec": float(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_MONITOR_PERIOD_SEC",
+                0.01,
+            )),
+            "input_sample_period_sec": 0.0,
+            "print_table": False,
+            "include_gravity": True,
+            "observer_gain": float(runtime_value(
+                package_path, "SENSORLESS_COLLISION_OBSERVER_GAIN", 10.0)),
+            "warmup_sec": float(runtime_value(
+                package_path, "SENSORLESS_COLLISION_WARMUP_SEC", 8.0)),
+            "drive_stable_sec": float(runtime_value(
+                package_path, "SENSORLESS_COLLISION_DRIVE_STABLE_SEC", 2.0)),
+            "urdf_path": urdf_path,
+            "base_link": "base_link",
+            "tip_link": runtime_value(package_path, "COLLISION_TIP_LINK", "tool0"),
+            "num_joints": int(runtime_value(package_path, "NUM_JOINTS", 6)),
+            "collision_config_path": os.path.join(
+                package_path, "config", "collision_monitor_config.json"
+            ),
+            "torque_log_enabled": bool(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_LOG_ENABLED",
+                False,
+            )),
+            "torque_log_path": str(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_LOG_PATH",
+                "/home/ilv/ros2_ws/eRob_moveit/zeroerr_data/collision_detection/collision_training.csv",
+            )),
+            "torque_log_period_sec": float(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_LOG_PERIOD_SEC",
+                0.05,
+            )),
+        }],
+    )
+
+    sensorless_collision_gui = Node(
+        package="zeroerr",
+        executable="zeroerr_collision_status_gui.py",
+        output="screen",
+        prefix=low_priority_non_rt_prefix,
+        condition=IfCondition(PythonExpression([
+            "'", enable_sensorless_collision_monitor,
+            "' == 'true' and '", enable_sensorless_collision_gui,
+            "' == 'true' and '", use_fake_hardware, "' != 'true'",
+        ])),
+    )
+
+    collision_calibration_runner = Node(
+        package="zeroerr",
+        executable="zeroerr_collision_calibration_runner.py",
+        output="screen",
+        emulate_tty=True,
+        prefix=low_priority_non_rt_prefix,
+        condition=IfCondition(enable_collision_calibration_runner),
+        parameters=[{
+            "joint_names": runtime_value(package_path, "JOINT_NAMES", [
+                "Joint_1", "Joint_2", "Joint_3", "Joint_4", "Joint_5", "Joint_6",
+            ]),
+            "planning_group": str(runtime_value(package_path, "PLANNING_GROUP", "manipulator")),
+            "controller_action": str(runtime_value(
+                package_path,
+                "ACTION_FOLLOW_TRAJECTORY",
+                "/manipulator_controller/follow_joint_trajectory",
+            )),
+            "dry_run": bool(runtime_value(
+                package_path, "COLLISION_CALIBRATION_DRY_RUN", True)),
+            "joint_sweep_amplitudes_rad": runtime_value(
+                package_path,
+                "COLLISION_CALIBRATION_JOINT_SWEEP_AMPLITUDES_RAD",
+                [0.15] * 6,
+            ),
+            "sweep_levels": int(runtime_value(
+                package_path, "COLLISION_CALIBRATION_SWEEP_LEVELS", 2)),
+            "coupled_sample_count": int(runtime_value(
+                package_path, "COLLISION_CALIBRATION_COUPLED_SAMPLE_COUNT", 48)),
+            "coupled_amplitude_scale": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_COUPLED_AMPLITUDE_SCALE", 0.35)),
+            "coupled_return_interval": int(runtime_value(
+                package_path, "COLLISION_CALIBRATION_COUPLED_RETURN_INTERVAL", 4)),
+            "base_rotation_sample_count": int(runtime_value(
+                package_path, "COLLISION_CALIBRATION_BASE_ROTATION_SAMPLE_COUNT", 12)),
+            "base_rotation_min_rad": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_BASE_ROTATION_MIN_RAD", -3.0)),
+            "base_rotation_max_rad": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_BASE_ROTATION_MAX_RAD", 3.0)),
+            "max_interpolation_step_rad": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_MAX_INTERPOLATION_STEP_RAD", 0.015)),
+            "velocity_scalings": runtime_value(
+                package_path, "COLLISION_CALIBRATION_VELOCITY_SCALINGS",
+                [0.04, 0.10, 0.20, 0.30, 0.40, 0.55, 0.70, 0.85, 1.00]),
+            "acceleration_scalings": runtime_value(
+                package_path, "COLLISION_CALIBRATION_ACCELERATION_SCALINGS",
+                [0.04, 0.12, 0.30, 0.40, 0.50, 0.65, 0.80, 0.90, 1.00]),
+            "joint_sampling_min_rad": runtime_value(
+                package_path, "COLLISION_CALIBRATION_JOINT_SAMPLING_MIN_RAD",
+                [-3.0, -1.5, -1.8, -2.5, -2.5, -3.0]),
+            "joint_sampling_max_rad": runtime_value(
+                package_path, "COLLISION_CALIBRATION_JOINT_SAMPLING_MAX_RAD",
+                [3.0, 1.5, 1.8, 2.0, 2.5, 3.0]),
+            "settle_time_sec": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_SETTLE_TIME_SEC", 0.35)),
+            "coverage_log_period_sec": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_COVERAGE_LOG_PERIOD_SEC", 0.05)),
+            "coverage_voxel_size_m": float(runtime_value(
+                package_path, "COLLISION_CALIBRATION_COVERAGE_VOXEL_SIZE_M", 0.05)),
+            "output_directory": str(runtime_value(
+                package_path,
+                "COLLISION_CALIBRATION_OUTPUT_DIRECTORY",
+                "/home/ilv/ros2_ws/eRob_moveit/zeroerr_data/collision_detection/calibration_runs",
+            )),
+        }],
+    )
+
     drive_enable_set_spawner = ExecuteProcess(
         cmd=["ros2", "run", "controller_manager", "spawner", "drive_enable_set_controller", "--inactive"],
         condition=UnlessCondition(use_fake_hardware),
@@ -376,6 +569,7 @@ def generate_launch_description():
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
+            collision_geometry_parameters,
         ],
     )
 
@@ -389,6 +583,7 @@ def generate_launch_description():
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
+            collision_geometry_parameters,
         ],
     )
 
@@ -403,6 +598,11 @@ def generate_launch_description():
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
+            collision_geometry_parameters,
+            # Explicit fallback used by the validator itself.  This makes the
+            # calibration safety margin independent of MoveIt parameter-loading
+            # differences between ROS distributions.
+            {"collision_padding_m": collision_padding_m},
         ],
     )
 
@@ -446,7 +646,12 @@ def generate_launch_description():
     demo_ld.add_action(_after_success(
         manipulator_controller_spawner,
         "manipulator_controller spawner",
-        [zeroerr_state_publisher, servo_node],
+        [
+            zeroerr_state_publisher,
+            servo_node,
+            sensorless_collision_monitor,
+            sensorless_collision_gui,
+        ],
     ))
 
     demo_ld.add_action(_after_success(
@@ -490,7 +695,11 @@ def generate_launch_description():
         output="screen",
     )
     demo_ld.add_action(runtime_ready)
-    demo_ld.add_action(_after_success(runtime_ready, "runtime readiness check", [zeroerr_runtime]))
+    demo_ld.add_action(_after_success(
+        runtime_ready,
+        "runtime readiness check",
+        [zeroerr_runtime, collision_calibration_runner],
+    ))
 
     # EtherCAT auxiliary services start after the bus is demonstrably in OP.
     demo_ld.add_action(_after_success(

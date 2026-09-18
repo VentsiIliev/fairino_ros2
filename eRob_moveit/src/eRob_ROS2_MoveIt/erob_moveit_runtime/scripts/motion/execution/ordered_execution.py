@@ -33,9 +33,11 @@ class OrderedControllerExecutionHooks:
     node: Any
     logger: Any
     mark_motion_timing: Callable[..., None]
-    wait_point_match: Callable[[str, Any, Any, str], bool]
+    wait_point_match: Callable[[str, Any, Any, str, float | None], bool]
     send_trajectory: Callable[..., None]
     wait_execution_complete: Callable[[Any, float], Any]
+    intermediate_tolerance_rad: float
+    terminal_tolerance_rad: float
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class OrderedStateMatchHooks:
     mark_motion_timing: Callable[..., None]
     enabled: bool
     tolerance_rad: float
+    end_tolerance_rad: float
     timeout_s: float
 
 
@@ -118,6 +121,10 @@ def build_ordered_execution_hook_bundle(
             0.0,
             float(getattr(config_obj, "EXECUTOR_ORDERED_START_MATCH_TOL_RAD", 0.02)),
         ),
+        end_tolerance_rad=max(
+            0.0,
+            float(getattr(config_obj, "EXECUTOR_ORDERED_END_MATCH_TOL_RAD", 0.0005)),
+        ),
         timeout_s=max(
             0.0,
             float(getattr(config_obj, "EXECUTOR_ORDERED_START_MATCH_TIMEOUT_S", 0.35)),
@@ -127,15 +134,24 @@ def build_ordered_execution_hook_bundle(
         node=node,
         logger=logger,
         mark_motion_timing=mark_motion_timing,
-        wait_point_match=lambda label, trajectory, point, phase: wait_ordered_trajectory_point_match(
+        wait_point_match=lambda label, trajectory, point, phase, tolerance_override=None: wait_ordered_trajectory_point_match(
             hooks=state_match_hooks,
             label=label,
             joint_trajectory=trajectory,
             point=point,
             phase=phase,
+            tolerance_override=tolerance_override,
         ),
         send_trajectory=send_trajectory,
         wait_execution_complete=wait_execution_complete,
+        intermediate_tolerance_rad=max(
+            0.0,
+            float(getattr(config_obj, "EXECUTOR_ORDERED_INTERMEDIATE_MATCH_TOL_RAD", 0.002)),
+        ),
+        terminal_tolerance_rad=max(
+            0.0,
+            float(getattr(config_obj, "EXECUTOR_ORDERED_END_MATCH_TOL_RAD", 0.0005)),
+        ),
     )
     unwind_finalization_hooks = OrderedUnwindFinalizationHooks(
         node=node,
@@ -373,6 +389,7 @@ def wait_ordered_trajectory_point_match(
     joint_trajectory: Any,
     point: Any,
     phase: str,
+    tolerance_override: float | None = None,
 ) -> bool:
     """Wait for live state to match an ordered-chain trajectory point."""
 
@@ -388,7 +405,12 @@ def wait_ordered_trajectory_point_match(
         )
         return True
 
-    tolerance_rad = max(0.0, float(hooks.tolerance_rad))
+    configured_tolerance = (
+        tolerance_override
+        if tolerance_override is not None
+        else hooks.end_tolerance_rad if phase == "end" else hooks.tolerance_rad
+    )
+    tolerance_rad = max(0.0, float(configured_tolerance))
     timeout_s = max(0.0, float(hooks.timeout_s))
     hooks.mark_motion_timing(
         hooks.node,
@@ -630,14 +652,26 @@ def execute_ordered_timed_trajectory(
 
     trajectory = planned_segment["trajectory"]
     label = planned_segment["label"]
+    logical_segment_count = max(
+        1,
+        int(planned_segment.get("logical_segment_count", 1) or 1),
+    )
+    is_terminal_trajectory = index + logical_segment_count - 1 >= total
+    end_tolerance_rad = (
+        hooks.terminal_tolerance_rad
+        if is_terminal_trajectory
+        else hooks.intermediate_tolerance_rad
+    )
     hooks.logger.info(
         f"[OrderedChain] Sending planned segment {index}/{total} label='{label}' "
         f"type={segment_type} points={len(trajectory.points)} duration_s={timing.duration_s:.3f} "
         f"controller_goal_tolerance_s={timing.controller_goal_tolerance_s:.3f} "
         f"wait_timeout_s={timing.wait_timeout_s:.3f} "
+        f"end_tolerance_rad={end_tolerance_rad:.4f} "
+        f"terminal={is_terminal_trajectory} "
         f"plan_s={planned_segment['plan_elapsed_s']:.3f}"
     )
-    if not hooks.wait_point_match(label, trajectory, trajectory.points[0], "start"):
+    if not hooks.wait_point_match(label, trajectory, trajectory.points[0], "start", None):
         return motion_error_result
 
     hooks.mark_motion_timing(
@@ -647,7 +681,11 @@ def execute_ordered_timed_trajectory(
         label=planned_segment.get("label"),
         points=len(getattr(trajectory, "points", []) or []),
     )
-    hooks.send_trajectory(hooks.node, trajectory)
+    hooks.send_trajectory(
+        hooks.node,
+        trajectory,
+        goal_position_tolerance_rad=end_tolerance_rad,
+    )
 
     hooks.mark_motion_timing(
         hooks.node,
@@ -670,7 +708,13 @@ def execute_ordered_timed_trajectory(
             f"[OrderedChain] Controller completed segment {index}/{total} "
             f"label='{label}', verifying live end state before next segment"
         )
-        if not hooks.wait_point_match(label, trajectory, trajectory.points[-1], "end"):
+        if not hooks.wait_point_match(
+            label,
+            trajectory,
+            trajectory.points[-1],
+            "end",
+            end_tolerance_rad,
+        ):
             result = motion_error_result
     return result
 

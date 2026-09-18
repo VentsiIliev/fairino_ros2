@@ -537,6 +537,7 @@ class RuntimeApi:
                 name=payload.get("name"),
                 transform=payload.get("transform"),
                 persist=bool(payload.get("persist", False)),
+                collision_profile=payload.get("collision_profile"),
             )
             return ApiResponse({"success": True, **snapshot})
         except ValueError as exc:

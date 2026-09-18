@@ -651,6 +651,9 @@ private:
     void applyRuckig(const std::shared_ptr<ApplyRuckig::Request> request,
                      std::shared_ptr<ApplyRuckig::Response> response)
     {
+        response->success = false;
+        response->optimizer_applied = "RUCKIG";
+        response->fallback_used = false;
         RCLCPP_DEBUG(this->get_logger(), "📥 Received Ruckig request with %zu points",
                      request->trajectory.points.size());
 
@@ -729,6 +732,10 @@ private:
         {
             RCLCPP_ERROR(this->get_logger(), "❌ Ruckig Smoothing FAILED - falling back to seeded TOTG trajectory");
             response->trajectory = seeded_msg;
+            response->success = true;
+            response->optimizer_applied = "TOTG";
+            response->fallback_used = true;
+            response->message = "Ruckig failed; returned TOTG fallback";
             return;
         }
 
@@ -739,6 +746,10 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "⚠️ Ruckig output deemed implausible - falling back to seeded TOTG trajectory");
             response->trajectory = seeded_msg;
+            response->success = true;
+            response->optimizer_applied = "TOTG";
+            response->fallback_used = true;
+            response->message = "Ruckig result rejected; returned TOTG fallback";
             return;
         }
 
@@ -764,8 +775,14 @@ private:
 //             logTrajectory(response->trajectory, this->get_logger(), true);
 
             response->trajectory = seeded_msg;
+            response->success = true;
+            response->optimizer_applied = "TOTG";
+            response->fallback_used = true;
+            response->message = "Ruckig validation failed; returned TOTG fallback";
             return;
         }
+        response->success = true;
+        response->message = "ok";
 
         RCLCPP_DEBUG(this->get_logger(), "✅ Trajectory validated successfully");
 //         logTrajectory(response->trajectory, this->get_logger(), false);

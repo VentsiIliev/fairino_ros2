@@ -70,6 +70,9 @@ private:
     void applyIPP(const std::shared_ptr<ApplyIPP::Request> request,
                   std::shared_ptr<ApplyIPP::Response> response)
     {
+        response->success = false;
+        response->optimizer_applied = "TOTG";
+        response->fallback_used = false;
         RCLCPP_INFO(this->get_logger(), "📥 Received TOTG request with %zu points",
                     request->trajectory.points.size());
 
@@ -92,12 +95,15 @@ private:
 
         if (!success)
         {
+            response->message = "TOTG time parameterization failed";
             RCLCPP_ERROR(this->get_logger(), "❌ TOTG Time Parameterization FAILED - returning empty trajectory");
             // Return empty trajectory on failure
             response->trajectory = moveit_msgs::msg::RobotTrajectory();
         }
         else
         {
+            response->success = true;
+            response->message = "ok";
             RCLCPP_INFO(this->get_logger(), "✅ TOTG Time Parameterization succeeded");
 
             // Convert back to RobotTrajectory message (deep-copy safe!)

@@ -540,12 +540,15 @@ class LocalRuntimeGateway(RuntimeGateway):
         self.node.set_tool(tool_name)
         return str(getattr(self.node, "active_tool_name", tool_name))
 
-    def update_tool_registry(self, tool_id, name=None, transform=None, persist=False) -> dict:
+    def update_tool_registry(
+        self, tool_id, name=None, transform=None, persist=False, collision_profile=None
+    ) -> dict:
         snapshot = config.update_tool_registry(
             tool_id=tool_id,
             name=name,
             transform=transform,
             persist=bool(persist),
+            collision_profile=collision_profile,
         )
         resolved = config.resolve_tool_name(tool_id)
         if getattr(self.node, "active_tool_name", None) == resolved:

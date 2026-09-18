@@ -341,7 +341,10 @@ class RuntimeGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update_tool_registry(self, tool_id: int, name: str | None, transform: Any, persist: bool) -> dict:
+    def update_tool_registry(
+        self, tool_id: int, name: str | None, transform: Any, persist: bool,
+        collision_profile: str | None = None,
+    ) -> dict:
         raise NotImplementedError
 
     @abstractmethod

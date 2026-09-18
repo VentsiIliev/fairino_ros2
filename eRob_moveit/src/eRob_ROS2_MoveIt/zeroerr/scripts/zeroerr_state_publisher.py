@@ -19,6 +19,7 @@ setproctitle("zeroerr_state_publisher")
 from typing import Optional
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from erob_state_publisher.base import CartesianPublisherBase
 from geometry_msgs.msg import PoseStamped
 import tf2_ros
@@ -85,7 +86,7 @@ def main(args=None) -> None:
     node = ZeroErrStatePublisher()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

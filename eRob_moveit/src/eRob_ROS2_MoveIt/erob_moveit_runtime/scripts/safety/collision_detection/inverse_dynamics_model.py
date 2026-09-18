@@ -19,6 +19,77 @@ except ImportError:
     KDL_AVAILABLE = False
 
 
+def _vector(values):
+    values = values or [0.0, 0.0, 0.0]
+    return PyKDL.Vector(float(values[0]), float(values[1]), float(values[2]))
+
+
+def _frame(origin):
+    if origin is None:
+        return PyKDL.Frame.Identity()
+    xyz = getattr(origin, "xyz", None) or [0.0, 0.0, 0.0]
+    rpy = getattr(origin, "rpy", None) or [0.0, 0.0, 0.0]
+    return PyKDL.Frame(
+        PyKDL.Rotation.RPY(float(rpy[0]), float(rpy[1]), float(rpy[2])),
+        _vector(xyz),
+    )
+
+
+def _inertia(link):
+    inertial = getattr(link, "inertial", None)
+    if inertial is None:
+        return PyKDL.RigidBodyInertia()
+    tensor = inertial.inertia
+    rotational = PyKDL.RotationalInertia(
+        tensor.ixx, tensor.iyy, tensor.izz,
+        tensor.ixy, tensor.ixz, tensor.iyz,
+    )
+    origin = _frame(inertial.origin)
+    body = PyKDL.RigidBodyInertia(float(inertial.mass), origin.p, rotational)
+    return origin.M * body
+
+
+def _joint(urdf_joint):
+    origin = _frame(urdf_joint.origin)
+    if urdf_joint.type in ("revolute", "continuous"):
+        return PyKDL.Joint(
+            urdf_joint.name, origin.p, origin.M * _vector(urdf_joint.axis),
+            PyKDL.Joint.RotAxis,
+        )
+    if urdf_joint.type == "prismatic":
+        return PyKDL.Joint(
+            urdf_joint.name, origin.p, origin.M * _vector(urdf_joint.axis),
+            PyKDL.Joint.TransAxis,
+        )
+    return PyKDL.Joint(urdf_joint.name, PyKDL.Joint.Fixed)
+
+
+def _tree_from_urdf(robot):
+    """Small Jazzy-compatible replacement for the unavailable kdl_parser_py."""
+    child_links = {joint.child for joint in robot.joints}
+    root_names = [link.name for link in robot.links if link.name not in child_links]
+    if len(root_names) != 1:
+        raise RuntimeError(f"URDF must have one root link, found {root_names}")
+    tree = PyKDL.Tree(root_names[0])
+    links = {link.name: link for link in robot.links}
+    children = {}
+    for joint in robot.joints:
+        children.setdefault(joint.parent, []).append(joint)
+
+    def add(parent):
+        for urdf_joint in children.get(parent, []):
+            child = links[urdf_joint.child]
+            segment = PyKDL.Segment(
+                child.name, _joint(urdf_joint), _frame(urdf_joint.origin), _inertia(child)
+            )
+            if not tree.addSegment(segment, parent):
+                raise RuntimeError(f"Failed to add KDL segment {child.name}")
+            add(child.name)
+
+    add(root_names[0])
+    return tree
+
+
 class InverseDynamicsModel(ABC):
     """Abstract interface for inverse dynamics computation."""
 
@@ -108,20 +179,12 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
 
     def _init_kdl(self, urdf_path, urdf_string, base_link, tip_link, gravity):
         """Initialize KDL chain and inverse dynamics solver from URDF."""
-        from kdl_parser_py import urdf as kdl_urdf
-        from lxml import etree
-
         if urdf_string:
             robot = URDF.from_xml_string(urdf_string)
         else:
-            with open(urdf_path, 'rb') as f:
-                urdf_bytes = f.read()
-            node = etree.fromstring(urdf_bytes)
-            robot = URDF.from_xml_string(etree.tostring(node, encoding='unicode'))
+            robot = URDF.from_xml_file(urdf_path)
 
-        success, tree = kdl_urdf.treeFromUrdfModel(robot)
-        if not success:
-            raise RuntimeError("Failed to build KDL tree from URDF")
+        tree = _tree_from_urdf(robot)
 
         self.kdl_chain = tree.getChain(base_link, tip_link)
 
@@ -220,3 +283,28 @@ class KDLInverseDynamicsModel(InverseDynamicsModel):
             return np.zeros(self._num_joints)
 
         return np.array([coriolis[i] + gravity[i] for i in range(self._num_joints)])
+
+    def compute_observer_auxiliary(
+        self,
+        positions: np.ndarray,
+        velocities: np.ndarray,
+        finite_difference_rad: float = 1.0e-5,
+    ) -> np.ndarray:
+        """Compute paper Eq. (7): a_i=g_i-0.5*dq.T*dM/dq_i*dq."""
+        q = PyKDL.JntArray(self._num_joints)
+        gravity = PyKDL.JntArray(self._num_joints)
+        for i in range(self._num_joints):
+            q[i] = positions[i]
+        if self.dyn_solver.JntToGravity(q, gravity) < 0:
+            raise RuntimeError("KDL gravity solve failed")
+        out = np.array([gravity[i] for i in range(self._num_joints)])
+        for i in range(self._num_joints):
+            q_plus = np.array(positions, dtype=float)
+            q_minus = np.array(positions, dtype=float)
+            q_plus[i] += finite_difference_rad
+            q_minus[i] -= finite_difference_rad
+            derivative = (
+                self.compute_mass_matrix(q_plus) - self.compute_mass_matrix(q_minus)
+            ) / (2.0 * finite_difference_rad)
+            out[i] -= 0.5 * float(velocities @ derivative @ velocities)
+        return out

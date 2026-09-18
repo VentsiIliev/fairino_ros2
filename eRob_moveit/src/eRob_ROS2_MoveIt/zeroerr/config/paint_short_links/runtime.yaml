@@ -8,7 +8,7 @@ DEFAULT_WORKOBJECT:
 - 0
 - 0
 - 0
-- 72
+- 0
 WORKOBJECT_REGISTRY:
   WOBJ_0:
   - 0
@@ -18,12 +18,12 @@ WORKOBJECT_REGISTRY:
   - 0
   - 0
   WOBJ_1:
-  - -280.642435642
-  - -59.2869787188
-  - 0.0616797868058
-  - 0
-  - 0
-  - 72.1797016725
+  - -107.090772651
+  - 198.305450303
+  - -0.217862949533
+  - -0.0616869433764
+  - 0.0565453943087
+  - 88.0107073244
 WORKOBJECT_ID_MAP:
   0: WOBJ_0
   1: WOBJ_1
@@ -55,6 +55,14 @@ ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
 - tool0
 - tcp
 - Link_6
+TOOL_COLLISION_PROFILES:
+  calibration_tool:
+    radius_m: 0.0325
+    length_m: 0.17
+    origin: [0, 0, -85, 0, 0, 0]
+    use_active_tool_transform: true
+TOOL_COLLISION_PROFILE_MAP:
+  TOOL_1: calibration_tool
 
 # Disabled because mounting_surface now has a 12-box URDF collision model that
 # preserves its openings. The legacy world box obscures that model in RViz and
@@ -144,14 +152,22 @@ TOOL_REGISTRY:
   - 0
   - 0
   TOOL_1:
-  - 0.0059329690067
-  - 0.273760275194
-  - 168.550614477
+  - -0.21475976365
+  - 1.47669577064
+  - 123.632494789
   - 0
   - 0
+  - -16.7
+  TOOL_2:
+  - -0.21475976365
+  - 1.47669577064
+  - 135.707494789
   - 0
+  - 0
+  - -16.7
 TOOL_ID_MAP:
   0: TOOL_0
   1: TOOL_1
+  2: TOOL_2
 # Use Pilz CommandPlanner LIN for single-target /move/linear requests.
 MOVE_LIN_STRATEGY: cartesian_path

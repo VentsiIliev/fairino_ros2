@@ -33,6 +33,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err1">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>
@@ -57,6 +60,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err2">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>
@@ -81,6 +87,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err3">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>
@@ -105,6 +114,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err4">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>
@@ -129,6 +141,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err5">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>
@@ -153,6 +168,9 @@
                     <state_interface name="statusword"/>
                     <state_interface name="error_code"/>
                     <state_interface name="mode_display"/>
+                    <state_interface name="following_error_actual"/>
+                    <state_interface name="torque_sensor"/>
+                    <state_interface name="motor_actual_current"/>
                     <ec_module name="zero_err6">
                         <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
                         <param name="alias">0</param>

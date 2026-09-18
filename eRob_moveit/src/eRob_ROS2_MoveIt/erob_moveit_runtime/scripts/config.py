@@ -177,11 +177,13 @@ DEFAULTS = {
     'EXECUTOR_ORDERED_FINAL_UNWIND_LIVE_EXECUTION': True,
     'EXECUTOR_ORDERED_START_MATCH_ENABLED': True,
     'EXECUTOR_ORDERED_START_MATCH_TOL_RAD': 0.02,
+    'EXECUTOR_ORDERED_INTERMEDIATE_MATCH_TOL_RAD': 0.002,
+    'EXECUTOR_ORDERED_END_MATCH_TOL_RAD': 0.0005,
     'EXECUTOR_ORDERED_START_MATCH_TIMEOUT_S': 0.35,
     'TRAJ_METRICS_ENABLED': False,
     'TRAJ_METRICS_FK_SAMPLE_LIMIT': 80,
     'TRAJ_METRICS_FK_TIMEOUT_S': 0.25,
-    'SINGLE_TARGET_JOINT_RATE_LIMITS_RAD_S': {'Joint_6': 1.2, 'j6': 1.2},
+    'SINGLE_TARGET_JOINT_RATE_LIMITS_RAD_S': {'Joint_6': 3.0, 'j6': 3.0},
     'OPTIMIZER_START_ALIGN_TOL_RAD': 0.002,
     'OPTIMIZER_START_MERGE_TOL_RAD': 0.002,
     'PATH_APPROACH_THRESHOLD_MM': 100.0,
@@ -538,6 +540,12 @@ def get_tool_registry_snapshot() -> dict[str, Any]:
             int(tool_id): str(name)
             for tool_id, name in dict(TOOL_ID_MAP).items()
         },
+        'tool_collision_profile_map': dict(
+            _CONFIG.get('TOOL_COLLISION_PROFILE_MAP', {}) or {}
+        ),
+        'tool_collision_profiles': dict(
+            _CONFIG.get('TOOL_COLLISION_PROFILES', {}) or {}
+        ),
         'active_runtime_config_path': _CONFIG.get('_ACTIVE_RUNTIME_CONFIG_PATH'),
     }
 
@@ -579,7 +587,10 @@ def _validate_tool_name(name: str) -> str:
     return cleaned
 
 
-def update_tool_registry(tool_id: int, name: str | None, transform, persist: bool = False) -> dict[str, Any]:
+def update_tool_registry(
+    tool_id: int, name: str | None, transform, persist: bool = False,
+    collision_profile: str | None = None,
+) -> dict[str, Any]:
     try:
         resolved_tool_id = int(tool_id)
     except (TypeError, ValueError):
@@ -595,6 +606,18 @@ def update_tool_registry(tool_id: int, name: str | None, transform, persist: boo
     TOOL_ID_MAP[resolved_tool_id] = tool_name
     _CONFIG['TOOL_REGISTRY'] = TOOL_REGISTRY
     _CONFIG['TOOL_ID_MAP'] = TOOL_ID_MAP
+    if collision_profile is not None:
+        profile_name = str(collision_profile or '').strip()
+        profiles = dict(_CONFIG.get('TOOL_COLLISION_PROFILES', {}) or {})
+        if profile_name and profile_name not in profiles:
+            raise ValueError(f'unknown tool collision profile {profile_name!r}')
+        profile_map = dict(_CONFIG.get('TOOL_COLLISION_PROFILE_MAP', {}) or {})
+        if profile_name:
+            profile_map[tool_name] = profile_name
+        else:
+            profile_map.pop(tool_name, None)
+        _CONFIG['TOOL_COLLISION_PROFILE_MAP'] = profile_map
+        globals()['TOOL_COLLISION_PROFILE_MAP'] = profile_map
 
     if persist:
         _persist_tool_registry()
@@ -674,6 +697,9 @@ def _persist_tool_registry() -> None:
     text = path.read_text(encoding='utf-8') if path.exists() else ''
     text = _replace_top_level_yaml_block(text, 'TOOL_REGISTRY', _format_tool_registry_block())
     text = _replace_top_level_yaml_block(text, 'TOOL_ID_MAP', _format_tool_id_map_block())
+    text = _replace_top_level_yaml_block(
+        text, 'TOOL_COLLISION_PROFILE_MAP', _format_tool_collision_profile_map_block()
+    )
     path.write_text(text, encoding='utf-8')
 
 
@@ -701,6 +727,15 @@ def _format_tool_id_map_block() -> list[str]:
     lines = ['TOOL_ID_MAP:']
     for tool_id, name in dict(TOOL_ID_MAP).items():
         lines.append(f'  {int(tool_id)}: {name}')
+    return lines
+
+
+def _format_tool_collision_profile_map_block() -> list[str]:
+    lines = ['TOOL_COLLISION_PROFILE_MAP:']
+    for tool_name, profile_name in dict(
+        _CONFIG.get('TOOL_COLLISION_PROFILE_MAP', {}) or {}
+    ).items():
+        lines.append(f'  {tool_name}: {profile_name}')
     return lines
 
 

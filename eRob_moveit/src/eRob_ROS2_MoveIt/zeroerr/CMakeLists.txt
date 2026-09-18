@@ -34,6 +34,11 @@ install(PROGRAMS
   scripts/zeroerr_runtime.py
   scripts/disk_pose_tuner.py
   scripts/mounting_surface_pose_tuner.py
+  scripts/zeroerr_collision_status_gui.py
+  scripts/zeroerr_collision_calibration_runner.py
+  scripts/zeroerr_calibration_coverage_plot.py
+  scripts/zeroerr_dynamic_threshold_fit.py
+  scripts/zeroerr_collision_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

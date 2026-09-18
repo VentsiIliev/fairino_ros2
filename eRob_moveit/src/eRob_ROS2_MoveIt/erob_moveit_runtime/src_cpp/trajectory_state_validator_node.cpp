@@ -82,6 +82,8 @@ public:
     TrajectoryStateValidatorNode()
         : Node("trajectory_state_validator")
     {
+        collision_padding_m_ = declare_parameter<double>(
+            "collision_padding_m", 0.0);
         RCLCPP_INFO(get_logger(), "Trajectory state validator starting...");
     }
 
@@ -121,6 +123,15 @@ public:
                 "Could not request initial planning scene; continuing with monitored scene updates");
         }
 
+        // Apply an explicit local padding as well as the normal MoveIt
+        // robot_description_planning parameter.  The local validation service
+        // is the final safety gate for calibration trajectories.
+        if (collision_padding_m_ > 0.0)
+        {
+            planning_scene_monitor_->getPlanningScene()
+                ->getCollisionEnvNonConst()->setPadding(collision_padding_m_);
+        }
+
         service_ = create_service<ValidateTrajectoryStates>(
             "/validate_trajectory_states",
             [this](
@@ -132,7 +143,9 @@ public:
 
         RCLCPP_INFO(
             get_logger(),
-            "Trajectory state validator ready");
+            "Trajectory state validator ready (robot padding=%.4f m, scale=%.3f)",
+            std::max(collision_padding_m_, planning_scene_monitor_->getDefaultRobotPadding()),
+            planning_scene_monitor_->getDefaultRobotScale());
     }
 
 private:
@@ -148,6 +161,7 @@ private:
     robot_model_loader::RobotModelLoaderPtr loader_;
     moveit::core::RobotModelPtr model_;
     planning_scene_monitor::PlanningSceneMonitorPtr planning_scene_monitor_;
+    double collision_padding_m_ = 0.0;
 
     void fail(
         const std::shared_ptr<ValidateTrajectoryStates::Response>& response,

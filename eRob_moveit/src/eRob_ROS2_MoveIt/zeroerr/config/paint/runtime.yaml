@@ -55,6 +55,14 @@ ACTIVE_TOOL_COLLISION_TOUCH_LINKS:
 - tool0
 - tcp
 - Link_6
+TOOL_COLLISION_PROFILES:
+  calibration_tool:
+    radius_m: 0.0325
+    length_m: 0.17
+    origin: [0, 0, -85, 0, 0, 0]
+    use_active_tool_transform: true
+TOOL_COLLISION_PROFILE_MAP:
+  TOOL_1: calibration_tool
 
 # Disabled because mounting_surface now has a 12-box URDF collision model that
 # preserves its openings. The legacy world box obscures that model in RViz and

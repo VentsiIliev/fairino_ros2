@@ -7,3 +7,7 @@ float64 max_acceleration_scaling
 ---
 # Response: smoothed trajectory (using RobotTrajectory for reliable deep-copy)
 moveit_msgs/RobotTrajectory trajectory
+bool success
+string optimizer_applied
+bool fallback_used
+string message

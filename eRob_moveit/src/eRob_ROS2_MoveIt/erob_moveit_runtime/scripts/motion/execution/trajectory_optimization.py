@@ -259,7 +259,7 @@ def apply_ruckig(robot_controller, trajectory, vel_scaling=None, acc_scaling=Non
         callback(trajectory)
 
 
-def _handle_apply_ipp_response(robot_controller, fut, trajectory, callback, tag):
+def _handle_apply_ipp_response(robot_controller, fut, trajectory, callback, tag, required_optimizer=None):
     try:
         response = fut.result()
 
@@ -267,6 +267,16 @@ def _handle_apply_ipp_response(robot_controller, fut, trajectory, callback, tag)
             robot_controller.get_logger().error(f'{tag} ✗ Response is None')
             if callback: callback(None)
             return
+        if required_optimizer is not None:
+            applied = str(getattr(response, "optimizer_applied", "") or "").upper()
+            fallback_used = bool(getattr(response, "fallback_used", False))
+            if applied != required_optimizer or fallback_used:
+                robot_controller.get_logger().error(
+                    f'{tag} strict optimizer requirement failed: required={required_optimizer} '
+                    f'applied={applied or "unknown"} fallback={fallback_used}'
+                )
+                if callback: callback(None)
+                return
 
         if not hasattr(response, 'trajectory'):
             robot_controller.get_logger().error(f'{tag} ✗ Response has no trajectory attribute')
@@ -308,7 +318,8 @@ def _handle_apply_ipp_response(robot_controller, fut, trajectory, callback, tag)
         if callback: callback(None)
 
 
-def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None):
+def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_VEL_SCALING, acc_scaling=cfg.DEFAULT_ACC_SCALING, callback=None,
+                         strict=False):
     """Call the Ruckig service for jerk-limited trajectory smoothing (ASYNC).
 
     This uses the C++ ruckig_helper node which leverages MoveIt's built-in Ruckig integration.
@@ -324,6 +335,11 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
     robot_controller.get_logger().info('[Ruckig] Checking if Ruckig service is available...')
 
     def _fallback_to_totg(reason: str):
+        if strict:
+            robot_controller.get_logger().error(f'[Ruckig] Strict mode rejects fallback: {reason}')
+            if callback:
+                callback(None)
+            return
         fallback_vel, fallback_acc, reduced = _compute_reduced_fallback_scaling(
             vel_scaling,
             acc_scaling,
@@ -378,7 +394,8 @@ def apply_ruckig_service(robot_controller, trajectory, vel_scaling=cfg.DEFAULT_V
                 callback(result)
 
         _handle_apply_ipp_response(
-            robot_controller, f, trajectory, _callback_with_fallback, '[Ruckig]')
+            robot_controller, f, trajectory, _callback_with_fallback, '[Ruckig]',
+            required_optimizer="RUCKIG" if strict else None)
 
     future = robot_controller.ruckig_client.call_async(request)
     future.add_done_callback(_on_done)

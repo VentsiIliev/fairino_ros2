@@ -1394,6 +1394,7 @@ class TrajectoryExecutor:
         preserve_explicit_wrap=False,
         unwind_check=None,
         suppress_drive_disable_cancel=False,
+        goal_position_tolerance_rad=None,
     ):
         """Send trajectory directly to the low-level controller for smooth execution."""
         controller_prepare_started_at = time.perf_counter()
@@ -1474,10 +1475,15 @@ class TrajectoryExecutor:
         goal_build_started_at = time.perf_counter()
         goal_tolerance = []
         path_tolerance = []
+        goal_position_tolerance = (
+            float(config.EXECUTOR_GOAL_POS_TOL_RAD)
+            if goal_position_tolerance_rad is None
+            else max(0.0, float(goal_position_tolerance_rad))
+        )
         for name in joint_trajectory.joint_names:
             goal_tol = JointTolerance()
             goal_tol.name = name
-            goal_tol.position = config.EXECUTOR_GOAL_POS_TOL_RAD
+            goal_tol.position = goal_position_tolerance
             goal_tol.velocity = 0.0
             goal_tol.acceleration = 0.0
             goal_tolerance.append(goal_tol)

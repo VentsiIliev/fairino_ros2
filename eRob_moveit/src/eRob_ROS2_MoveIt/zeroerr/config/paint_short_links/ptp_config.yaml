@@ -1,2 +1,3 @@
 # Paint profile overrides for PTP target selection and pre-execution checks.
 # Add only keys that should differ from ../ptp_config.yaml.
+  PTP_ORIENTED_PATH_MAX_DEVIATION_DEG: 50.0

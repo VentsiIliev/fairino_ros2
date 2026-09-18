@@ -6,16 +6,25 @@ from ament_index_python.packages import get_package_share_directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from zeroerr_launch.moveit_config import build_moveit_config
-from zeroerr_launch.runtime_config import urdf_path_from_runtime
+from zeroerr_launch.runtime_config import runtime_value, urdf_path_from_runtime
 
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     package_path = get_package_share_directory("zeroerr")
-    os.environ["ZEROERR_ROBOT_URDF"] = urdf_path_from_runtime(package_path)
+    urdf_path = urdf_path_from_runtime(package_path)
+    os.environ["ZEROERR_ROBOT_URDF"] = urdf_path
+    enable_sensorless_collision_monitor = LaunchConfiguration(
+        "enable_sensorless_collision_monitor"
+    )
+    enable_sensorless_collision_gui = LaunchConfiguration(
+        "enable_sensorless_collision_gui"
+    )
 
     moveit_config = build_moveit_config("zeroerr", package_path)
 
@@ -84,6 +93,51 @@ def generate_launch_description():
         output="screen",
     )
 
+    sensorless_collision_monitor = Node(
+        package="zeroerr",
+        executable="zeroerr_collision_monitor.py",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(enable_sensorless_collision_monitor),
+        parameters=[{
+            "slave_count": 6,
+            "poll_period_sec": float(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_MONITOR_PERIOD_SEC",
+                0.01,
+            )),
+            "input_sample_period_sec": 0.0,
+            "print_table": False,
+            "urdf_path": urdf_path,
+            "base_link": "base_link",
+            "tip_link": runtime_value(package_path, "COLLISION_TIP_LINK", "tool0"),
+            "num_joints": int(runtime_value(package_path, "NUM_JOINTS", 6)),
+            "collision_config_path": os.path.join(
+                package_path, "config", "collision_monitor_config.json"
+            ),
+            "torque_log_enabled": bool(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_LOG_ENABLED",
+                False,
+            )),
+            "torque_log_path": str(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_LOG_PATH",
+                "/home/ilv/ros2_ws/eRob_moveit/zeroerr_data/collision_detection/collision_training.csv",
+            )),
+        }],
+    )
+
+    sensorless_collision_gui = Node(
+        package="zeroerr",
+        executable="zeroerr_collision_status_gui.py",
+        output="screen",
+        condition=IfCondition(PythonExpression([
+            "'", enable_sensorless_collision_monitor,
+            "' == 'true' and '", enable_sensorless_collision_gui, "' == 'true'",
+        ])),
+    )
+
     helper_parameters = [
         moveit_config.robot_description,
         moveit_config.robot_description_semantic,
@@ -124,6 +178,24 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "enable_sensorless_collision_monitor",
+            default_value=str(bool(runtime_value(
+                package_path,
+                "ENABLE_SENSORLESS_COLLISION_MONITOR",
+                False,
+            ))).lower(),
+            description="Start the passive sensorless joint-torque collision monitor",
+        ),
+        DeclareLaunchArgument(
+            "enable_sensorless_collision_gui",
+            default_value=str(bool(runtime_value(
+                package_path,
+                "SENSORLESS_COLLISION_GUI_ENABLED",
+                False,
+            ))).lower(),
+            description="Show the read-only sensorless collision status GUI",
+        ),
         SetEnvironmentVariable("EROB_CONFIG_PACKAGE", "zeroerr"),
         SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
         SetEnvironmentVariable("MESA_GL_VERSION_OVERRIDE", "3.3"),
@@ -137,6 +209,8 @@ def generate_launch_description():
         load_drive_enable_set_controller,
         load_drive_disable_set_controller,
         ethercat_sdo_server,
+        sensorless_collision_monitor,
+        sensorless_collision_gui,
         ipp_helper_node,
         ruckig_helper_node,
         contour_ik_helper_node,

@@ -1,61 +1,55 @@
 <robot name="eRobo3" version="1.0">
   <joint name="Joint_1" type="revolute">
-    <!-- Zero calibration: measured J1=-1.041994390 rad at physical zero. -->
-    <origin rpy="0.00000 0.00000 1.041994390" xyz="0.00000 0.00000 0.00000"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00000 0.00000"/>
     <parent link="base_link"/>
     <child link="Link_1"/>
     <axis xyz="0.00000 0.00000 1.00000"/>
-    <limit effort="20.0" lower="-6.28318" upper="6.28318" velocity="1000.0" />
+    <limit effort="20.0" lower="-6.28318" upper="6.28318" velocity="3.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-6.28" soft_upper_limit="6.28" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
   <joint name="Joint_2" type="revolute">
-    <!-- Zero calibration: measured J2=+0.035892822 rad on axis -Y. -->
-    <origin rpy="0.00000 0.035892822 0.00000" xyz="0.00000 0.05300 0.14050"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.05300 0.14050"/>
     <parent link="Link_1"/>
     <child link="Link_2"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="20.0" lower="-3.14159" upper="3.14159" velocity="1000.0" />
+    <limit effort="20.0" lower="-3.14159" upper="3.14159" velocity="3.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
   <joint name="Joint_3" type="revolute">
-    <!-- Zero calibration: measured J3=-0.036551956 rad on axis -Y. -->
-    <origin rpy="0.00000 -0.036551956 0.00000" xyz="0.00000 0.00050 0.24350"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.00050 0.24350"/>
     <parent link="Link_2"/>
     <child link="Link_3"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="20.0" lower="-3.14159" upper="3.14159" velocity="1000.0" />
+    <limit effort="20.0" lower="-3.14159" upper="3.14159" velocity="3.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
   <joint name="Joint_4" type="revolute">
-    <!-- Zero calibration: measured J4=+0.249176479 rad on axis -Y. -->
-    <origin rpy="0.00000 0.249176479 0.00000" xyz="0.00000 -0.01400 0.21100"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 -0.01400 0.21100"/>
     <parent link="Link_3"/>
     <child link="Link_4"/>
     <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="10.5" lower="-4.88692" upper="3.14159" velocity="1000.0" />
+    <limit effort="10.5" lower="-4.88692" upper="3.14159" velocity="3.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-4.88" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
   <joint name="Joint_5" type="revolute">
-    <!-- Zero calibration: measured J5=-1.556765769 rad at physical zero. -->
-    <origin rpy="0.00000 0.00000 1.556765769" xyz="0.00000 0.04700 0.03900"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.04700 0.03900"/>
     <parent link="Link_4"/>
     <child link="Link_5"/>
     <axis xyz="0.00000 0.00000 1.00000"/>
-    <limit effort="10.5" lower="-3.14159" upper="3.14159" velocity="1000.0" />
+    <limit effort="10.5" lower="-3.14159" upper="3.14159" velocity="3.0" />
     <safety_controller k_position="100.0" k_velocity="10.0" soft_lower_limit="-3.14" soft_upper_limit="3.14" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
   <joint name="Joint_6" type="revolute">
-    <!-- Zero calibration: measured J6=-0.000479370 rad on axis -Y. -->
-    <origin rpy="0.00000 -0.000479370 0.00000" xyz="0.00000 0.06080 0.04700"/>
+    <origin rpy="0.00000 0.00000 0.00000" xyz="0.00000 0.06080 0.04700"/>
     <parent link="Link_5"/>
     <child link="Link_6"/>
-    <axis xyz="0.00000 -1.00000 0.00000"/>
-    <limit effort="40.0" lower="-12.5664" upper="12.5664" velocity="1000.0" />
+    <axis xyz="0.00000 1.00000 0.00000"/>
+    <limit effort="40.0" lower="-12.5664" upper="12.5664" velocity="3.14" />
     <safety_controller k_position="100.0" k_velocity="100.0" soft_lower_limit="-12.56" soft_upper_limit="12.56" />
     <dynamics damping="0.7" friction="0.0"/>
   </joint>
@@ -233,8 +227,26 @@
     <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
   </joint>
 
-    <!-- Geometry-free compatibility frames required by MoveIt and the runtime. -->
-  <link name="tool0"/>
+  <!-- Physical pointer tool.  The STL is authored in millimetres and its
+       established mounting transform is shared with the original paint arm. -->
+  <link name="tool0">
+    <visual>
+      <!-- Align the pointer's physical up orientation at the corrected encoder zero. -->
+      <origin xyz="0.028978 -0.007765 0.042" rpy="0 3.14159 4.45058959"/>
+      <geometry>
+        <mesh filename="package://zeroerr/meshes/paint/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="tool_material">
+        <color rgba="0.7 0.7 0.7 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.028978 -0.007765 0.042" rpy="0 3.14159 4.45058959"/>
+      <geometry>
+        <mesh filename="package://zeroerr/meshes/paint/ToolPointer.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
 
   <joint name="tool0" type="fixed">
     <parent link="ee_link"/>
@@ -242,7 +254,18 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <link name="tcp"/>
+  <!-- TCP marker remains at tool0; adding the mesh does not alter commanded TCP. -->
+  <link name="tcp">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.00050"/>
+      </geometry>
+      <material name="tool_marker">
+        <color rgba="1 0 0 1"/>
+      </material>
+    </visual>
+  </link>
 
   <joint name="tcp_joint" type="fixed">
     <parent link="tool0"/>

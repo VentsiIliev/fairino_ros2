@@ -369,6 +369,21 @@ class RobotController(Node):
     def _active_tool_collision_enabled(self) -> bool:
         return bool(getattr(config, "ACTIVE_TOOL_COLLISION_ENABLED", False))
 
+    def _active_tool_collision_profile(self):
+        profile_map = dict(getattr(config, "TOOL_COLLISION_PROFILE_MAP", {}) or {})
+        profiles = dict(getattr(config, "TOOL_COLLISION_PROFILES", {}) or {})
+        profile_name = profile_map.get(str(self.active_tool_name))
+        if profile_name:
+            return profiles.get(str(profile_name))
+        return {
+            "radius_m": float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012)),
+            "length_m": float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17)),
+            "origin": list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0])),
+            "use_active_tool_transform": bool(
+                getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)
+            ),
+        }
+
     def _mounting_surface_collision_enabled(self) -> bool:
         return bool(getattr(config, "MOUNTING_SURFACE_COLLISION_OBJECT_ENABLED", False))
 
@@ -438,6 +453,10 @@ class RobotController(Node):
             return
 
         try:
+            profile = self._active_tool_collision_profile()
+            if not profile:
+                self._remove_active_tool_collision()
+                return
             attached = AttachedCollisionObject()
             attached.link_name = str(getattr(config, "ACTIVE_TOOL_COLLISION_LINK", EE_LINK) or EE_LINK)
             attached.touch_links = [
@@ -453,15 +472,15 @@ class RobotController(Node):
             primitive = SolidPrimitive()
             primitive.type = SolidPrimitive.CYLINDER
             primitive.dimensions = [
-                float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17)),
-                float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012)),
+                float(profile.get("length_m", 0.17)),
+                float(profile.get("radius_m", 0.012)),
             ]
 
-            origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
+            origin_values = list(profile.get("origin", [0, 0, 0, 0, 0, 0]) or [])
             if len(origin_values) != 6:
                 origin_values = [0, 0, 0, 0, 0, 0]
             T_collision = TransformationUtils.pose_to_transform(origin_values)
-            if bool(getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)):
+            if bool(profile.get("use_active_tool_transform", True)):
                 T_collision = self.T_tool @ T_collision
 
             quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
@@ -684,11 +703,12 @@ class RobotController(Node):
             marker.id = 200
             marker.action = Marker.DELETE
             return marker
-        origin_values = list(getattr(config, "ACTIVE_TOOL_COLLISION_ORIGIN", [0, 0, 0, 0, 0, 0]) or [])
+        profile = self._active_tool_collision_profile() or {}
+        origin_values = list(profile.get("origin", [0, 0, 0, 0, 0, 0]) or [])
         if len(origin_values) != 6:
             origin_values = [0, 0, 0, 0, 0, 0]
         T_collision = TransformationUtils.pose_to_transform(origin_values)
-        if bool(getattr(config, "ACTIVE_TOOL_COLLISION_USE_ACTIVE_TOOL_TRANSFORM", True)):
+        if bool(profile.get("use_active_tool_transform", True)):
             T_collision = self.T_tool @ T_collision
         quat = TransformationUtils.matrix_to_quaternion(T_collision[:3, :3])
 
@@ -706,9 +726,9 @@ class RobotController(Node):
         marker.pose.orientation.y = float(quat[1])
         marker.pose.orientation.z = float(quat[2])
         marker.pose.orientation.w = float(quat[3])
-        marker.scale.x = 2.0 * float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
-        marker.scale.y = 2.0 * float(getattr(config, "ACTIVE_TOOL_COLLISION_RADIUS_M", 0.012))
-        marker.scale.z = float(getattr(config, "ACTIVE_TOOL_COLLISION_LENGTH_M", 0.17))
+        marker.scale.x = 2.0 * float(profile.get("radius_m", 0.012))
+        marker.scale.y = 2.0 * float(profile.get("radius_m", 0.012))
+        marker.scale.z = float(profile.get("length_m", 0.17))
         marker.color.r = 1.0
         marker.color.g = 0.5
         marker.color.b = 0.0
