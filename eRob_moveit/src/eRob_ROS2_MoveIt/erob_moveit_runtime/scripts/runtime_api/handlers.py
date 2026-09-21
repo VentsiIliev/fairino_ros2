@@ -803,6 +803,9 @@ class RuntimeApi:
             return response_error("conditional Servo supervisor unavailable", 503, result=-1)
         try:
             request = dict(data or {})
+            execution_mode = str(request.get("execution_mode") or "servo").strip().lower()
+            if execution_mode not in {"servo", "fast_lin"}:
+                raise ValueError("execution_mode must be servo or fast_lin")
             servo_payload = parse_servo_jog_start_request(request.get("servo"))
             not_ready = self._require_motion_stack_ready()
             if not_ready is not None:
@@ -824,6 +827,8 @@ class RuntimeApi:
             }
             snapshot = self._conditional_servo.start(
                 servo=servo,
+                execution_mode=execution_mode,
+                fast_lin=dict(request.get("fast_lin") or {}),
                 condition=dict(request.get("condition") or {}),
                 boundary=request.get("boundary"),
                 timeout_s=request.get("timeout_s", 10.0),

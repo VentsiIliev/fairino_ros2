@@ -13,7 +13,7 @@ This package contains:
 - `scripts/main.py`
   - desktop/dev entrypoint that starts `RobotController`, creates the configured backend through `backend_factory.py`, and launches the REST server in the same process
 - `scripts/robot_controller.py`
-  - the main ROS node (`velocity_monitor`) that owns MoveIt service clients, motion queueing, safety walls, and monitoring state
+  - the main ROS node (`erob_runtime_controller`) that owns MoveIt service clients, motion queueing, safety walls, and monitoring state
 - `scripts/rest/main.py`
   - REST process entry point used by `scripts/main.py` when the REST server runs in a separate process
 - `scripts/rest/server.py`

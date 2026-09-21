@@ -35,6 +35,27 @@ class FakeRobot:
         return list(self.pose)
 
 
+class FakeFastLinRobot(FakeRobot):
+    def __init__(self):
+        super().__init__()
+        self.node = type("Node", (), {"last_submitted_task_id": 42})()
+        self.fast_lin_requests = []
+        self.controlled_stops = []
+
+    def move_fast_lin(self, position, **kwargs):
+        self.fast_lin_requests.append((list(position), dict(kwargs)))
+        return 0
+
+    def controlled_stop(self, task_id, *, stop_duration_s=None):
+        self.controlled_stops.append((task_id, stop_duration_s))
+        return {
+            "success": True,
+            "stopped": True,
+            "future_work_preserved": True,
+            "state": "STOPPING",
+        }
+
+
 def request(supervisor, *, sensor_stale_timeout_s=0.5):
     return supervisor.start(
         servo={
@@ -64,6 +85,56 @@ def request(supervisor, *, sensor_stale_timeout_s=0.5):
         timeout_s=1.0,
         sensor_stale_timeout_s=sensor_stale_timeout_s,
     )
+
+
+def test_fast_lin_sensor_event_is_stopped_locally_by_ros_supervisor():
+    robot = FakeFastLinRobot()
+    supervisor = ConditionalServoSupervisor(
+        lambda: robot, logger=logging.getLogger("test"), monitor_rate_hz=100
+    )
+    supervisor.set_sensor_connected(True)
+    started = supervisor.start(
+        execution_mode="fast_lin",
+        fast_lin={
+            "position": [0.0, 0.0, 25.0, 0.0, 0.0, 0.0],
+            "tool": 1,
+            "user": 1,
+            "vel": 10.0,
+            "acc": 30.0,
+            "trajectory_optimizer": "TOTG",
+            "controlled_stop_duration_s": 0.2,
+        },
+        servo={
+            "axis": Value("Z", 3),
+            "direction": Value("MINUS", -1),
+            "tool": 1,
+            "user": 1,
+        },
+        condition={
+            "source": "servo_condition",
+            "required_state": True,
+            "require_fresh_transition": True,
+        },
+        boundary={
+            "axis": "z", "operator": "less_or_equal", "value_mm": 25.0,
+            "tool": 1, "user": 1,
+        },
+        timeout_s=1.0,
+    )
+    assert started["state"] == "moving"
+    assert started["execution_mode"] == "fast_lin"
+    assert started["task_id"] == 42
+    assert robot.fast_lin_requests
+    assert supervisor.accept_sensor_event({
+        "sensor": "servo_condition", "state": "inactive",
+        "stream_id": "stream-fast", "sequence": 1,
+    })
+    assert supervisor.accept_sensor_event({
+        "sensor": "servo_condition", "state": "active",
+        "stream_id": "stream-fast", "sequence": 2,
+    })
+    assert robot.controlled_stops == [(42, 0.2)]
+    assert supervisor.snapshot()["state"] == "awaiting_stationary"
 
 
 def test_fresh_transition_stops_then_waits_for_stationary_samples():

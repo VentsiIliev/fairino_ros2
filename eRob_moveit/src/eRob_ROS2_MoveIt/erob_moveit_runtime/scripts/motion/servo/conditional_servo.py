@@ -39,8 +39,13 @@ class ConditionalServoSupervisor:
         self._monitor_thread.start()
 
     def start(self, *, servo: dict, condition: dict, boundary: dict | None,
+              execution_mode: str = "servo", fast_lin: dict | None = None,
               timeout_s: float, sensor_stale_timeout_s: float = 0.5,
               restore_collision_checking: bool = True) -> dict:
+        execution_mode = str(execution_mode or "servo").strip().lower()
+        if execution_mode not in {"servo", "fast_lin"}:
+            raise ValueError("execution_mode must be servo or fast_lin")
+        fast_lin = dict(fast_lin or {})
         timeout_s = float(timeout_s)
         if not math.isfinite(timeout_s) or timeout_s <= 0.0:
             raise ValueError("timeout_s must be finite and > 0")
@@ -79,6 +84,9 @@ class ConditionalServoSupervisor:
                 "state": "arming",
                 "reason": None,
                 "servo": dict(servo),
+                "execution_mode": execution_mode,
+                "fast_lin": fast_lin,
+                "task_id": None,
                 "condition": {
                     "source": sensor,
                     "required_state": required_state,
@@ -112,19 +120,45 @@ class ConditionalServoSupervisor:
             self._finish_without_stop(operation_id, "start_failed", "robot runtime unavailable")
             return self.snapshot()
         try:
-            result = robot.start_servo_jog(**servo)
+            if execution_mode == "fast_lin":
+                position = [float(value) for value in fast_lin.get("position", [])]
+                if len(position) < 6:
+                    raise ValueError("fast_lin.position must contain six values")
+                result = robot.move_fast_lin(
+                    position[:6],
+                    tool=int(fast_lin.get("tool", servo.get("tool", 0))),
+                    user=int(fast_lin.get("user", servo.get("user", 0))),
+                    vel=float(fast_lin.get("vel", 10.0)),
+                    acc=float(fast_lin.get("acc", 30.0)),
+                    blocking=False,
+                    trajectory_optimizer=fast_lin.get("trajectory_optimizer", "TOTG"),
+                )
+            else:
+                result = robot.start_servo_jog(**servo)
         except Exception as exc:
             self._logger.exception("Conditional Servo start failed")
             self._finish_without_stop(operation_id, "start_failed", str(exc))
             return self.snapshot()
 
-        if result != 0:
+        if execution_mode == "fast_lin":
+            task_id = getattr(getattr(robot, "node", None), "last_submitted_task_id", None)
+            accepted = bool(
+                isinstance(result, int)
+                and not isinstance(result, bool)
+                and result >= 0
+                and task_id is not None
+            )
+        else:
+            accepted = result == 0
+        if not accepted:
             self._finish_without_stop(operation_id, "start_failed", f"servo_start_failed:{result}")
             return self.snapshot()
         with self._lock:
             if self._matches_active(operation_id):
                 self._operation["state"] = "moving"
                 self._operation["started_monotonic_ns"] = time.monotonic_ns()
+                if execution_mode == "fast_lin":
+                    self._operation["task_id"] = task_id
         self._log_transition(operation_id, "moving")
         return self.snapshot()
 
@@ -328,9 +362,29 @@ class ConditionalServoSupervisor:
         self._log_transition(operation_id, "stopping", reason)
         robot = self._robot_getter()
         try:
-            result = robot.stop_servo_jog(
-                restore_collision_checking=bool(op["restore_collision_checking"])
-            ) if robot is not None else -1
+            if robot is None:
+                result = -1
+            elif op.get("execution_mode") == "fast_lin":
+                stop_result = robot.controlled_stop(
+                    op.get("task_id"),
+                    stop_duration_s=op.get("fast_lin", {}).get("controlled_stop_duration_s"),
+                )
+                stopped = bool(
+                    isinstance(stop_result, dict)
+                    and stop_result.get("success") is True
+                    and stop_result.get("stopped") is True
+                )
+                already_inactive = bool(
+                    isinstance(stop_result, dict)
+                    and stop_result.get("state") == "TASK_MISMATCH"
+                    and stop_result.get("current_task_id") is None
+                )
+                result = 0 if stopped or already_inactive else -1
+                op["controlled_stop_result"] = stop_result
+            else:
+                result = robot.stop_servo_jog(
+                    restore_collision_checking=bool(op["restore_collision_checking"])
+                )
         except Exception as exc:
             self._logger.exception("Conditional Servo local stop failed")
             result = -1

@@ -111,7 +111,7 @@ class RobotController(Node):
         import time
         start_time = time.time()
 
-        super().__init__('velocity_monitor')
+        super().__init__('erob_runtime_controller')
         self.get_logger().info('[Init] RobotController starting...')
 
         self._fake_hardware = os.environ.get('ZEROERR_USE_FAKE_HARDWARE', '').strip().lower() in {
