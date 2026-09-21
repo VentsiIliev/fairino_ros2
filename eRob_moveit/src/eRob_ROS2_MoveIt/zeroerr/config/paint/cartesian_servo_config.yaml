@@ -1,0 +1,3 @@
+# Prevent a zero-to-full-speed Cartesian step from producing a Joint_4 current
+# spike at the beginning of the contact-approach Servo motion.
+CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2: 400.0

@@ -831,7 +831,7 @@ def execute_ordered_planned_segment(
         preplanned_ready_count=preplanned_ready_count,
         mark_scheduler_executing=mark_scheduler_executing,
     )
-    if segment_type in {"linear", "ptp", "path", "blended", "linked_lin", "concatenated"}:
+    if segment_type in {"linear", "ptp", "path", "blended", "concatenated"}:
         if bool(planned_segment.get("noop", False)):
             segment_hooks.logger.info(
                 f"[OrderedChain] Skipping no-op "

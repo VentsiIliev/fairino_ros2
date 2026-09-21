@@ -81,7 +81,7 @@ rm -rf /dev/shm/fastdds_* /dev/shm/sem.fastdds_* /dev/shm/fastrtps_* /dev/shm/se
 
 echo "Checking for remaining ZeroErr/ROS helper processes..."
 remaining="$(
-  pgrep -af 'ros2 launch zeroerr|zeroerr_runtime.py|ros2_control_node|move_group|zeroerr_servo_node|zeroerr_state_publisher|ipp_helper|ruckig_helper|contour_ik_helper|ptp_helper|linked_lin_helper|trajectory_state_validator|ethercat_sdo_srv_server|controller_manager/spawner|ros2cli.daemon.daemonize' || true
+  pgrep -af 'ros2 launch zeroerr|zeroerr_runtime.py|ros2_control_node|move_group|zeroerr_servo_node|zeroerr_state_publisher|ipp_helper|ruckig_helper|contour_ik_helper|ptp_helper|trajectory_state_validator|ethercat_sdo_srv_server|controller_manager/spawner|ros2cli.daemon.daemonize' || true
 )"
 
 if [[ -n "${remaining}" ]]; then

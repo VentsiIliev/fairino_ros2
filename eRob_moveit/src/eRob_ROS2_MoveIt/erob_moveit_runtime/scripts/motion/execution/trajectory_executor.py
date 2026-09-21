@@ -1032,11 +1032,11 @@ class TrajectoryExecutor:
 
         vel_percent = self._clamp_percentage(vel)
         acc_percent = self._clamp_percentage(acc)
-        base_speed = float(getattr(config, 'EXECUTOR_POST_UNWIND_SPEED_RAD_S', 0.8))
-        base_acceleration = float(getattr(config, 'EXECUTOR_POST_UNWIND_ACCEL_RAD_S2', 1.0))
+        base_speed = float(getattr(config, 'EXECUTOR_POST_UNWIND_SPEED_RAD_S', 1.8))
+        base_acceleration = float(getattr(config, 'EXECUTOR_POST_UNWIND_ACCEL_RAD_S2', 2.5))
         speed = max(base_speed * (vel_percent / 100.0), 1e-3)
         acceleration = max(base_acceleration * (acc_percent / 100.0), 1e-3)
-        min_duration = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DURATION_S', 2.0))
+        min_duration = float(getattr(config, 'EXECUTOR_POST_UNWIND_MIN_DURATION_S', 1.0))
         distance = abs(delta)
         # Dense smoothstep sampling is deliberately used for cable unwind.  The
         # equivalent -2pi -> 0 branch change is mechanically real for the cable,

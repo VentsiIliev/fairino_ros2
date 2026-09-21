@@ -594,7 +594,7 @@ Consumer loop. Prefetch-ва readiness group, проверява stop flag, cons
 
 Dispatch по internal planned type:
 
-- физическа trajectory: `linear`, `ptp`, `path`, `blended`, `linked_lin`, `concatenated`;
+- физическа trajectory: `linear`, `ptp`, `path`, `blended`, `concatenated`;
 - logical-only: `blend_consumed`, `concatenate_consumed`;
 - специално: `unwind_joint6`.
 

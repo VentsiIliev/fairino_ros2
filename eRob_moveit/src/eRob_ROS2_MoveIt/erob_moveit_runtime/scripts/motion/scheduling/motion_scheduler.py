@@ -29,7 +29,7 @@ def planner_name_for_segments(segments: tuple[MotionSegment, ...]) -> str:
 
     first = segments[0]
     if isinstance(first, LinearSegment):
-        return "linked_lin" if len(segments) > 1 else "lin"
+        return "lin"
     if isinstance(first, PtpSegment):
         return "ptp"
     if isinstance(first, PathSegment):

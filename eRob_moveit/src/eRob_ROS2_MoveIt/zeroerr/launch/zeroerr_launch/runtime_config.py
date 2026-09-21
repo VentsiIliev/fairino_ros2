@@ -1,8 +1,7 @@
 """Profile-aware runtime config helpers shared by ZeroErr launch files.
 
-Centralizes the runtime.yaml / contour_ik_config.yaml / ptp_config.yaml and
-erob_state_publisher_config.yaml parsing so individual launch files do not
-duplicate the profile merging logic.
+Centralizes runtime and dedicated motion configuration parsing so individual
+launch files do not duplicate the profile merging logic.
 """
 
 import os
@@ -14,6 +13,10 @@ from ament_index_python.packages import get_package_share_directory
 
 def _runtime_yaml_path(package_path: str) -> str:
     return os.path.join(package_path, "config", "runtime.yaml")
+
+
+def _runtime_defaults_yaml_path(package_path: str) -> str:
+    return os.path.join(package_path, "config", "runtime_defaults.yaml")
 
 
 def _profile_runtime_yaml_path(package_path: str, profile: str) -> str:
@@ -32,6 +35,8 @@ def _extra_runtime_yaml_paths(package_path: str) -> list[str]:
     return [
         os.path.join(package_path, "config", "contour_ik_config.yaml"),
         os.path.join(package_path, "config", "ptp_config.yaml"),
+        os.path.join(package_path, "config", "unwind_config.yaml"),
+        os.path.join(package_path, "config", "cartesian_servo_config.yaml"),
     ]
 
 
@@ -39,6 +44,8 @@ def _profile_extra_runtime_yaml_paths(package_path: str, profile: str) -> list[s
     return [
         os.path.join(package_path, "config", profile, "contour_ik_config.yaml"),
         os.path.join(package_path, "config", profile, "ptp_config.yaml"),
+        os.path.join(package_path, "config", profile, "unwind_config.yaml"),
+        os.path.join(package_path, "config", profile, "cartesian_servo_config.yaml"),
     ]
 
 
@@ -50,11 +57,16 @@ def _merge_config(base: dict, override: dict) -> dict:
 
 def load_runtime_config(package_path: str) -> dict:
     rt_yaml = _runtime_yaml_path(package_path)
+    defaults_yaml = _runtime_defaults_yaml_path(package_path)
     try:
-        with open(rt_yaml) as f:
+        with open(defaults_yaml) as f:
             rt = yaml.safe_load(f) or {}
+        with open(rt_yaml) as f:
+            rt = _merge_config(rt, yaml.safe_load(f) or {})
     except Exception:
-        raise RuntimeError(f"Failed to read runtime config: {rt_yaml}")
+        raise RuntimeError(
+            f"Failed to read runtime configuration: {defaults_yaml}, {rt_yaml}"
+        )
 
     for config_yaml in _extra_runtime_yaml_paths(package_path):
         if not os.path.isfile(config_yaml):

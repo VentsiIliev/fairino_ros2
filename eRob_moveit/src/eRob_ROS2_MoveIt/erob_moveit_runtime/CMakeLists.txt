@@ -28,7 +28,6 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ApplyIPP.srv"
   "srv/ComputeContourIK.srv"
-  "srv/ComputeLinkedLin.srv"
   "srv/ComputePtp.srv"
   "srv/ValidateTrajectoryStates.srv"
   DEPENDENCIES trajectory_msgs moveit_msgs sensor_msgs geometry_msgs
@@ -108,25 +107,6 @@ set_target_properties(ipp_helper PROPERTIES
   BUILD_WITH_INSTALL_RPATH FALSE
   INSTALL_RPATH_USE_LINK_PATH TRUE)
 install(TARGETS ipp_helper DESTINATION lib/${PROJECT_NAME})
-
-add_executable(linked_lin_helper src_cpp/linked_lin_helper_node.cpp)
-ament_target_dependencies(linked_lin_helper
-  rclcpp
-  moveit_core
-  moveit_ros_planning_interface
-  moveit_ros_planning
-  moveit_msgs
-  sensor_msgs
-  trajectory_msgs
-  geometry_msgs)
-target_link_libraries(linked_lin_helper
-  trajectory_validation
-  ${cpp_typesupport_target})
-set_target_properties(linked_lin_helper PROPERTIES
-  INSTALL_RPATH "$ORIGIN:$ORIGIN/../../../lib:$ORIGIN/../../../../fairino_msgs/lib"
-  BUILD_WITH_INSTALL_RPATH FALSE
-  INSTALL_RPATH_USE_LINK_PATH TRUE)
-install(TARGETS linked_lin_helper DESTINATION lib/${PROJECT_NAME})
 
 add_executable(trajectory_state_validator src_cpp/trajectory_state_validator_node.cpp)
 ament_target_dependencies(trajectory_state_validator

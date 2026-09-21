@@ -1,0 +1,19 @@
+# Paint-profile unwind overrides for the hose/camera cable.
+
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: -1.0
+
+# Treat only active-tool/workobject RZ zero as restored. This small deadband
+# handles live-pose noise without skipping a partial turn.
+EXECUTOR_POST_UNWIND_MIN_DELTA_RAD: 0.02
+
+# Keep a full cable-relief turn in one controller goal and use direct IK to
+# avoid MoveIt Cartesian planning for the rotational path.
+EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 360.0
+EXECUTOR_POST_UNWIND_USE_DIRECT_IK: true
+EXECUTOR_POST_UNWIND_DIRECT_IK_FALLBACK_CARTESIAN: true
+EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG: 4.0
+
+# TOTG is deterministic for the forced full-turn Joint_6 branch. The unwind
+# dynamics guard still enforces the configured velocity and acceleration.
+EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER: TOTG

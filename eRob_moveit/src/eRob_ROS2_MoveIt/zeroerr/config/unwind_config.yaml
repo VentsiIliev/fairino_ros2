@@ -1,0 +1,16 @@
+# Robot-facing configuration for the standalone Joint_6 unwind endpoint.
+# Algorithmic defaults remain internal to the implementation.
+# Profiles may override these values in config/<profile>/unwind_config.yaml.
+
+EXECUTOR_POST_UNWIND_JOINT_NAME: Joint_6
+EXECUTOR_POST_UNWIND_TARGET_RANGE_RAD: 3.141592653589793
+EXECUTOR_POST_UNWIND_MIN_DELTA_RAD: 0.5
+
+# Safety limits applied to the unwind joint trajectory.
+EXECUTOR_POST_UNWIND_JOINT_RATE_LIMIT_RAD_S: 3.0
+EXECUTOR_POST_UNWIND_JOINT_ACCEL_LIMIT_RAD_S2: 10.0
+
+# Robot geometry and planning strategy.
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
+EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: 1.0
+EXECUTOR_POST_UNWIND_USE_DIRECT_IK: false

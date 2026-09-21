@@ -1,0 +1,8 @@
+# Base Cartesian Servo runtime configuration.
+# Profiles may override these values in config/<profile>/cartesian_servo_config.yaml.
+
+CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
+CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
+CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05
+CARTESIAN_SERVO_PUBLISH_RATE_HZ: 50.0
+CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2: 0.0

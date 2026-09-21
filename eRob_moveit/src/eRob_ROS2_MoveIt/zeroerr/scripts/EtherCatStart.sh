@@ -576,7 +576,6 @@ pin_non_rt_away() {
     ruckig_helper
     contour_ik_helper
     ptp_helper
-    linked_lin_helper
     trajectory_state_validator
   )
   local low_priority_procs=(
@@ -600,7 +599,6 @@ pin_non_rt_away() {
     ruckig_helper
     contour_ik_helper
     ptp_helper
-    linked_lin_helper
     trajectory_state_validator
     "main.py"
     spawner

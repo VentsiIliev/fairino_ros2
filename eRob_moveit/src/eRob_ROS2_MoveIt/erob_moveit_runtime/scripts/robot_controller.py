@@ -1022,9 +1022,6 @@ class RobotController(Node):
     def get_contour_ik_client(self):
         return self.planner_context.get_contour_ik_client()
 
-    def get_linked_lin_client(self):
-        return self.planner_context.get_linked_lin_client()
-
     def get_trajectory_state_validation_client(self):
         return self.planner_context.get_trajectory_state_validation_client()
 
@@ -1252,13 +1249,6 @@ class RobotController(Node):
             contour_ik_client = self.get_contour_ik_client()
             if contour_ik_client is None or not contour_ik_client.wait_for_service(timeout_sec=0.05):
                 return 'Contour IK helper service not available'
-            # Linked LIN is an optional planning backend.  Do not make the
-            # entire motion stack wait forever for a helper that launch and
-            # runtime configuration intentionally disabled.
-            if bool(getattr(config, 'LINKED_LIN_HELPER_ENABLED', False)):
-                linked_lin_client = self.get_linked_lin_client()
-                if linked_lin_client is None or not linked_lin_client.wait_for_service(timeout_sec=0.05):
-                    return 'Linked LIN helper service not available'
             if self.ipp_client is None or not self.ipp_client.wait_for_service(timeout_sec=0.05):
                 return 'TOTG/IPP optimizer service not available'
             if self.ruckig_client is None or not self.ruckig_client.wait_for_service(timeout_sec=0.05):

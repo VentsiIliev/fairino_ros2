@@ -86,14 +86,6 @@ MOUNTING_SURFACE_COLLISION_ORIGIN:
 # removed only for an authorized passage LIN descent/retract.
 MOTION_PASSAGES: []
 
-CARTESIAN_SERVO_SERVICE_TIMEOUT_S: 5.0
-CARTESIAN_SERVO_TF_TIMEOUT_S: 0.25
-CARTESIAN_SERVO_STOP_ZERO_DWELL_S: 0.05
-CARTESIAN_SERVO_PUBLISH_RATE_HZ: 50.0
-# Prevent a zero-to-full-speed Cartesian step from producing a Joint_4 current
-# spike at the beginning of the contact-approach Servo motion.
-CARTESIAN_SERVO_LINEAR_ACCEL_MM_S2: 400.0
-
 # Keep background state publishing light on 4-core real-hardware controllers.
 # Paint only needs the current Cartesian pose for operator/status display; the
 # profile state-publisher config disables derivative topics separately.
@@ -124,24 +116,6 @@ FOLLOW_PATH_CARTESIAN_TIMEOUT_S: 30.0
 FOLLOW_PATH_CARTESIAN_FALLBACK_ENABLED: false
 FOLLOW_PATH_DENSIFY_MAX_TRANSLATION_MM: 1.0
 FOLLOW_PATH_DENSIFY_MAX_ORIENTATION_DEG: 2.0
-
-# Paint unwind is intentional because the hose/camera cable can wrap around
-# Joint_6 unwind uses rotational direct IK to avoid MoveIt Cartesian planning.
-EXECUTOR_POST_UNWIND_ROTATION_AXIS_INDEX: 5
-EXECUTOR_POST_UNWIND_ROTATION_AXIS_SIGN: -1.0
-# RZ is considered restored only on its zero-degree active-tool/workobject
-# branch. Keep a small deadband for live-pose noise, not a partial-turn skip.
-EXECUTOR_POST_UNWIND_MIN_DELTA_RAD: 0.02
-# Keep a full cable-relief turn in one controller goal so Joint_6 does not
-# decelerate to a stop halfway through the unwind.
-EXECUTOR_POST_UNWIND_ROTATIONAL_SEGMENT_DEG: 360.0
-EXECUTOR_POST_UNWIND_USE_DIRECT_IK: true
-EXECUTOR_POST_UNWIND_DIRECT_IK_FALLBACK_CARTESIAN: true
-EXECUTOR_POST_UNWIND_DIRECT_IK_STEP_DEG: 4.0
-# TOTG is deterministic here and avoids the Ruckig fallback observed on the
-# forced full-turn Joint_6 branch. The unwind dynamics guard still enforces
-# the configured Joint_6 velocity and acceleration limits afterwards.
-EXECUTOR_POST_UNWIND_DIRECT_IK_OPTIMIZER: 'TOTG'
 
 TOOL_REGISTRY:
   TOOL_0:

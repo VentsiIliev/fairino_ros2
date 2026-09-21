@@ -8,7 +8,6 @@ class PlannerSupportService:
         self._fk_client = None
         self._ik_client = None
         self._contour_ik_client = None
-        self._linked_lin_client = None
         self._trajectory_state_validation_client = None
         self._state_validity_client = None
         self._ptp_client = None
@@ -34,18 +33,6 @@ class PlannerSupportService:
                 getattr(config, 'SERVICE_CONTOUR_IK', '/compute_contour_ik'),
             )
         return self._contour_ik_client
-
-    def get_linked_lin_client(self):
-        if self._linked_lin_client is None:
-            import config
-            from erob_moveit_runtime.srv import ComputeLinkedLin
-
-            self._linked_lin_client = self._node.create_client(
-                ComputeLinkedLin,
-                getattr(config, 'SERVICE_LINKED_LIN', '/compute_linked_lin'),
-            )
-
-        return self._linked_lin_client
 
     def get_trajectory_state_validation_client(self):
         if self._trajectory_state_validation_client is None:
