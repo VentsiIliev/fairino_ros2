@@ -364,21 +364,38 @@ private:
 
         for (std::size_t iter = 0; iter < iterations; ++iter)
         {
+            // Evaluate every candidate against the same path snapshot.  Updating
+            // solved_points in-place makes later candidates depend on earlier
+            // ones and can move a smooth bend along the path instead of reducing
+            // it.  A Jacobi-style pass is deterministic and lets us require an
+            // actual reduction in local joint-space curvature.
+            const auto iteration_points = solved_points;
             std::size_t accepted_this_iter = 0;
             for (std::size_t i = 1; i + 1 < solved_points.size(); ++i)
             {
                 const double smoothing_candidate_started_s = steadySeconds();
-                candidate = solved_points[i];
+                candidate = iteration_points[i];
                 double candidate_adjustment = 0.0;
                 bool step_ok = true;
+                double original_curvature_sq = 0.0;
+                double candidate_curvature_sq = 0.0;
                 for (std::size_t j = 0; j < candidate.size(); ++j)
                 {
-                    const double midpoint = 0.5 * (solved_points[i - 1][j] + solved_points[i + 1][j]);
+                    const double midpoint =
+                        0.5 * (iteration_points[i - 1][j] + iteration_points[i + 1][j]);
                     const double original = candidate[j];
                     candidate[j] = original + alpha * (midpoint - original);
                     candidate_adjustment = std::max(candidate_adjustment, std::abs(candidate[j] - original));
-                    if (std::abs(candidate[j] - solved_points[i - 1][j]) > max_step_rad ||
-                        std::abs(solved_points[i + 1][j] - candidate[j]) > max_step_rad)
+                    const double original_second_difference =
+                        iteration_points[i + 1][j] - 2.0 * original + iteration_points[i - 1][j];
+                    const double candidate_second_difference =
+                        iteration_points[i + 1][j] - 2.0 * candidate[j] + iteration_points[i - 1][j];
+                    original_curvature_sq +=
+                        original_second_difference * original_second_difference;
+                    candidate_curvature_sq +=
+                        candidate_second_difference * candidate_second_difference;
+                    if (std::abs(candidate[j] - iteration_points[i - 1][j]) > max_step_rad ||
+                        std::abs(iteration_points[i + 1][j] - candidate[j]) > max_step_rad)
                     {
                         step_ok = false;
                         break;
@@ -389,7 +406,8 @@ private:
                     timing_stats->smoothing_candidate_s += steadySeconds() - smoothing_candidate_started_s;
                     timing_stats->smoothing_candidates += 1;
                 }
-                if (!step_ok || candidate_adjustment <= 1e-9)
+                if (!step_ok || candidate_adjustment <= 1e-9 ||
+                    candidate_curvature_sq >= original_curvature_sq - 1e-18)
                 {
                     continue;
                 }
@@ -1206,6 +1224,7 @@ private:
                 response->solve_time_s = (this->now() - started_at).seconds();
                 return;
             }
+
         }
 
         const auto smoothing_started_at = this->now();

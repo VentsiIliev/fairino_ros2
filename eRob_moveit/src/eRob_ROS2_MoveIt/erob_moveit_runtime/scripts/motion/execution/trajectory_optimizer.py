@@ -100,7 +100,7 @@ def _log_joint_path_geometry_from_snapshot(logger, positions, joint_names, label
         for i, name in enumerate(joint_names)
     )
     logger.info(
-        f"[{label}_PATH_DIAG] points={len(points)} joints={len(joint_names)} "
+        f"[{label}_PATH_DIAG] points={len(positions)} joints={len(joint_names)} "
         f"near_duplicate_segments={len(duplicate_indexes)} {per_joint}"
     )
 
