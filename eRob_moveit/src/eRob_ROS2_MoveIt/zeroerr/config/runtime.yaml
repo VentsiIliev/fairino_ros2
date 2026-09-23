@@ -127,6 +127,9 @@ ACTION_FOLLOW_TRAJECTORY: /manipulator_controller/follow_joint_trajectory
 # Real ZeroErr drives can briefly transition around adjacent controller goals.
 # Require a short stable enabled window before sending the next trajectory.
 EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S: 0.00
+# A successful controlled-stop result confirms trajectory completion, but the
+# drives need a brief stable window before accepting the following goal.
+EXECUTOR_POST_CONTROLLED_STOP_GOAL_ACCEPTANCE_STABLE_S: 0.07
 
 # Automatically request drive operation enable once EtherCAT is fully OP and
 # controller services are available. This makes /drive/status report
@@ -156,7 +159,7 @@ EXECUTOR_ORDERED_INTERMEDIATE_MATCH_TOL_RAD: 0.002
 # Final physical trajectories settle close enough for the following cycle to
 # reuse an exact movement-group endpoint. Grouped trajectories are final when
 # their logical members consume the end of the chain.
-EXECUTOR_ORDERED_END_MATCH_TOL_RAD: 0.0005
+EXECUTOR_ORDERED_END_MATCH_TOL_RAD: 0.001
 
 # Shared Cartesian path defaults. Profiles can override these for process-
 # specific dense paths such as paint contours.
@@ -205,7 +208,7 @@ REST_WS_STATE_RATE_HZ: 10.0
 REST_WS_EXECUTION_ENABLED: true
 REST_WS_EXECUTION_HOST: 0.0.0.0
 REST_WS_EXECUTION_PORT: 5002
-REST_WS_EXECUTION_RATE_HZ: 10.0
+REST_WS_EXECUTION_RATE_HZ: 100.0
 
 # Publish /robot_status from the runtime controller.
 ROBOT_STATUS_PUBLISH_ENABLED: false
@@ -232,7 +235,7 @@ RUNTIME_HEADLESS: 1
 ZEROERR_ERROR_MONITOR_ENABLED: false
 
 # Low-rate SDO diagnostics for values intentionally kept out of fast PDOs.
-ZEROERR_DRIVE_DIAGNOSTICS_ENABLED: true
+ZEROERR_DRIVE_DIAGNOSTICS_ENABLED: false
 ZEROERR_DRIVE_DIAGNOSTICS_POLL_PERIOD_S: 5.0
 
 MONITOR_UPDATE_RATE_HZ: 10.0

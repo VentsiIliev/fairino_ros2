@@ -102,7 +102,7 @@ def test_fast_lin_sensor_event_is_stopped_locally_by_ros_supervisor():
             "vel": 10.0,
             "acc": 30.0,
             "trajectory_optimizer": "TOTG",
-            "controlled_stop_duration_s": 0.2,
+            "controlled_stop_duration_s": 0.05,
         },
         servo={
             "axis": Value("Z", 3),
@@ -133,7 +133,7 @@ def test_fast_lin_sensor_event_is_stopped_locally_by_ros_supervisor():
         "sensor": "servo_condition", "state": "active",
         "stream_id": "stream-fast", "sequence": 2,
     })
-    assert robot.controlled_stops == [(42, 0.2)]
+    assert robot.controlled_stops == [(42, 0.05)]
     assert supervisor.snapshot()["state"] == "awaiting_stationary"
 
 
@@ -168,6 +168,55 @@ def test_fresh_transition_stops_then_waits_for_stationary_samples():
     assert completed["active"] is False
     assert completed["sensor_detected_monotonic_ns"] == detected_ns
     assert completed["sensor_transport_latency_ms"] >= 0.0
+
+
+def test_fast_lin_stop_action_success_completes_without_stationary_samples():
+    robot = FakeFastLinRobot()
+    supervisor = ConditionalServoSupervisor(
+        lambda: robot, logger=logging.getLogger("test"), monitor_rate_hz=100
+    )
+    supervisor.set_sensor_connected(True)
+    supervisor.start(
+        execution_mode="fast_lin",
+        fast_lin={
+            "position": [0.0, 0.0, 25.0, 0.0, 0.0, 0.0],
+            "tool": 1,
+            "user": 1,
+            "vel": 10.0,
+            "acc": 30.0,
+            "controlled_stop_duration_s": 0.05,
+        },
+        servo={
+            "axis": Value("Z", 3),
+            "direction": Value("MINUS", -1),
+            "tool": 1,
+            "user": 1,
+        },
+        condition={
+            "source": "servo_condition",
+            "required_state": True,
+            "require_fresh_transition": True,
+        },
+        boundary={
+            "axis": "z", "operator": "less_or_equal", "value_mm": 25.0,
+            "tool": 1, "user": 1,
+        },
+        timeout_s=1.0,
+    )
+    supervisor.accept_sensor_event({
+        "sensor": "servo_condition", "state": "inactive",
+        "stream_id": "stream-fast", "sequence": 1,
+    })
+    supervisor.accept_sensor_event({
+        "sensor": "servo_condition", "state": "active",
+        "stream_id": "stream-fast", "sequence": 2,
+    })
+
+    assert supervisor.snapshot()["state"] == "awaiting_stationary"
+    assert supervisor.notify_controlled_stop_goal_succeeded()
+    completed = supervisor.snapshot()
+    assert completed["state"] == "condition_met"
+    assert completed["stationary_samples"] == 0
 
 
 def test_sensor_event_without_state_is_rejected():

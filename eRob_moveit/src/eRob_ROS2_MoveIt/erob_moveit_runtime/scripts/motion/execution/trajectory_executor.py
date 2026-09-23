@@ -33,6 +33,7 @@ class TrajectoryExecutor:
         self._active_drive_disabled_samples = 0
         self._active_drive_disabled_reason = None
         self._unwind_cancel_reason = None
+        self._last_controlled_stop_succeeded_monotonic = None
         action_name = getattr(config, 'ACTION_FOLLOW_TRAJECTORY', '') or ''
         self._controller_name = action_name.rsplit('/', 1)[0].strip('/') or 'joint_trajectory_controller'
 
@@ -574,19 +575,43 @@ class TrajectoryExecutor:
             0.0,
             float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_STABLE_BEFORE_TRAJECTORY_S', 0.15)),
         )
-        timeout_s = max(
+        post_stop_stable_s = max(
+            0.0,
+            float(getattr(config, 'EXECUTOR_POST_CONTROLLED_STOP_GOAL_ACCEPTANCE_STABLE_S', 0.10)),
+        )
+        post_stop_gate_active = (
+            self._last_controlled_stop_succeeded_monotonic is not None
+            and post_stop_stable_s > 0.0
+        )
+        required_stable_s = max(
             stable_required_s,
+            post_stop_stable_s if post_stop_gate_active else 0.0,
+        )
+        timeout_s = max(
+            required_stable_s,
             float(getattr(config, 'EXECUTOR_DRIVE_ENABLE_WAIT_TIMEOUT_S', 2.0)),
         )
         started_at = time.monotonic()
         stable_since = None
+
+        if post_stop_gate_active:
+            self._node.get_logger().info(
+                '[GOAL_ACCEPTANCE_GATE] Waiting for drives to remain '
+                f'operation_enabled for {required_stable_s:.3f}s after controlled stop'
+            )
 
         while time.monotonic() - started_at <= timeout_s:
             now = time.monotonic()
             if is_enabled():
                 if stable_since is None:
                     stable_since = now
-                if now - stable_since >= stable_required_s:
+                if now - stable_since >= required_stable_s:
+                    if post_stop_gate_active:
+                        self._last_controlled_stop_succeeded_monotonic = None
+                        self._node.get_logger().info(
+                            '[GOAL_ACCEPTANCE_GATE] Drives are stably '
+                            'operation_enabled; accepting next trajectory'
+                        )
                     return True
             else:
                 stable_since = None
@@ -777,7 +802,9 @@ class TrajectoryExecutor:
         self._cancel_active_drive_monitor()
 
         self._node.get_logger().warning(
-            f'[STOP] Sending replacement path stop trajectory ({detail})'
+            f'[STOP_ACTION_TIMING] event=goal_dispatched '
+            f'goal_sequence={goal_sequence} monotonic_ns={time.monotonic_ns()} '
+            f'configured_stop_duration_s={stop_duration_s:.6f} detail=({detail})'
         )
         future = self._controller_client.send_goal_async(controller_goal)
         self._motion.active_execute_send_future = future
@@ -1670,6 +1697,11 @@ class TrajectoryExecutor:
             )
             self._motion.active_controller_goal = goal_handle
             self._active_goal_started_monotonic = time.monotonic()
+            if self._active_goal_is_stop:
+                self._node.get_logger().warning(
+                    f'[STOP_ACTION_TIMING] event=goal_accepted '
+                    f'goal_sequence={goal_sequence} monotonic_ns={time.monotonic_ns()}'
+                )
             if self._active_drive_cancel_suppressed:
                 self._node.get_logger().info(
                     '[Controller] Active drive-disable cancellation suppressed for this trajectory'
@@ -1721,7 +1753,35 @@ class TrajectoryExecutor:
             active_unwind_check = self._active_unwind_check
             active_goal_is_stop = bool(self._active_goal_is_stop)
             if active_goal_is_stop and result.error_code == 0:
-                self._node.get_logger().warning('[STOP] Path stop trajectory completed')
+                result_ns = time.monotonic_ns()
+                self._last_controlled_stop_succeeded_monotonic = (
+                    result_ns / 1_000_000_000.0
+                )
+                accepted_at = self._active_goal_started_monotonic
+                elapsed_ms = (
+                    (result_ns / 1_000_000_000.0 - accepted_at) * 1000.0
+                    if accepted_at is not None
+                    else None
+                )
+                self._node.get_logger().warning(
+                    f'[STOP_ACTION_TIMING] event=goal_result_succeeded '
+                    f'goal_sequence={goal_sequence} monotonic_ns={result_ns} '
+                    f'accepted_to_result_ms={elapsed_ms if elapsed_ms is not None else "na"}'
+                )
+                conditional_servo = getattr(
+                    self._node, 'conditional_servo_supervisor', None
+                )
+                notify_stop_complete = getattr(
+                    conditional_servo,
+                    'notify_controlled_stop_goal_succeeded',
+                    None,
+                )
+                if callable(notify_stop_complete):
+                    notified = bool(notify_stop_complete(result_ns))
+                    self._node.get_logger().warning(
+                        f'[STOP_ACTION_TIMING] event=conditional_servo_notified '
+                        f'goal_sequence={goal_sequence} notified={notified}'
+                    )
                 self._motion.last_move_result = -1
             elif self._active_trajectory_cancel_reason:
                 self._node.get_logger().error(

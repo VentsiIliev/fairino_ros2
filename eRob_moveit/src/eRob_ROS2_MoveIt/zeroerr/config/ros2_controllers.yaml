@@ -50,7 +50,7 @@ manipulator_controller:
       - velocity
     interpolation_method: "splines"
     allow_integration_in_goal_trajectories: true
-    allow_nonzero_velocity_at_trajectory_end: true
+    allow_nonzero_velocity_at_trajectory_end: false
     allow_partial_joints_goal: false
     open_loop_control: false
     set_last_command_interface_value_as_state_on_activation: false

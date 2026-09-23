@@ -150,7 +150,7 @@ def build_ordered_execution_hook_bundle(
         ),
         terminal_tolerance_rad=max(
             0.0,
-            float(getattr(config_obj, "EXECUTOR_ORDERED_END_MATCH_TOL_RAD", 0.0005)),
+            float(getattr(config_obj, "EXECUTOR_ORDERED_END_MATCH_TOL_RAD", 0.001)),
         ),
     )
     unwind_finalization_hooks = OrderedUnwindFinalizationHooks(
@@ -425,15 +425,20 @@ def wait_ordered_trajectory_point_match(
         f"tolerance={tolerance_rad:.4f}rad timeout_s={timeout_s:.3f}"
     )
     started = perf_counter()
+    sample_count = 0
+    initial_worst = None
     last_worst = None
     last_reason = None
     while True:
+        sample_count += 1
         worst, reason = ordered_trajectory_point_match_error(
             live_state=hooks.get_live_joint_state(),
             joint_trajectory=joint_trajectory,
             point=point,
         )
         if worst is not None:
+            if initial_worst is None:
+                initial_worst = worst
             last_worst = worst
             if worst[0] <= tolerance_rad:
                 match_elapsed = perf_counter() - started
@@ -451,6 +456,14 @@ def wait_ordered_trajectory_point_match(
                     duration_s=match_elapsed,
                     max_error_rad=worst[0],
                     joint=worst[1],
+                )
+                hooks.logger.info(
+                    f"[ORDERED_GOAL_REACH_DIAG] phase={phase} label='{label}' "
+                    f"tolerance_rad={tolerance_rad:.6f} "
+                    f"initial_error_rad={initial_worst[0]:.6f} "
+                    f"initial_joint={initial_worst[1]} "
+                    f"final_error_rad={worst[0]:.6f} final_joint={worst[1]} "
+                    f"verification_elapsed_s={match_elapsed:.6f} samples={sample_count}"
                 )
                 return True
         else:
@@ -686,6 +699,7 @@ def execute_ordered_timed_trajectory(
         trajectory,
         goal_position_tolerance_rad=end_tolerance_rad,
     )
+    controller_wait_started_s = perf_counter()
 
     hooks.mark_motion_timing(
         hooks.node,
@@ -695,6 +709,15 @@ def execute_ordered_timed_trajectory(
         timeout_s=timing.wait_timeout_s,
     )
     result = hooks.wait_execution_complete(hooks.node, timing.wait_timeout_s)
+    controller_wait_elapsed_s = perf_counter() - controller_wait_started_s
+    completion_overrun_s = controller_wait_elapsed_s - timing.duration_s
+    hooks.logger.info(
+        f"[ORDERED_GOAL_REACH_DIAG] phase=controller_result label='{label}' "
+        f"terminal={is_terminal_trajectory} tolerance_rad={end_tolerance_rad:.6f} "
+        f"planned_duration_s={timing.duration_s:.6f} "
+        f"controller_wait_s={controller_wait_elapsed_s:.6f} "
+        f"completion_overrun_s={completion_overrun_s:+.6f} result={result}"
+    )
     hooks.mark_motion_timing(
         hooks.node,
         "ordered_wait_execution_done",

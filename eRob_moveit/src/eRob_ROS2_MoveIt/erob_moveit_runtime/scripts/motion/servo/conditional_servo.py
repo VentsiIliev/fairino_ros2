@@ -112,6 +112,8 @@ class ConditionalServoSupervisor:
                 "sensor_detected_monotonic_ns": None,
                 "final_pose": None,
                 "stop_result": None,
+                "stop_goal_succeeded_monotonic_ns": None,
+                "stationary_last_sample_monotonic_ns": None,
             }
             self._operation = operation
 
@@ -256,16 +258,69 @@ class ConditionalServoSupervisor:
             if op is None or op["state"] != "awaiting_stationary" or measured_velocities is None:
                 return
             max_abs = max(abs(value) for value in measured_velocities)
+            previous_sample_ns = op.get("stationary_last_sample_monotonic_ns")
+            op["stationary_last_sample_monotonic_ns"] = now_ns
             op["max_abs_joint_velocity_rad_s"] = max_abs
             op["stationary_samples"] = op.get("stationary_samples", 0) + 1 if max_abs <= 0.01 else 0
+            operation_id = op["operation_id"]
+            stop_started_ns = op["stop_started_monotonic_ns"]
+            stationary_samples = op["stationary_samples"]
+            sample_interval_ms = (
+                None
+                if previous_sample_ns is None
+                else (now_ns - previous_sample_ns) / 1_000_000.0
+            )
+            self._logger.info(
+                "[CONDITIONAL_SERVO_STATIONARY_SAMPLE] "
+                f"operation_id={operation_id} "
+                f"stop_elapsed_ms={(now_ns - stop_started_ns) / 1_000_000.0:.3f} "
+                f"sample_interval_ms={sample_interval_ms if sample_interval_ms is not None else 'na'} "
+                f"max_abs_joint_velocity_rad_s={max_abs:.6f} "
+                f"stationary_samples={stationary_samples}/3"
+            )
             if op["stationary_samples"] < 3:
                 return
             op["state"] = op["trigger_state"]
             op["stopped_monotonic_ns"] = now_ns
-            operation_id = op["operation_id"]
             terminal_state = op["state"]
             reason = op["reason"]
         self._log_transition(operation_id, terminal_state, reason)
+
+    def notify_controlled_stop_goal_succeeded(self, monotonic_ns: int | None = None) -> bool:
+        """Complete a Fast LIN stop from its authoritative controller result.
+
+        Joint-velocity samples remain a fallback for runtimes that do not
+        deliver the stop action result to this supervisor.
+        """
+        completed_ns = int(monotonic_ns or time.monotonic_ns())
+        with self._lock:
+            op = self._operation
+            if (
+                op is None
+                or op.get("execution_mode") != "fast_lin"
+                or op.get("state") not in {"stopping", "awaiting_stationary"}
+            ):
+                return False
+            op["stop_goal_succeeded_monotonic_ns"] = completed_ns
+            operation_id = op["operation_id"]
+            stop_started_ns = op.get("stop_started_monotonic_ns")
+            if op["state"] == "stopping":
+                return True
+            op["state"] = op["trigger_state"]
+            op["stopped_monotonic_ns"] = completed_ns
+            terminal_state = op["state"]
+            reason = op["reason"]
+        elapsed_ms = (
+            (completed_ns - stop_started_ns) / 1_000_000.0
+            if stop_started_ns is not None
+            else None
+        )
+        self._logger.info(
+            "[CONDITIONAL_SERVO_STOP_ACTION_COMPLETE] "
+            f"operation_id={operation_id} stop_elapsed_ms={elapsed_ms}"
+        )
+        self._log_transition(operation_id, terminal_state, reason)
+        return True
 
     def cancel(self) -> dict:
         self._trigger_stop("cancelled", "cancel requested")
@@ -390,15 +445,36 @@ class ConditionalServoSupervisor:
             result = -1
             reason = f"{reason}; stop_exception:{exc}"
         stopped_ns = time.monotonic_ns()
+        completed_from_stop_goal = False
         with self._lock:
             if not self._matches_active(operation_id):
                 return
             self._operation["stop_result"] = result
             self._operation["reason"] = reason
-            self._operation["state"] = "awaiting_stationary" if result == 0 else "stop_failed"
+            stop_goal_succeeded_ns = self._operation.get("stop_goal_succeeded_monotonic_ns")
+            completed_from_stop_goal = result == 0 and stop_goal_succeeded_ns is not None
+            if completed_from_stop_goal:
+                self._operation["state"] = self._operation["trigger_state"]
+                self._operation["stopped_monotonic_ns"] = stop_goal_succeeded_ns
+            else:
+                self._operation["state"] = "awaiting_stationary" if result == 0 else "stop_failed"
             self._operation["stop_command_completed_monotonic_ns"] = stopped_ns
             self._operation["stationary_samples"] = 0
-        self._log_transition(operation_id, "awaiting_stationary" if result == 0 else "stop_failed", reason)
+            self._operation["stationary_last_sample_monotonic_ns"] = None
+            configured_stop_duration_s = op.get("fast_lin", {}).get("controlled_stop_duration_s")
+        self._logger.info(
+            "[CONDITIONAL_SERVO_STOP_SUBMITTED] "
+            f"operation_id={operation_id} execution_mode={op.get('execution_mode')} "
+            f"configured_stop_duration_s={configured_stop_duration_s} "
+            f"submission_elapsed_ms={(stopped_ns - op['stop_started_monotonic_ns']) / 1_000_000.0:.3f} "
+            f"result={result}"
+        )
+        transition_state = (
+            op["trigger_state"]
+            if completed_from_stop_goal
+            else "awaiting_stationary" if result == 0 else "stop_failed"
+        )
+        self._log_transition(operation_id, transition_state, reason)
 
     def _finish_without_stop(self, operation_id: str, state: str, reason: str) -> None:
         with self._lock:
