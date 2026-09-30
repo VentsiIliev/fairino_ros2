@@ -96,9 +96,9 @@ JOINT_NAMES:
 # MoveIt planning group name.
 PLANNING_GROUP: manipulator
 
-# Dedicated group used only by /move/fast_lin. It has a low-latency IK policy
-# in kinematics.yaml; all other backend planning stays on PLANNING_GROUP.
-FAST_LIN_PLANNING_GROUP: manipulator_fast
+# Trial: use the seeded Distance IK policy for /move/fast_lin to prefer
+# solutions near the live joint branch, including Joint_1 near +2pi.
+FAST_LIN_PLANNING_GROUP: manipulator
 
 # Root frame for planning and FK/IK requests.
 BASE_LINK: base_link

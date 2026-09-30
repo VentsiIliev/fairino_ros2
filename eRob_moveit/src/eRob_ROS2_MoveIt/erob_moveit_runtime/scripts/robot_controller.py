@@ -815,6 +815,10 @@ class RobotController(Node):
 
         if self.monitor is not None:
             self.monitor.set_tcp_transform(self._get_monitor_tcp_transform())
+            # Keep the planner start pose in the newly selected TCP frame.
+            # Without this synchronous refresh, an immediate sub-5 mm move can
+            # compute its relative Jacobian step from the previous tool frame.
+            self._handle_monitor_update(self.monitor.get_latest_data())
             self.get_logger().info(f"Switched active tool to {tool_name}")
         else:
             self.get_logger().warning("RobotMonitor not initialized yet")

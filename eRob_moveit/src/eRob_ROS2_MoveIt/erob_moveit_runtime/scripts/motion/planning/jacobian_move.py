@@ -11,6 +11,7 @@ Internal helper:    _jacobian_check_and_execute()
 import numpy as np
 import config
 from .planner_utils import _set_result, _is_stale
+from .urdf_chain import load_urdf_chain
 from ..execution.trajectory_executor import _send_trajectory_to_controller
 
 
@@ -68,6 +69,19 @@ def _jacobian_fallback_move(
               False if computation failed (singular Jacobian, no joint state, etc.)
     """
 
+    zeroerr_chain = None
+    if getattr(config, 'ROBOT_BACKEND', 'fairino') == 'zeroerr':
+        try:
+            zeroerr_chain = load_urdf_chain(
+                str(config.URDF_PATH), str(config.BASE_LINK), str(config.EE_LINK)
+            )
+        except Exception as exc:
+            robot_controller.get_logger().error(
+                f'[JacMove] Unable to load active URDF kinematic chain: {exc}'
+            )
+            _set_result(robot_controller, -8)
+            return False
+
     def _fk(q):
         def rotz(a):
             c, s = np.cos(a), np.sin(a)
@@ -81,16 +95,8 @@ def _jacobian_fallback_move(
         def trans(x, y, z):
             return np.array([[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, z], [0, 0, 0, 1]], dtype=float)
 
-        if getattr(config, 'ROBOT_BACKEND', 'fairino') == 'zeroerr':
-            # FK from eRobo3 URDF joint chain (base_link → tcp)
-            T = np.eye(4)
-            T = T @ trans(0,       0,       0      ) @ rotz( q[0])   # Joint_1 axis +Z
-            T = T @ trans(0,       0.053,   0.1405 ) @ roty(-q[1])   # Joint_2 axis -Y
-            T = T @ trans(0,       0.0005,  0.3635 ) @ roty(-q[2])   # Joint_3 axis -Y
-            T = T @ trans(0,      -0.014,   0.311  ) @ roty(-q[3])   # Joint_4 axis -Y
-            T = T @ trans(0,       0.047,   0.039  ) @ rotz( q[4])   # Joint_5 axis +Z
-            T = T @ trans(0,       0.0608,  0.047  ) @ roty( q[5])   # Joint_6 axis +Y
-            T = T @ rotx(-np.pi / 2)  # tool0 fixed: xyz=0,0,0 rpy=-1.5708,0,0 (backup URDF)
+        if zeroerr_chain is not None:
+            T = zeroerr_chain.forward(dict(zip(joint_names, q)))
         else:
             # Fairino5 v6 DH FK
             T = np.eye(4)
@@ -204,6 +210,21 @@ def _jacobian_fallback_move(
         robot_controller.get_logger().warning(f'[JacMove] Clamped {max_dq:.5f} → {max_joint_step:.2f} rad')
 
     target_joints = np.array(joints) + delta_q
+
+    if zeroerr_chain is not None:
+        violations = zeroerr_chain.position_violations(
+            dict(zip(joint_names, target_joints))
+        )
+        if violations:
+            details = ', '.join(
+                f'{name}={value:.6f} outside [{lower:.6f}, {upper:.6f}]'
+                for name, value, lower, upper in violations
+            )
+            robot_controller.get_logger().error(
+                f'[JacMove] Target rejected by active URDF joint limits: {details}'
+            )
+            _set_result(robot_controller, -8)
+            return False
 
     # Build a short eased trajectory instead of a single start→target jump.
     # This gives the controller a gentler ramp for tiny Cartesian corrections.
